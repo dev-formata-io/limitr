@@ -1,0 +1,64 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * A Limitr subject.
+ * Could be a user, organization, etc.
+ */
+Subject: {
+    /// How to identify this subject.
+    /// For a user, this could be an email, etc.
+    /// This Id is used for metering, etc.
+    str! id: '';
+
+    /// Plan ID for this subject.
+    str! plan: '';
+
+    /// Alternate IDs for this subject.
+    /// Use State API.
+    list! alt_ids: [];
+
+    /// An optional type of this subject.
+    /// Ex. user, organization, seat, etc.
+    str! type: 'user';
+
+    /// Human-facing label for this subject.
+    str! label: 'User';
+
+    /// Meters for this subject.
+    /// These map to entitlements by name for a plan.
+    /// Lazily populated.
+    obj! meters: {};
+
+
+    #[run]
+    /**
+     * Run this subject.
+     * Adds and moves subject to the GlobalState.
+     */
+    fn add_to_global_state() {
+        const state = <State>.global();
+        self.move(state.subjects);
+        state.subjects.insert(self.id, self);
+        
+        const alts = copy(self.alt_ids);
+        for (const id in alts) {
+            state.set_alt_subject_id(self.id, id);
+        }
+    }
+}

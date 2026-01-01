@@ -1,0 +1,135 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+Policy: {
+    #[run]
+    Credit seat: {
+        id: 'seat'
+        unit: 'seat'
+        version: 0.1.0-test
+        label: 'Seat'
+    }
+
+
+    #[run]
+    #[type('FreePlan')]
+    Plan free: {
+        id: 'free'
+        label: 'Free Plan'
+        version: 0.1.0-test
+        entitlements: {
+            Entitlement prep: {
+                description: 'Allow a user to do prep.'
+            }
+        }
+    }
+
+
+    #[run]
+    Plan paid: {
+        id: 'paid'
+        label: 'Paid Plan'
+        version: 0.1.2-test
+        entitlements: {
+            free: <FreePlan> // add all entitlements from the free plan
+
+            Entitlement chat: {
+                description: 'Allow user to chat.'
+                Limit limit: {
+                    credit: 'seat'
+                    value: 3
+                }
+            }
+        }
+    }
+
+
+    #[run]
+    Subject me: {
+        id: 'me'
+        plan: 'paid'
+        alt_ids: ['cj']
+    }
+}
+
+#[init]
+fn init_policy_state() {
+    self.Policy.run();
+}
+
+#[test]
+fn verify_plans() {
+    assert(<State>.plan('free'));
+    assert(<State>.plan('paid'));
+}
+
+#[test]
+fn verify_me_subject() {
+    const me = <State>.subject('me');
+    assert(me);
+    assert_eq(<State>.plan_for('me'), <State>.plan('paid'));
+    assert_eq(<State>.subject('cj'), me);
+    assert_eq(<State>.plan_for('cj'), <State>.plan('paid'));
+}
+
+#[test]
+fn add_remove_subject() {
+    assert(<State>.create_subject('formata', 'free', 'organization', 'Formata'));
+    assert_eq(<State>.plan_for('formata'), <State>.plan('free'));
+
+    <State>.set_alt_subject_id('formata', 'fmta');
+    assert(<State>.subject('fmta'));
+    <State>.delete_alt_subject_id('fmta');
+    assert_not(<State>.subject('fmta'));
+    assert(<State>.subject('formata'));
+
+    <State>.delete_subject('formata');
+    assert_not(<State>.subject('formata'));
+}
+
+#[test]
+fn plan_entitlements() {
+    const prep = <State>.entitlement('cj', 'prep');
+    assert(prep);
+    const chat = <State>.entitlement('paid', 'chat');
+    assert(chat);
+
+    const free_prep = <State>.entitlement('free', 'prep');
+    assert(free_prep);
+    assert_neq(free_prep, prep);
+}
+
+#[test]
+fn seat_credit() {
+    assert(<State>.credit('seat'));
+}
+
+#[test]
+fn boolean_check() {
+    assert(<State>.check('cj', 'prep'));
+}
+
+#[test]
+fn seat_check() {
+    assert(<State>.meter('cj', 'chat', 1));
+    assert(<State>.meter('cj', 'chat', 1));
+    assert(<State>.meter('cj', 'chat', 1)); // max 3
+    assert_not(<State>.meter('cj', 'chat', 1));
+    assert(<State>.meter('cj', 'chat', -1));
+    assert(<State>.meter('cj', 'chat', 1)); // max 3
+    assert_not(<State>.meter('cj', 'chat', 1));
+}

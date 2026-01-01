@@ -1,0 +1,264 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * A Limitr state.
+ * This is what actually gets stored somewhere as JSON or whatever (the rest is just Stof API).
+ *
+ * The State is the entire API for Limitr.
+ */
+State: {
+    /// Available plan definitions by ID.
+    obj plans: {};
+
+    /// Subjects by ID.
+    obj subjects: {};
+
+    /// Alternative subject ID mappings.
+    obj alt_subject_ids: {};
+
+    /// Credits.
+    obj credits: {};
+
+
+    #[static]
+    /**
+     * Get the global state.
+     * <State>.global()
+     */
+    fn global() -> State {
+        if (root.GlobalState == null) {
+            root.GlobalState = new {} on root;
+        }
+        root.GlobalState
+    }
+
+
+    /*****************************************************************************
+     * Plans.
+     *****************************************************************************/
+    
+    #[static]
+    /**
+     * Get a global plan by ID.
+     */
+    fn plan(id: str!) -> Plan {
+        const state = <State>.global();
+        state.plans.get(id)
+    }
+
+
+    #[static]
+    /**
+     * Get a plan by subject ID.
+     */
+    fn plan_for(subject_id: str!) -> Plan {
+        const subject = <State>.subject(subject_id);
+        if (subject != null) return <State>.plan(subject.plan);
+        null
+    }
+
+
+    /*****************************************************************************
+     * Entitlements.
+     *****************************************************************************/
+    
+    #[static]
+    /**
+     * Get a plan entitlement from either a subject ID or plan ID.
+     */
+    fn entitlement(id: str!, entitlement: str!) -> Entitlement {
+        let pn: Plan = <State>.plan(id);
+        if (pn == null) pn = <State>.plan_for(id);
+        if (pn != null) {
+            return pn.entitlements.get(entitlement);
+        }
+        null
+    }
+
+
+    #[static]
+    /**
+     * Change the value of an entitlement meter for a subject.
+     * Be default, any limit enforcements will take effect.
+     * Returns true if the subject has access with the requested value.
+     *
+     * This may be the only function you need to use in your codebase.
+     */
+    fn meter(id: str!, entitlement: str!, value: float = 0, enforce: bool = true) -> bool {
+        const subject = <State>.subject(id);
+        if (subject != null) {
+            const plan = <State>.plan(subject.plan);
+            if (plan != null) {
+                const ent: Entitlement = plan.entitlements.get(entitlement);
+                if (ent != null) {
+                    let existing_meter: Meter = subject.meters.get(entitlement);
+                    let new_value: float = existing_meter != null ? existing_meter.value + value : value;
+
+                    // check if the new value should be reset!
+                    if (ent.limit != null && ent.limit.resets_on != null && Time.now() > ent.limit.resets_on) {
+                        const now = Time.now();
+                        while (now > ent.limit.resets_on) ent.limit.resets_on += ent.limit.reset_inc;
+                        new_value = 0;
+                    }
+
+                    const res = ent.check(new_value, enforce);
+
+                    // create/change meter if there is a limit defined
+                    if (res && ent.limit != null) {
+                        if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
+                        existing_meter.credit = ent.limit.credit;
+                        existing_meter.value = new_value;
+                        subject.meters.insert(entitlement, existing_meter);
+                    }
+
+                    return res;
+                }
+            }
+        }
+        false
+    }
+
+
+    #[static]
+    /**
+     * Perform an entitlement check for a subject by ID.
+     * By default, any limit enforcements will not take effect.
+     */
+    fn check(id: str!, entitlement: str!, value: float = 0, enforce: bool = false) -> bool {
+        const subject = <State>.subject(id);
+        if (subject != null) {
+            const plan = <State>.plan(subject.plan);
+            if (plan != null) {
+                const ent: Entitlement = plan.entitlements.get(entitlement);
+                if (ent != null) {
+                    const existing_meter: Meter = subject.meters.get(entitlement);
+                    let new_value: float = existing_meter != null ? existing_meter.value + value : value;
+
+                    // check if the new value should be reset!
+                    if (ent.limit != null && ent.limit.resets_on != null && Time.now() > ent.limit.resets_on) {
+                        new_value = 0;
+                    }
+
+                    return ent.check(new_value, enforce);
+                }
+            }
+        }
+        false
+    }
+
+
+    /*****************************************************************************
+     * Credits.
+     *****************************************************************************/
+    
+    #[static]
+    /**
+     * Get a global credit type.
+     */
+    fn credit(id: str!) -> Credit {
+        const state = <State>.global();
+        state.credits.get(id)
+    }
+
+
+    /*****************************************************************************
+     * Subjects.
+     *****************************************************************************/
+    
+    #[static]
+    /**
+     * Get a global subject by ID.
+     */
+    fn subject(id: str!) -> Subject {
+        const state = <State>.global();
+        const sub = state.subjects.get(id);
+        if (sub == null) {
+            const alt = state.alt_subject_ids.get(id);
+            if (alt != null) return this(alt);
+        }
+        sub
+    }
+
+
+    #[static]
+    /**
+     * Create a subject with an ID and plan ID.
+     */
+    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User') -> Subject {
+        const state = <State>.global();
+        const pn = state.plan(plan);
+        if (pn != null) {
+            const subject = new Subject {
+                id,
+                plan,
+                type,
+                label,
+            } on state.subjects;
+            state.subjects.insert(id, subject);
+            return subject;
+        }
+        null
+    }
+
+
+    #[static]
+    /**
+     * Delete a subject.
+     */
+    fn delete_subject(id: str!) -> bool {
+        const state = <State>.global();
+        const subject = state.subject(id);
+        if (subject != null) {
+            for (const alt in subject.alt_ids) state.delete_alt_subject_id(alt);
+            return state.subjects.remove(subject.id);
+        }
+        false
+    }
+
+
+    #[static]
+    /**
+     * Set an alternative subject ID (must be unique).
+     */
+    fn set_alt_subject_id(subject_id: str!, alt_id: str!) -> bool {
+        const state = <State>.global();
+        const subject = <State>.subject(subject_id);
+        if (subject != null) {
+            subject.alt_ids.remove_all(alt_id);
+            subject.alt_ids.push_back(alt_id);
+            state.alt_subject_ids.insert(alt_id, subject_id);
+            return true;
+        }
+        false
+    }
+
+
+    #[static]
+    /**
+     * Delete an alternative subject ID.
+     */
+    fn delete_alt_subject_id(subject_id: str!) -> bool {
+        const state = <State>.global();
+        const subject = <State>.subject(subject_id);
+        if (subject != null) {
+            subject.alt_ids.remove_all(subject_id);
+        }
+        state.alt_subject_ids.remove(subject_id)
+    }
+}
