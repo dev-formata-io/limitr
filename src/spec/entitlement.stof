@@ -30,6 +30,10 @@ Limit: {
     /// Value of this limit.
     float value: 0;
 
+    /// Optional increment for an operation with this limit.
+    /// Used with <State>.increment.
+    float increment: 0;
+
     /// Enforcement callback when this limit is reached.
     fn | obj enforcement: null;
 

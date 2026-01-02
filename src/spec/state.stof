@@ -113,6 +113,31 @@ State: {
 
     #[static]
     /**
+     * Get the standard increment "cost" of an "increment" operation for an entitlement.
+     * Will return null if the entitlement doesn't exist.
+     */
+    fn cost(id: str!, entitlement: str!) -> float {
+        const ent = <State>.entitlement(id, entitlement);
+        if (ent != null && ent.limit != null) return ent.limit.increment;
+        null
+    }
+
+
+    #[static]
+    /**
+     * Change the value of a metered entitlement by a standard increment (defined in the Limit).
+     */
+    fn increment(id: str!, entitlement: str!) -> bool {
+        const ent = <State>.entitlement(id, entitlement);
+        if (ent != null && ent.limit != null) {
+            return <State>.meter(id, entitlement, ent.limit.increment);
+        }
+        false
+    }
+
+
+    #[static]
+    /**
      * Change the value of an entitlement meter for a subject.
      * Be default, any limit enforcements will take effect.
      * Returns true if the subject has access with the requested value.
