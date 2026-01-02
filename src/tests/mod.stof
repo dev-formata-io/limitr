@@ -26,6 +26,15 @@ Policy: {
 
 
     #[run]
+    Credit token: {
+        id: 'token'
+        unit: 'token'
+        version: 0.1.0-test
+        label: 'Token'
+    }
+
+
+    #[run]
     #[type('FreePlan')]
     Plan free: {
         id: 'free'
@@ -34,6 +43,14 @@ Policy: {
         entitlements: {
             Entitlement prep: {
                 description: 'Allow a user to do prep.'
+            }
+
+            Entitlement spend: {
+                description: 'Unlimited token spend.'
+                Limit limit: {
+                    credit: 'token'
+                    unlimited: true
+                }
             }
         }
     }
@@ -127,9 +144,25 @@ fn boolean_check() {
 fn seat_check() {
     assert(<State>.meter('cj', 'chat', 1));
     assert(<State>.meter('cj', 'chat', 1));
+    assert(<State>.check('cj', 'chat', 1));
     assert(<State>.meter('cj', 'chat', 1)); // max 3
+    assert_not(<State>.check('cj', 'chat', 1));
     assert_not(<State>.meter('cj', 'chat', 1));
+
     assert(<State>.meter('cj', 'chat', -1));
     assert(<State>.meter('cj', 'chat', 1)); // max 3
     assert_not(<State>.meter('cj', 'chat', 1));
+}
+
+#[test]
+fn unlimited_spend() {
+    assert(<State>.meter('cj', 'spend', 30.56));
+    assert(<State>.check('cj', 'spend', 100));
+    assert(<State>.meter('cj', 'spend', 44.34));
+    assert(<State>.meter('cj', 'spend', -34));
+    assert_eq(<State>.value('cj', 'spend').round(1), 40.9);
+
+    const credit = <State>.credit_for('cj', 'spend');
+    assert_eq(credit.id, 'token');
+    assert_eq(credit.exchange, 1);
 }

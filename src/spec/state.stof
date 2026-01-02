@@ -94,6 +94,25 @@ State: {
 
     #[static]
     /**
+     * Get the current value of a metered entitlement for a subject ID.
+     * Returns null if the entitlement doesn't exist.
+     */
+    fn value(id: str!, entitlement: str!) -> float {
+        const subject = <State>.subject(id);
+        if (subject != null) {
+            const meter: Meter = subject.meters.get(entitlement);
+            if (meter != null) {
+                return meter.value;
+            } else if (<State>.entitlement(id, entitlement) != null) {
+                return 0;
+            }
+        }
+        null
+    }
+
+
+    #[static]
+    /**
      * Change the value of an entitlement meter for a subject.
      * Be default, any limit enforcements will take effect.
      * Returns true if the subject has access with the requested value.
@@ -174,6 +193,20 @@ State: {
     fn credit(id: str!) -> Credit {
         const state = <State>.global();
         state.credits.get(id)
+    }
+
+
+    #[static]
+    /**
+     * Get a credit type for a specific entitlement (that has a limit).
+     * ID can be a plan ID or a subject ID.
+     */
+    fn credit_for(id: str!, entitlement: str!) -> Credit {
+        const ent = <State>.entitlement(id, entitlement);
+        if (ent != null && ent.limit != null) {
+            return <State>.credit(ent.limit.credit);
+        }
+        null
     }
 
 

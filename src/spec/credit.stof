@@ -48,6 +48,16 @@ Credit: {
      */
     fn add_to_global_state() {
         const state = <State>.global();
+
+        // check for existing credit
+        const existing: Credit = state.credits.get(self.id);
+        if (existing != null) {
+            if (existing.version >= self.version) {
+                return; // don't do it
+            }
+            state.credits.remove(self.id, shallow = false);
+        }
+
         self.move(state.credits);
         state.credits.insert(self.id, self);
     }

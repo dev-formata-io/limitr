@@ -53,6 +53,26 @@ Subject: {
      */
     fn add_to_global_state() {
         const state = <State>.global();
+        
+        // check for existing subject to update
+        const existing: Subject = state.subjects.get(self.id);
+        if (existing != null && existing != self) {
+            for (const id in self.alt_ids) {
+                state.set_alt_subject_id(self.id, id);
+            }
+            existing.type = self.type;
+            existing.label = self.label;
+            existing.plan = self.plan;
+            for (const pair in self.meters.fields()) {
+                if ((typeof pair[1]) == 'obj' && pair[1].instance_of('Meter')) {
+                    existing.meters.remove(pair[0], shallow = false);
+                    pair[1].move(existing.meters);
+                    existing.meters.insert(pair[0], pair[1]);
+                }
+            }
+            return;
+        }
+
         self.move(state.subjects);
         state.subjects.insert(self.id, self);
         

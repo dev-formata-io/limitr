@@ -23,6 +23,10 @@ Limit: {
     /// Credit ID.
     str! credit: '';
 
+    /// Unlimited?
+    /// If true, this limit defines a credit type and meter, but does not enforce an actual limit.
+    bool unlimited: false;
+
     /// Value of this limit.
     float value: 0;
 
@@ -40,7 +44,7 @@ Limit: {
      * Check this limit against a value.
      */
     fn check(value: float = 0, enforce: bool = true) -> bool {
-        if (value > self.value) {
+        if (value > self.value && !self.unlimited) {
             if (enforce) {
                 if ((typeof self.enforcement) == 'fn') self.enforcement();
                 else if ((typeof self.enforcement) == 'obj') {

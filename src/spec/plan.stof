@@ -41,6 +41,16 @@ Plan: {
      */
     fn add_to_global_state() {
         const state = <State>.global();
+
+        // check for existing plan
+        const existing: Plan = state.plans.get(self.id);
+        if (existing != null) {
+            if (existing.version >= self.version) {
+                return; // don't do it
+            }
+            state.plans.remove(self.id, shallow = false);
+        }
+
         self.move(state.plans);
         state.plans.insert(self.id, self);
     }
