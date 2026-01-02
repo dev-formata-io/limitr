@@ -1,0 +1,138 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * Limitr events helpers.
+ * Used by host apps, plugins, etc.
+ */
+Event: {
+    #[static]
+    /**
+     * Send an event.
+     * Key will be the attribute(s) of functions to call.
+     *
+     * Ex. <Event>.send('plan-added', plan);
+     */
+    async fn send(key: str | list | set, value: unknown = null) {
+        let handles = [];
+        for (const func in funcs(attributes = key)) {
+            const count = func.params().len();
+            if (count == 1) {
+                if (func.is_async()) handles.push_back(func(value));
+                else func(value);
+            } else if (count < 1) {
+                if (func.is_async()) handles.push_back(func());
+                else func();
+            }
+        }
+        await handles;
+    }
+}
+
+
+/**
+ * Call out to an external "App" library (added by user).
+ */
+AppEvents: {
+
+    /*****************************************************************************
+     * Plans.
+     *****************************************************************************/
+    
+    #[plan-added]
+    /**
+     * Plan added.
+     * Called when a plan has been added to the State.
+     */
+    fn app_plan_added(plan: Plan) {
+        ?App.plan_added(plan);
+    }
+
+
+    /*****************************************************************************
+     * Credits.
+     *****************************************************************************/
+    
+    #[credit-added]
+    /**
+     * Credit added.
+     * Called when a new type of credit is added to the State.
+     */
+    fn app_credit_added(credit: Credit) {
+        if (lib('App')) ?App.credit_added(stringify('json', credit));
+    }
+
+
+    /*****************************************************************************
+     * Meters.
+     *****************************************************************************/
+    
+    #[meter-changed]
+    /**
+     * Meter changed.
+     * Called whenever a Meter is created/updated.
+     * Value includes meter (old & new values), subject, entitlement key, plan, and credit.
+     */
+    fn app_meter_changed(value: obj) {
+        if (lib('App')) ?App.meter_changed(stringify('json', value));
+    }
+
+
+    #[meter-limit]
+    /**
+     * Meter limited.
+     * Called whenever a "meter" event fails because of a Limit set on an entitlement.
+     */
+    fn app_meter_limit(value: obj) {
+        if (lib('App')) ?App.meter_limit(stringify('json', value));
+    }
+
+
+    /*****************************************************************************
+     * Subjects.
+     *****************************************************************************/
+    
+    #[subject-updated]
+    /**
+     * Subject updated.
+     * Called when an existing subject has been updated/merged in the State.
+     */
+    fn app_subject_updated(subject: Subject) {
+        if (lib('App')) ?App.subject_updated(stringify('json', subject));
+    }
+
+
+    #[subject-added]
+    /**
+     * Subject added.
+     * Called when a new subject has been added to the State.
+     */
+    fn app_subject_added(subject: Subject) {
+        if (lib('App')) ?App.subject_added(stringify('json', subject));
+    }
+
+
+    #[subject-removing]
+    /**
+     * Subject is actively being removed.
+     * Called when <State>.delete_subject is called.
+     */
+    fn app_subject_removing(subject: Subject) {
+        if (lib('App')) ?App.subject_removing(stringify('json', subject));
+    }
+}

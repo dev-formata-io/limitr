@@ -141,9 +141,38 @@ State: {
                     // create/change meter if there is a limit defined
                     if (res && ent.limit != null) {
                         if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
+                        const old_value = existing_meter.value;
+                        const changed = new_value != old_value;
                         existing_meter.credit = ent.limit.credit;
                         existing_meter.value = new_value;
                         subject.meters.insert(entitlement, existing_meter);
+                        
+                        if (changed) {
+                            const credit = <State>.credit(existing_meter.credit);
+                            const event_value = new {
+                                meter: new {
+                                    old: old_value,
+                                    value: existing_meter.value,
+                                },
+                                subject,
+                                entitlement,
+                                plan,
+                                credit,
+                            };
+                            await <Event>.send('meter-changed', event_value);
+                            drop(event_value);
+                        }
+                    } else if (ent.limit != null && !res) {
+                        const credit = <State>.credit(ent.limit.credit);
+                        const event_value = new {
+                            subject,
+                            entitlement,
+                            plan,
+                            credit,
+                            invalid_value: new_value,
+                        };
+                        await <Event>.send('meter-limit', event_value);
+                        drop(event_value);
                     }
 
                     return res;
@@ -237,6 +266,17 @@ State: {
         const state = <State>.global();
         const pn = state.plan(plan);
         if (pn != null) {
+
+            // check for existing subject to update
+            const existing: Subject = state.subjects.get(id);
+            if (existing != null) {
+                existing.type = type;
+                existing.label = label;
+                existing.plan = plan;
+                <Event>.send('subject-updated', existing);
+                return existing;
+            }
+
             const subject = new Subject {
                 id,
                 plan,
@@ -244,6 +284,7 @@ State: {
                 label,
             } on state.subjects;
             state.subjects.insert(id, subject);
+            <Event>.send('subject-added', subject);
             return subject;
         }
         null
@@ -258,6 +299,7 @@ State: {
         const state = <State>.global();
         const subject = state.subject(id);
         if (subject != null) {
+            await <Event>.send('subject-removing', subject);
             for (const alt in subject.alt_ids) state.delete_alt_subject_id(alt);
             return state.subjects.remove(subject.id);
         }

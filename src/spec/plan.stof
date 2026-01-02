@@ -34,7 +34,7 @@ Plan: {
     obj! entitlements: {};
 
 
-    #[run(0)]
+    #[run(1)]
     /**
      * Run this plan.
      * Adds and moves plan to the GlobalState.
@@ -53,10 +53,12 @@ Plan: {
 
         self.move(state.plans);
         state.plans.insert(self.id, self);
+
+        <Event>.send('plan-added', self);
     }
 
 
-    #[run(1)]
+    #[run(0)]
     /**
      * Cast all entitlement fields in this plan.
      */

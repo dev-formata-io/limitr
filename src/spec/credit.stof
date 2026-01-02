@@ -60,5 +60,7 @@ Credit: {
 
         self.move(state.credits);
         state.credits.insert(self.id, self);
+
+        <Event>.send('credit-added', self);
     }
 }

@@ -14,23 +14,7 @@
 // limitations under the License.
 //
 
-
-/*!
- * The limitr spec includes:
- * - Plan (bundle of entitlements & limits)
- * - Subject (what is being controlled/limited Ex. Org, User, Seats)
- * - Entitlement (gated capabilities)
- * - Meter (units of consumption with aggregation & reset Ex. count, tokens, seats, credits)
- * - Limit (how much of something is allowed - binds entitlement, meter, subject)
- * - Enforcement (what happens when a limit is reached Ex. allow, warn, degrade, block)
- * - Credit (abstract currency - first-class meters with exchange rates)
- * - Events (policy emits events, it does NOT do billing)
- *
- * - State (a minimal and injected state for current plan, usage counters, balances, etc.)
- *
- * This document is versioned, inspectable, can be signed, and can be updated remotely.
- */
-
+import './events';
 import './credit';
 import './plan';
 import './subject';

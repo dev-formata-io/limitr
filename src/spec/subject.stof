@@ -70,6 +70,7 @@ Subject: {
                     existing.meters.insert(pair[0], pair[1]);
                 }
             }
+            <Event>.send('subject-updated', existing);
             return;
         }
 
@@ -80,5 +81,6 @@ Subject: {
         for (const id in alts) {
             state.set_alt_subject_id(self.id, id);
         }
+        <Event>.send('subject-added', self);
     }
 }
