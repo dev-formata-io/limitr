@@ -57,7 +57,7 @@ AppEvents: {
     #[plan-added]
     /**
      * Plan added.
-     * Called when a plan has been added to the State.
+     * Called when a plan has been added to the Limitr.
      */
     fn app_plan_added(plan: Plan) {
         ?App.plan_added(plan);
@@ -71,7 +71,7 @@ AppEvents: {
     #[credit-added]
     /**
      * Credit added.
-     * Called when a new type of credit is added to the State.
+     * Called when a new type of credit is added to the Limitr.
      */
     fn app_credit_added(credit: Credit) {
         if (lib('App')) ?App.credit_added(stringify('json', credit));
@@ -110,7 +110,7 @@ AppEvents: {
     #[subject-updated]
     /**
      * Subject updated.
-     * Called when an existing subject has been updated/merged in the State.
+     * Called when an existing subject has been updated/merged in the Limitr.
      */
     fn app_subject_updated(subject: Subject) {
         if (lib('App')) ?App.subject_updated(stringify('json', subject));
@@ -120,7 +120,7 @@ AppEvents: {
     #[subject-added]
     /**
      * Subject added.
-     * Called when a new subject has been added to the State.
+     * Called when a new subject has been added to the Limitr.
      */
     fn app_subject_added(subject: Subject) {
         if (lib('App')) ?App.subject_added(stringify('json', subject));
@@ -130,7 +130,7 @@ AppEvents: {
     #[subject-removing]
     /**
      * Subject is actively being removed.
-     * Called when <State>.delete_subject is called.
+     * Called when <Limitr>.delete_subject is called.
      */
     fn app_subject_removing(subject: Subject) {
         if (lib('App')) ?App.subject_removing(stringify('json', subject));

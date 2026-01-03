@@ -30,7 +30,7 @@ Subject: {
     str! plan: '';
 
     /// Alternate IDs for this subject.
-    /// Use State API.
+    /// Use Limitr API.
     list! alt_ids: [];
 
     /// Optional organization subject ID for this user.

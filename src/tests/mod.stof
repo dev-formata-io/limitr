@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-
-State policy: {
+#[type('global')]
+Limitr policy: {
     credits: {
         Credit seat: {
             unit: 'seat'
@@ -72,6 +72,12 @@ State policy: {
         self.create_subject('me', 'paid');
         self.set_alt_subject_id('me', 'cj');
     }
+}
+
+#[test]
+fn global_policy() {
+    assert_eq(<Limitr>.global(), self.policy);
+    assert_eq(<global>, self.policy);
 }
 
 #[test]

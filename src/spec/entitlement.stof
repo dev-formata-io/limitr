@@ -31,7 +31,7 @@ Limit: {
     float value: 0;
 
     /// Optional increment for an operation with this limit.
-    /// Used with <State>.increment.
+    /// Used with <Limitr>.increment.
     float increment: 0;
 
     /// Should the meter reset after a certain period?

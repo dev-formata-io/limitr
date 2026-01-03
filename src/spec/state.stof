@@ -17,12 +17,9 @@
 
 #[type]
 /**
- * A Limitr state.
- * This is what actually gets stored somewhere as JSON or whatever (the rest is just Stof API).
- *
- * The State is the entire API for Limitr.
+ * A Limitr object.
  */
-State: {
+Limitr: {
     /// Credits.
     obj credits: {};
 
@@ -38,19 +35,18 @@ State: {
 
     #[static]
     /**
-     * Get the global state.
-     * <State>.global()
+     * Get the global limitr policy if any.
+     * Mark the global policy with #[type('global')].
+     *
+     * <Limitr>.global()
      */
-    fn global() -> State {
-        if (root.GlobalState == null) {
-            root.GlobalState = new {} on root;
-        }
-        root.GlobalState
+    fn global() -> Limitr {
+        <global>
     }
 
 
     /**
-     * Export this state as JSON.
+     * Export this Limitr as JSON.
      * TODO: import & diff
      */
     fn export() -> str {
