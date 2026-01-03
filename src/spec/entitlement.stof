@@ -34,11 +34,8 @@ Limit: {
     /// Used with <State>.increment.
     float increment: 0;
 
-    /// Enforcement callback when this limit is reached.
-    fn | obj enforcement: null;
-
-    /// Optional resets on timestamp.
-    ms resets_on: null;
+    /// Should the meter reset after a certain period?
+    bool resets: false;
 
     /// Optional reset increment (default 30 days).
     ms reset_inc: 30days;

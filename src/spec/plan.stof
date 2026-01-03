@@ -20,10 +20,6 @@
  * A Limitr plan.
  */
 Plan: {
-    /// Plan ID.
-    /// For resolving plans from a subject.
-    str! id: '';
-
     /// Human-facing label for this plan.
     str! label: '';
 
@@ -32,53 +28,4 @@ Plan: {
 
     /// Entitlements that this plan contains.
     obj! entitlements: {};
-
-
-    #[run(1)]
-    /**
-     * Run this plan.
-     * Adds and moves plan to the GlobalState.
-     */
-    fn add_to_global_state() {
-        const state = <State>.global();
-
-        // check for existing plan
-        const existing: Plan = state.plans.get(self.id);
-        if (existing != null) {
-            if (existing.version >= self.version) {
-                return; // don't do it
-            }
-            state.plans.remove(self.id, shallow = false);
-        }
-
-        self.move(state.plans);
-        state.plans.insert(self.id, self);
-
-        <Event>.send('plan-added', self);
-    }
-
-
-    #[run(0)]
-    /**
-     * Cast all entitlement fields in this plan.
-     */
-    fn cast_all_entitlements() {
-        for (const pair in self.entitlements.fields()) {
-            const o = pair[1];
-
-            if ((typeof o) == 'obj') {
-                if (o.instance_of('Plan')) {
-                    for (const other_pair in o.entitlements.fields()) {
-                        const other = other_pair[1];
-                        if ((typeof other) == 'obj' && other.instance_of('Entitlement')) {
-                            self.entitlements.insert(other_pair[0], copy(other) as Entitlement);
-                        }
-                    }
-                    self.entitlements.remove(pair[0], shallow = true); // just the field
-                } else {
-                    o as Entitlement;
-                }
-            }
-        }
-    }
 }

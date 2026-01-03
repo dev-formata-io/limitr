@@ -15,157 +15,147 @@
 //
 
 
-Policy: {
-    #[run]
-    Credit seat: {
-        id: 'seat'
-        unit: 'seat'
-        version: 0.1.0-test
-        label: 'Seat'
+State policy: {
+    credits: {
+        Credit seat: {
+            unit: 'seat'
+            version: 0.1.0-test
+            label: 'Seat'
+        }
+
+        Credit token: {
+            unit: 'token'
+            version: 0.1.0-test
+            label: 'Token'
+        }
     }
 
-
-    #[run]
-    Credit token: {
-        id: 'token'
-        unit: 'token'
-        version: 0.1.0-test
-        label: 'Token'
-    }
-
-
-    #[run]
-    #[type('FreePlan')]
-    Plan free: {
-        id: 'free'
-        label: 'Free Plan'
-        version: 0.1.0-test
-        entitlements: {
-            Entitlement prep: {
-                description: 'Allow a user to do prep.'
+    plans: {
+        #[type('Free')]
+        Plan free: {
+            label: 'Free Plan'
+            version: 0.1.0-test
+            entitlements: {
+                Entitlement prep: {
+                    description: 'Allow a user to do prep.'
+                }
+                Entitlement spend: {
+                    description: 'Unlimited token spend.'
+                    Limit limit: {
+                        credit: 'token'
+                        unlimited: true
+                    }
+                }
             }
+        }
 
-            Entitlement spend: {
-                description: 'Unlimited token spend.'
-                Limit limit: {
-                    credit: 'token'
-                    unlimited: true
+        Plan paid: {
+            label: 'Paid Plan'
+            version: 0.1.2-test
+            entitlements: {
+                Entitlement prep: <Free>.entitlements.prep
+                Entitlement spend: <Free>.entitlements.spend
+                Entitlement chat: {
+                    description: 'Allow user to chat.'
+                    Limit limit: {
+                        credit: 'seat'
+                        increment: 1
+                        value: 3
+                    }
                 }
             }
         }
     }
 
-
-    #[run]
-    Plan paid: {
-        id: 'paid'
-        label: 'Paid Plan'
-        version: 0.1.2-test
-        entitlements: {
-            free: <FreePlan> // add all entitlements from the free plan
-
-            Entitlement chat: {
-                description: 'Allow user to chat.'
-                Limit limit: {
-                    credit: 'seat'
-                    increment: 1
-                    value: 3
-                }
-            }
-        }
+    #[init]
+    fn init_test_subjects() {
+        self.create_subject('me', 'paid');
+        self.set_alt_subject_id('me', 'cj');
     }
-
-
-    #[run]
-    Subject me: {
-        id: 'me'
-        plan: 'paid'
-        alt_ids: ['cj']
-    }
-}
-
-#[init]
-fn init_policy_state() {
-    self.Policy.run();
 }
 
 #[test]
 fn verify_plans() {
-    assert(<State>.plan('free'));
-    assert(<State>.plan('paid'));
+    assert(self.policy.plan('free'));
+    assert(self.policy.plan('paid'));
 }
 
 #[test]
 fn verify_me_subject() {
-    const me = <State>.subject('me');
+    const me = self.policy.subject('me');
     assert(me);
-    assert_eq(<State>.plan_for('me'), <State>.plan('paid'));
-    assert_eq(<State>.subject('cj'), me);
-    assert_eq(<State>.plan_for('cj'), <State>.plan('paid'));
+    assert_eq(self.policy.plan_for('me'), self.policy.plan('paid'));
+    assert_eq(self.policy.subject('cj'), me);
+    assert_eq(self.policy.plan_for('cj'), self.policy.plan('paid'));
 }
 
 #[test]
 fn add_remove_subject() {
-    assert(<State>.create_subject('formata', 'free', 'organization', 'Formata'));
-    assert_eq(<State>.plan_for('formata'), <State>.plan('free'));
+    assert(self.policy.create_subject('formata', 'free', 'organization', 'Formata'));
+    assert_eq(self.policy.plan_for('formata'), self.policy.plan('free'));
 
-    <State>.set_alt_subject_id('formata', 'fmta');
-    assert(<State>.subject('fmta'));
-    <State>.delete_alt_subject_id('fmta');
-    assert_not(<State>.subject('fmta'));
-    assert(<State>.subject('formata'));
+    self.policy.set_alt_subject_id('formata', 'fmta');
+    assert(self.policy.subject('fmta'));
+    self.policy.delete_alt_subject_id('fmta');
+    assert_not(self.policy.subject('fmta'));
+    assert(self.policy.subject('formata'));
 
-    <State>.delete_subject('formata');
-    assert_not(<State>.subject('formata'));
+    self.policy.delete_subject('formata');
+    assert_not(self.policy.subject('formata'));
 }
 
 #[test]
 fn plan_entitlements() {
-    const prep = <State>.entitlement('cj', 'prep');
+    const prep = self.policy.entitlement('cj', 'prep');
     assert(prep);
-    const chat = <State>.entitlement('paid', 'chat');
+    const chat = self.policy.entitlement('paid', 'chat');
     assert(chat);
 
-    const free_prep = <State>.entitlement('free', 'prep');
+    const free_prep = self.policy.entitlement('free', 'prep');
     assert(free_prep);
-    assert_neq(free_prep, prep);
+    assert_eq(free_prep, prep);
 }
 
 #[test]
 fn seat_credit() {
-    assert(<State>.credit('seat'));
+    assert(self.policy.credit('seat'));
 }
 
 #[test]
 fn boolean_check() {
-    assert(<State>.check('cj', 'prep'));
+    assert(self.policy.check('cj', 'prep'));
 }
 
 #[test]
 fn seat_check() {
-    assert(<State>.meter('cj', 'chat', 1));
-    assert(<State>.meter('cj', 'chat', 1));
-    assert(<State>.check('cj', 'chat', 1));
-    assert(<State>.increment('cj', 'chat')); // max 3
-    assert_not(<State>.check('cj', 'chat', 1));
-    assert_not(<State>.increment('cj', 'chat'));
+    assert_eq(self.policy.limit('cj', 'chat'), 3);
 
-    assert(<State>.meter('cj', 'chat', -1));
-    assert(<State>.meter('cj', 'chat', 1)); // max 3
-    assert_not(<State>.meter('cj', 'chat', 1));
+    assert(self.policy.meter('cj', 'chat', 1));
+    assert_eq(self.policy.balance('cj', 'chat'), 2);
+    assert(self.policy.meter('cj', 'chat', 1));
+    assert_eq(self.policy.balance('cj', 'chat'), 1);
+    assert(self.policy.check('cj', 'chat', 1));
+    assert(self.policy.increment('cj', 'chat')); // max 3
+    assert_eq(self.policy.balance('cj', 'chat'), 0);
+    assert_not(self.policy.check('cj', 'chat', 1));
+    assert_not(self.policy.increment('cj', 'chat'));
 
-    assert_eq(<State>.cost('me', 'chat'), 1);
+    assert(self.policy.meter('cj', 'chat', -1));
+    assert(self.policy.meter('cj', 'chat', 1)); // max 3
+    assert_not(self.policy.meter('cj', 'chat', 1));
+
+    assert_eq(self.policy.cost('me', 'chat'), 1);
 }
 
 #[test]
 fn unlimited_spend() {
-    assert(<State>.meter('cj', 'spend', 30.56));
-    assert(<State>.check('cj', 'spend', 100));
-    assert(<State>.meter('cj', 'spend', 44.34));
-    assert(<State>.meter('cj', 'spend', -34));
-    assert_eq(<State>.value('cj', 'spend').round(1), 40.9);
+    assert(self.policy.meter('cj', 'spend', 30.56));
+    assert(self.policy.check('cj', 'spend', 100));
+    assert(self.policy.meter('cj', 'spend', 44.34));
+    assert(self.policy.meter('cj', 'spend', -34));
+    assert_eq(self.policy.value('cj', 'spend').round(1), 40.9);
 
-    const credit = <State>.credit_for('cj', 'spend');
-    assert_eq(credit.id, 'token');
+    const credit = self.policy.credit_for('cj', 'spend');
+    assert_eq(credit.unit, 'token');
     assert_eq(credit.exchange, 1);
 }

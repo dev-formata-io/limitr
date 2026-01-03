@@ -23,6 +23,9 @@
  * The State is the entire API for Limitr.
  */
 State: {
+    /// Credits.
+    obj credits: {};
+
     /// Available plan definitions by ID.
     obj plans: {};
 
@@ -31,9 +34,6 @@ State: {
 
     /// Alternative subject ID mappings.
     obj alt_subject_ids: {};
-
-    /// Credits.
-    obj credits: {};
 
 
     #[static]
@@ -49,27 +49,37 @@ State: {
     }
 
 
+    /**
+     * Export this state as JSON.
+     * TODO: import & diff
+     */
+    fn export() -> str {
+        stringify('json', self)
+    }
+
+
     /*****************************************************************************
      * Plans.
      *****************************************************************************/
     
-    #[static]
     /**
-     * Get a global plan by ID.
+     * Get a plan by ID.
      */
     fn plan(id: str!) -> Plan {
-        const state = <State>.global();
-        state.plans.get(id)
+        self.plans.get(id)
     }
 
 
-    #[static]
     /**
      * Get a plan by subject ID.
      */
     fn plan_for(subject_id: str!) -> Plan {
-        const subject = <State>.subject(subject_id);
-        if (subject != null) return <State>.plan(subject.plan);
+        const subject = self.subject(subject_id);
+        if (subject != null) {
+            let pn = self.plan(subject.plan);
+            if (pn == null && subject.org != null) pn = self.plan_for(subject.org);
+            pn
+        }
         null
     }
 
@@ -78,13 +88,12 @@ State: {
      * Entitlements.
      *****************************************************************************/
     
-    #[static]
     /**
      * Get a plan entitlement from either a subject ID or plan ID.
      */
     fn entitlement(id: str!, entitlement: str!) -> Entitlement {
-        let pn: Plan = <State>.plan(id);
-        if (pn == null) pn = <State>.plan_for(id);
+        let pn: Plan = self.plan(id);
+        if (pn == null) pn = self.plan_for(id);
         if (pn != null) {
             return pn.entitlements.get(entitlement);
         }
@@ -92,18 +101,45 @@ State: {
     }
 
 
-    #[static]
+    /**
+     * Get the limit value for an entitlement.
+     */
+    fn limit(id: str!, entitlement: str!) -> float {
+        const ent = self.entitlement(id, entitlement);
+        if (ent != null && ent.limit != null && !ent.limit.unlimited) return ent.limit.value;
+        null
+    }
+
+
+    /**
+     * Get the remaining entitlement balance value for a subject ID (limit - current (metered) value).
+     * TODO: credit grants on the subject.
+     */
+    fn balance(id: str!, entitlement: str!) -> float {
+        const subject = self.subject(id);
+        if (subject != null) {
+            const ent = self.entitlement(id, entitlement);
+            if (ent != null && ent.limit != null && !ent.limit.unlimited) {
+                const meter: Meter = subject.meters.get(entitlement);
+                if (meter != null) return ent.limit.value - meter.value;
+                return ent.limit.value;
+            }
+        }
+        null
+    }
+
+
     /**
      * Get the current value of a metered entitlement for a subject ID.
      * Returns null if the entitlement doesn't exist.
      */
     fn value(id: str!, entitlement: str!) -> float {
-        const subject = <State>.subject(id);
+        const subject = self.subject(id);
         if (subject != null) {
             const meter: Meter = subject.meters.get(entitlement);
             if (meter != null) {
                 return meter.value;
-            } else if (<State>.entitlement(id, entitlement) != null) {
+            } else if (self.entitlement(id, entitlement) != null) {
                 return 0;
             }
         }
@@ -111,32 +147,29 @@ State: {
     }
 
 
-    #[static]
     /**
      * Get the standard increment "cost" of an "increment" operation for an entitlement.
      * Will return null if the entitlement doesn't exist.
      */
     fn cost(id: str!, entitlement: str!) -> float {
-        const ent = <State>.entitlement(id, entitlement);
+        const ent = self.entitlement(id, entitlement);
         if (ent != null && ent.limit != null) return ent.limit.increment;
         null
     }
 
 
-    #[static]
     /**
      * Change the value of a metered entitlement by a standard increment (defined in the Limit).
      */
     fn increment(id: str!, entitlement: str!) -> bool {
-        const ent = <State>.entitlement(id, entitlement);
+        const ent = self.entitlement(id, entitlement);
         if (ent != null && ent.limit != null) {
-            return <State>.meter(id, entitlement, ent.limit.increment);
+            return self.meter(id, entitlement, ent.limit.increment);
         }
         false
     }
 
 
-    #[static]
     /**
      * Change the value of an entitlement meter for a subject.
      * Be default, any limit enforcements will take effect.
@@ -145,9 +178,9 @@ State: {
      * This may be the only function you need to use in your codebase.
      */
     fn meter(id: str!, entitlement: str!, value: float = 0, enforce: bool = true) -> bool {
-        const subject = <State>.subject(id);
+        const subject = self.subject(id);
         if (subject != null) {
-            const plan = <State>.plan(subject.plan);
+            const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
@@ -155,10 +188,10 @@ State: {
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
                     // check if the new value should be reset!
-                    if (ent.limit != null && ent.limit.resets_on != null && Time.now() > ent.limit.resets_on) {
+                    if (existing_meter != null && existing_meter.reset != null && ent.limit != null && ent.limit.resets && Time.now() > existing_meter.reset) {
                         const now = Time.now();
-                        while (now > ent.limit.resets_on) ent.limit.resets_on += ent.limit.reset_inc;
-                        new_value = 0;
+                        while (now > existing_meter.reset) existing_meter.reset += ent.limit.reset_inc;
+                        new_value = value;
                     }
 
                     const res = ent.check(new_value, enforce);
@@ -170,10 +203,15 @@ State: {
                         const changed = new_value != old_value;
                         existing_meter.credit = ent.limit.credit;
                         existing_meter.value = new_value;
+
+                        if (existing_meter.reset == null && ent.limit.resets) {
+                            existing_meter.reset = Time.now() + ent.limit.reset_inc;
+                        }
+
                         subject.meters.insert(entitlement, existing_meter);
                         
                         if (changed) {
-                            const credit = <State>.credit(existing_meter.credit);
+                            const credit = self.credit(existing_meter.credit);
                             const event_value = new {
                                 meter: new {
                                     old: old_value,
@@ -188,7 +226,7 @@ State: {
                             drop(event_value);
                         }
                     } else if (ent.limit != null && !res) {
-                        const credit = <State>.credit(ent.limit.credit);
+                        const credit = self.credit(ent.limit.credit);
                         const event_value = new {
                             subject,
                             entitlement,
@@ -208,15 +246,14 @@ State: {
     }
 
 
-    #[static]
     /**
      * Perform an entitlement check for a subject by ID.
      * By default, any limit enforcements will not take effect.
      */
     fn check(id: str!, entitlement: str!, value: float = 0, enforce: bool = false) -> bool {
-        const subject = <State>.subject(id);
+        const subject = self.subject(id);
         if (subject != null) {
-            const plan = <State>.plan(subject.plan);
+            const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
@@ -224,8 +261,8 @@ State: {
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
                     // check if the new value should be reset!
-                    if (ent.limit != null && ent.limit.resets_on != null && Time.now() > ent.limit.resets_on) {
-                        new_value = 0;
+                    if (existing_meter != null && existing_meter.reset != null && ent.limit != null && ent.limit.resets && Time.now() > existing_meter.reset) {
+                        new_value = value;
                     }
 
                     return ent.check(new_value, enforce);
@@ -240,25 +277,22 @@ State: {
      * Credits.
      *****************************************************************************/
     
-    #[static]
     /**
      * Get a global credit type.
      */
     fn credit(id: str!) -> Credit {
-        const state = <State>.global();
-        state.credits.get(id)
+        self.credits.get(id)
     }
 
 
-    #[static]
     /**
      * Get a credit type for a specific entitlement (that has a limit).
      * ID can be a plan ID or a subject ID.
      */
     fn credit_for(id: str!, entitlement: str!) -> Credit {
-        const ent = <State>.entitlement(id, entitlement);
+        const ent = self.entitlement(id, entitlement);
         if (ent != null && ent.limit != null) {
-            return <State>.credit(ent.limit.credit);
+            return self.credit(ent.limit.credit);
         }
         null
     }
@@ -268,36 +302,33 @@ State: {
      * Subjects.
      *****************************************************************************/
     
-    #[static]
     /**
      * Get a global subject by ID.
      */
     fn subject(id: str!) -> Subject {
-        const state = <State>.global();
-        const sub = state.subjects.get(id);
+        const sub = self.subjects.get(id);
         if (sub == null) {
-            const alt = state.alt_subject_ids.get(id);
-            if (alt != null) return this(alt);
+            const alt = self.alt_subject_ids.get(id);
+            if (alt != null) return self.subject(alt);
         }
         sub
     }
 
 
-    #[static]
     /**
      * Create a subject with an ID and plan ID.
      */
-    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User') -> Subject {
-        const state = <State>.global();
-        const pn = state.plan(plan);
+    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str) -> Subject {
+        const pn = self.plan(plan);
         if (pn != null) {
 
             // check for existing subject to update
-            const existing: Subject = state.subjects.get(id);
+            const existing: Subject = self.subjects.get(id);
             if (existing != null) {
                 existing.type = type;
                 existing.label = label;
                 existing.plan = plan;
+                existing.org = org ?? existing.org;
                 <Event>.send('subject-updated', existing);
                 return existing;
             }
@@ -307,8 +338,9 @@ State: {
                 plan,
                 type,
                 label,
-            } on state.subjects;
-            state.subjects.insert(id, subject);
+                org,
+            } on self.subjects;
+            self.subjects.insert(id, subject);
             <Event>.send('subject-added', subject);
             return subject;
         }
@@ -316,49 +348,43 @@ State: {
     }
 
 
-    #[static]
     /**
      * Delete a subject.
      */
     fn delete_subject(id: str!) -> bool {
-        const state = <State>.global();
-        const subject = state.subject(id);
+        const subject = self.subject(id);
         if (subject != null) {
             await <Event>.send('subject-removing', subject);
-            for (const alt in subject.alt_ids) state.delete_alt_subject_id(alt);
-            return state.subjects.remove(subject.id);
+            for (const alt in subject.alt_ids) self.delete_alt_subject_id(alt);
+            return self.subjects.remove(subject.id);
         }
         false
     }
 
 
-    #[static]
     /**
      * Set an alternative subject ID (must be unique).
      */
     fn set_alt_subject_id(subject_id: str!, alt_id: str!) -> bool {
-        const state = <State>.global();
-        const subject = <State>.subject(subject_id);
+        const subject = self.subject(subject_id);
         if (subject != null) {
             subject.alt_ids.remove_all(alt_id);
             subject.alt_ids.push_back(alt_id);
-            state.alt_subject_ids.insert(alt_id, subject_id);
+            self.alt_subject_ids.insert(alt_id, subject_id);
             return true;
         }
         false
     }
 
 
-    #[static]
     /**
      * Delete an alternative subject ID.
      */
     fn delete_alt_subject_id(subject_id: str!) -> bool {
-        const state = <State>.global();
-        const subject = <State>.subject(subject_id);
+        const subject = self.subject(subject_id);
         if (subject != null) {
             subject.alt_ids.remove_all(subject_id);
         }
-        state.alt_subject_ids.remove(subject_id)
+        self.alt_subject_ids.remove(subject_id)
     }
 }

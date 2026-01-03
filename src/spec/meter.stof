@@ -23,6 +23,9 @@ Meter: {
     /// Credit ID.
     str! credit: '';
 
+    /// This meter resets on this timestamp.
+    ms reset: null;
+
     /// Value of this meter.
     float value: 0;
 }

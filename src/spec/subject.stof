@@ -33,6 +33,9 @@ Subject: {
     /// Use State API.
     list! alt_ids: [];
 
+    /// Optional organization subject ID for this user.
+    str org: null;
+
     /// An optional type of this subject.
     /// Ex. user, organization, seat, etc.
     str! type: 'user';
@@ -44,43 +47,4 @@ Subject: {
     /// These map to entitlements by name for a plan.
     /// Lazily populated.
     obj! meters: {};
-
-
-    #[run]
-    /**
-     * Run this subject.
-     * Adds and moves subject to the GlobalState.
-     */
-    fn add_to_global_state() {
-        const state = <State>.global();
-        
-        // check for existing subject to update
-        const existing: Subject = state.subjects.get(self.id);
-        if (existing != null && existing != self) {
-            for (const id in self.alt_ids) {
-                state.set_alt_subject_id(self.id, id);
-            }
-            existing.type = self.type;
-            existing.label = self.label;
-            existing.plan = self.plan;
-            for (const pair in self.meters.fields()) {
-                if ((typeof pair[1]) == 'obj' && pair[1].instance_of('Meter')) {
-                    existing.meters.remove(pair[0], shallow = false);
-                    pair[1].move(existing.meters);
-                    existing.meters.insert(pair[0], pair[1]);
-                }
-            }
-            <Event>.send('subject-updated', existing);
-            return;
-        }
-
-        self.move(state.subjects);
-        state.subjects.insert(self.id, self);
-        
-        const alts = copy(self.alt_ids);
-        for (const id in alts) {
-            state.set_alt_subject_id(self.id, id);
-        }
-        <Event>.send('subject-added', self);
-    }
 }
