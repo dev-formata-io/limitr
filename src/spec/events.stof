@@ -51,34 +51,6 @@ Event: {
 AppEvents: {
 
     /*****************************************************************************
-     * Plans.
-     *****************************************************************************/
-    
-    #[plan-added]
-    /**
-     * Plan added.
-     * Called when a plan has been added to the Limitr.
-     */
-    fn app_plan_added(plan: Plan) {
-        ?App.plan_added(plan);
-    }
-
-
-    /*****************************************************************************
-     * Credits.
-     *****************************************************************************/
-    
-    #[credit-added]
-    /**
-     * Credit added.
-     * Called when a new type of credit is added to the Limitr.
-     */
-    fn app_credit_added(credit: Credit) {
-        if (lib('App')) ?App.credit_added(stringify('json', credit));
-    }
-
-
-    /*****************************************************************************
      * Meters.
      *****************************************************************************/
     

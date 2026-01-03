@@ -38,7 +38,7 @@ Limitr: {
      * Get the global limitr policy if any.
      * Mark the global policy with #[type('global')].
      *
-     * <Limitr>.global()
+     * <Limitr>.global() or just <global>
      */
     fn global() -> Limitr {
         <global>
@@ -305,7 +305,7 @@ Limitr: {
     /**
      * Create a subject with an ID and plan ID.
      */
-    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str) -> Subject {
+    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Subject {
         const pn = self.plan(plan);
         if (pn != null) {
 
@@ -328,6 +328,10 @@ Limitr: {
                 org,
             } on self.subjects;
             self.subjects.insert(id, subject);
+
+            // init alternative ids
+            if (alts != null) for (const alt in alts) self.set_alt_subject_id(id, alt);
+
             <Event>.send('subject-added', subject);
             return subject;
         }

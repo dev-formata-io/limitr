@@ -69,8 +69,7 @@ Limitr policy: {
 
     #[init]
     fn init_test_subjects() {
-        self.create_subject('me', 'paid');
-        self.set_alt_subject_id('me', 'cj');
+        self.create_subject('me', 'paid', alts=['cj']);
     }
 }
 
