@@ -20,4 +20,4 @@ import './plan';
 import './subject';
 import './entitlement';
 import './meter';
-import './state';
+import './limitr';
