@@ -1,63 +1,99 @@
 # Limitr: Open-Source Monetization Policy
-Simple, open-source policy engine for embedded monetization logic, designed for AI, developer tools, and open-source products.
+**Limitr is an embedded, open-source policy engine for enforcing plans, limits, and usage in your application.**
 
-> Limitr answers the question: *"Who is allowed to do what, when, and why?"*.
+It is designed for AI products, developer tools, and open-source software where monetization logic must be:
+- inspectable
+- portable
+- deterministic
+- and not hard-coded into application logic
 
-- Define plans, limits, and entitlements in a simple policy document, not code
-- Works offline, embedded, over-the-wire, and self-hosted
-- No redeploy required to change limits
-- Stripe-agnostic, billing-agnostic
-- Inspectable and auditable for everyone
-- Evolves independently from product
-- Extensible & event-driven (Stripe, Paddle, or custom internal add-ons and adapters)
-- Built on [Stof](https://docs.stof.dev) (open-source data + logic runtime)
+> Limitr answers the question:
+> **"What is this subject allowed to consume, right now, and what happens if it exceeds the limit?"**
+
+👉 Jump to the [Quick Example](#example-seat-based-plan-enforcement-typescript)
+
+## What Limitr Gives You
+- Define plans, entitlements, and limits in a policy document — not application code
+- Enforce limits locally and offline, embedded directly in your app
+- Change limits without redeploying
+- Stripe-agnostic and billing-system-agnostic
+- Inspectable and auditable by developers and customers
+- Event-driven enforcement (usage changes, overages, denials)
+- Policy evolves independently from product code
+- Built on [Stof](https://docs.stof.dev), an open-source data + logic runtime
+
+## What Limitr Is Not
+- Not a billing system
+- Not a payment processor
+- Not a hosted SaaS requirement
+- Not a feature-flag system
+
+Limitr enforces **truth** about usage and limits.
+Billing and payments can subscribe to Limitr’s events.
+
+Limitr is designed to integrate cleanly with existing systems, not replace them.
 
 ## Why
-Monetization logic is a total pain for developers. It's always changing, usually compiled right into the app which causes issues (even SDKs), rarely easily inspectable/configurable, and gets complex with AI & usage-based apps.
+Most applications implement monetization logic in files like `limits.ts`:
+- seat limits
+- usage caps
+- plan checks
+- special cases and overrides
 
-Stripe (or payments system) alone doesn't cut it and vendor lockin with additional SaaS products (and price) is just as messy, meaning you're pretty much on your own for handling monetization.
+Over time, this logic:
+- becomes tightly coupled to the app
+- requires redeploys to change pricing
+- is hard to audit or explain
+- breaks down with usage-based or AI pricing
 
-Limitr is a simple FOSS solution that works anywhere and will take you 5 minutes to get spun up.
+Payments systems (like Stripe) handle money, but not **enforcement**.
 
-## Seat-Based Limits Example (TypeScript)
+Limitr separates **monetization policy** from application logic, so limits are:
+- explicit
+- portable
+- testable
+- and easy to evolve
+
+## Who Limitr Is For
+Limitr is a good fit if you are:
+- Building an AI or usage-based product
+- Implementing seat-based or credit-based pricing
+- Shipping developer tools or infrastructure
+- Supporting self-hosted or open-source deployments
+- Tired of hardcoding pricing logic in application code
+
+## Example: Seat-Based Plan Enforcement (TypeScript)
 ```typescript
 import { Limitr } from 'jsr:@formata/limitr';
 
 // Load a Limitr policy from a DB, string, file, API, etc.
-// This is Stof, so you can add additional events, functions, etc. right to it if needed.
+// Stof is the default format, but can also be yaml, json, etc.
 const policy = await Limitr.new(`
-policy: {
-    credits: {
-        seat: { description: 'A single seat credit that can be tracked per subject.' }
-    }
-    plans: {
-        free: {
-            entitlements: {
-                seats: {
-                    description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
-                    limit: {
-                        credit: 'seat'
-                        value: 1
-                        increment: 1
-                    }
-                }
-            }
-        }
-        paid: {
-            entitlements: {
-                seats: {
-                    description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
-                    limit: {
-                        credit: 'seat'
-                        value: 3
-                        increment: 1
-                    }
-                }
-            }
-        }
-    }
-}
-`);
+policy:
+  credits:
+    seat:
+      description: 'A single seat credit that can be tracked per subject.'
+  plans:
+    free:
+      entitlements:
+        seats:
+          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          limit:
+            credit: 'seat'
+            value: 1
+            increment: 1
+    paid:
+      entitlements:
+        seats:
+          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          limit:
+            credit: 'seat'
+            value: 3
+            increment: 1
+`, 'yaml');
+
+// Entitlements define features + limits (gated behaviors) on plans.
+// Meters are state stored per subject per entitlement.
 
 // Create/save/load subjects (database, Stripe, etc.)
 await policy.addSubject('cus_free_customer', 'free');
@@ -75,7 +111,7 @@ policy.doc.lib('App', 'meter_limit', (json: string) => {
     }
 });
 
-// Will return false and send an meter-limit event in the doc (if App.meter_limit exists, it will also be called)
+// Will return false and emit an meter-limit event in the doc (if App.meter_limit exists, it will also be called)
 if (await policy.increment('cus_free_customer', 'seats')) throw Error("will not get here");
 if (await policy.meter('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
 if (await policy.increment('cus_paid_customer', 'seats')) {
@@ -89,3 +125,20 @@ if (await policy.increment('cus_paid_customer', 'seats')) {
 FREE PLAN SEAT LIMIT HIT, current:  1  requested:  2
 FREE PLAN SEAT LIMIT HIT, current:  1  requested:  3
 ```
+
+### What's happening here?
+- Plans define which entitlements a subject has
+- Entitlements define how a meter is allowed to change with limits
+- Meters are stored on each subject as state
+- Limitr enforces limits and emits events when limits are hit
+- The application decides how to respond (deny, warn, bill, notify)
+
+## License
+Apache 2.0. See LICENSE for details.
+
+## Contributing
+- Open issues or discussions on [GitHub](https://github.com/dev-formata-io/limitr)
+- Chat with us on [Discord](https://discord.gg/Up5kxdeXZt)
+- Star the project to support future development!
+
+> Reach out to info@stof.dev to contact us directly

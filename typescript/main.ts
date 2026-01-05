@@ -31,17 +31,18 @@ export class Limitr {
      * Make sure StofDoc.initialize() has been called for Stof first.
      * This will always add the Limitr Stof types, etc.
      */
-    constructor(policy: string = 'Limitr policy: {}', format: string = 'stof') {
+    constructor(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof') {
         this.doc = new StofDoc();
         this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-        this.doc.parse(policy, format);
+        if (policy instanceof Uint8Array) this.doc.stof.binaryImport(policy, format, null, 'prod');
+        else this.doc.parse(policy, format);
     }
 
 
     /**
      * Async constructor that ensures Stof wasm initialization.
      */
-    static async new(policy: string = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
+    static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
         await StofDoc.initialize();
         return new Limitr(policy, format);
     }

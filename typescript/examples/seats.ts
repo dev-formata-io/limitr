@@ -17,41 +17,30 @@
 import { Limitr } from '../main.ts';
 
 // Load a Limitr policy from a DB, string, file, API, etc.
+// Stof is the default format, but can also be yaml, json, etc.
 const policy = await Limitr.new(`
-policy: {
-    credits: {
-        seat: {
-            description: 'A single seat credit that can be tracked per subject.'
-        }
-    }
-    plans: {
-        free: {
-            entitlements: {
-                seats: {
-                    description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
-                    limit: {
-                        credit: 'seat'
-                        value: 1
-                        increment: 1
-                    }
-                }
-            }
-        }
-        paid: {
-            entitlements: {
-                seats: {
-                    description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
-                    limit: {
-                        credit: 'seat'
-                        value: 3
-                        increment: 1
-                    }
-                }
-            }
-        }
-    }
-}
-`);
+policy:
+  credits:
+    seat:
+      description: 'A single seat credit that can be tracked per subject.'
+  plans:
+    free:
+      entitlements:
+        seats:
+          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          limit:
+            credit: 'seat'
+            value: 1
+            increment: 1
+    paid:
+      entitlements:
+        seats:
+          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          limit:
+            credit: 'seat'
+            value: 3
+            increment: 1
+`, 'yaml');
 
 // Create/save/load subjects (database, Stripe, etc.)
 await policy.addSubject('cus_free_customer', 'free');
