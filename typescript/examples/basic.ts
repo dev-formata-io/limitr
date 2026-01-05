@@ -14,26 +14,27 @@
 // limitations under the License.
 //
 
-import { assert } from '@std/assert';
+import { assert } from 'jsr:@std/assert@^1.0.16';
 import { Limitr } from "../main.ts";
 
 
 const limitr = await Limitr.new(`
-Limitr policy: {
+policy: {
     credits: {
-        Credit seat: {
+        seat: {
             unit: 'seat'
             description: 'A single seat.'
             label: 'Seat'
         }
     }
     plans: {
-        Plan free: {
+        free: {
             label: 'Free'
             entitlements: {
+                #[type('FreeSeats')]
                 Entitlement seats: {
-                    description: 'How many seats per organization are allowed.'
-                    Limit limit: {
+                    description: 'How many seats per subject are allowed.'
+                    limit: {
                         credit: 'seat'
                         value: 3
                         increment: 1
@@ -41,10 +42,20 @@ Limitr policy: {
                 }
             }
         }
+        paid: {
+            label: 'Paid'
+            entitlements: {
+                #[init]
+                fn copy_seats() {
+                    self.seats = new FreeSeats {};
+                    self.seats.limit.value = 10;
+                }
+            }
+        }
     }
 }
 `);
-
+console.log(await limitr.plan('paid'));
 
 // Create a test subject to play with
 const sid = 'cus_example_id';
@@ -62,6 +73,12 @@ assert(!(await limitr.increment(sid, 'seats'))); // hit max
 
 assert(await limitr.deincrement(sid, 'seats')); // remove one seat
 assert(await limitr.increment(sid, 'seats')); // add another seat
+
+
+// Create a paid customer to test with
+await limitr.addSubject('cus_paid', 'paid');
+assert(await limitr.meter('cus_paid', 'seats', 10)); // take up all 10
+assert(!(await limitr.increment('cus_paid', 'seats')));
 
 
 // Update the free plan to have 5 seats

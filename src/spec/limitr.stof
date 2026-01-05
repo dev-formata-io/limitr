@@ -200,7 +200,7 @@ Limitr: {
         if (subject != null) {
             let pn = self.plans.get(subject.plan);
             if (pn == null && subject.org != null) pn = self.plan_for(subject.org);
-            pn
+            return pn;
         }
         null
     }

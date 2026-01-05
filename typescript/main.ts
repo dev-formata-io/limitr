@@ -200,20 +200,82 @@ export class Limitr {
     /*****************************************************************************
      * Entitlements API.
      *****************************************************************************/
+
+    /**
+     * Get an entitlement record with a plan ID or subject ID and an entitlement name.
+     */
+    async entitlement(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
+        const node = await this.doc.call('<Limitr>.api.entitlement', id, entitlement);
+        if (typeof node === 'string') return this.doc.record(node);
+        return undefined;
+    }
+
+
+    /**
+     * Get the limit value for a metered entitlement.
+     * ID can be a subject ID or a plan ID (to get the specific entitlement from a plan).
+     */
+    async limit(id: string, entitlement: string): Promise<number | null> {
+        return await this.doc.call('<Limitr>.api.limit', id, entitlement) as number | null;
+    }
+
+
+    /**
+     * Get the remaining balance for a subject's entitlement (limit - current (metered) value).
+     */
+    async balance(subject: string, entitlement: string): Promise<number | null> {
+        return await this.doc.call('<Limitr>.api.balance', subject, entitlement) as number | null;
+    }
+
+
+    /**
+     * Get the current meter value for a subject's entitlement.
+     */
+    async value(subject: string, entitlement: string): Promise<number | null> {
+        return await this.doc.call('<Limitr>.api.value', subject, entitlement) as number | null;
+    }
+
+
+    /**
+     * Get the cost for a standard increment on an entitlement (if set on its limit).
+     */
+    async cost(id: string, entitlement: string): Promise<number | null> {
+        return await this.doc.call('<Limitr>.api.cost', id, entitlement) as number | null;
+    }
+
     
     /**
      * Try changing the value of a metered entitlement using a standard increment (defined in the Limit).
+     * This is the same as using "meter" with the "cost" of a standard increment for this entitlement.
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
      */
-    async increment(id: string, entitlement: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.increment', id, entitlement) as boolean;
+    async increment(subject: string, entitlement: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.increment', subject, entitlement) as boolean;
     }
 
 
     /**
      * Try changing the value of a metered entitlement by removing a standard increment (defined in the Limit).
+     * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      */
-    async deincrement(id: string, entitlement: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.deincrement', id, entitlement) as boolean;
+    async deincrement(subject: string, entitlement: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
+    }
+
+
+    /**
+     * Try changing the value of a metered entitlement by the given value.
+     * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     */
+    async meter(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.meter', subject, entitlement, value, true) as boolean;
+    }
+
+
+    /**
+     * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     */
+    async check(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.check', subject, entitlement, value, false) as boolean;
     }
 }

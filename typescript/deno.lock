@@ -21,8 +21,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@formata/stof@~0.9.3",
-      "jsr:@std/assert@^1.0.16"
+      "jsr:@formata/stof@~0.9.3"
     ]
   }
 }

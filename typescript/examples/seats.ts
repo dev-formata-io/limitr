@@ -1,32 +1,28 @@
-# Limitr: Open-Source Monetization Logic as Policy
-Simple, open-source policy engine for embedded monetization logic, designed for AI, developer tools, and open-source products.
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 
-> Limitr answers the question: *"Who is allowed to do what, when, and why?"*.
-
-- Define plans, limits, and entitlements in a simple policy document, not code
-- Works offline, embedded, over-the-wire, and self-hosted
-- Stripe-agnostic, billing-agnostic
-- Inspectable and auditable for everyone
-- Evolves independently from product
-- Extensible & event-driven (Stripe, Paddle, or custom internal add-ons and adapters)
-- Built on [Stof](https://docs.stof.dev) (open-source data + logic runtime)
-
-## Why
-Monetization logic is a total pain for developers. It's always changing, usually compiled right into the app which causes issues (even SDKs), rarely easily inspectable/configurable, and gets complex with AI & usage-based apps.
-
-Stripe (or payments system) alone doesn't cut it and vendor lockin with additional SaaS products (and price) is just as messy, meaning you're pretty much on your own for handling monetization.
-
-Limitr is a simple FOSS solution that works anywhere and will take you 5 minutes to get spun up.
-
-## Seat-Based Limits Example (TypeScript)
-```typescript
-import { Limitr } from 'jsr:@formata/limitr';
+import { Limitr } from '../main.ts';
 
 // Load a Limitr policy from a DB, string, file, API, etc.
 const policy = await Limitr.new(`
 policy: {
     credits: {
-        seat: { description: 'A single seat credit that can be tracked per subject.' }
+        seat: {
+            description: 'A single seat credit that can be tracked per subject.'
+        }
     }
     plans: {
         free: {
@@ -69,4 +65,3 @@ if (await policy.increment('cus_free_customer', 'seats')) throw Error("will not 
 if (await policy.increment('cus_paid_customer', 'seats')) {
     // paid customer can add a second seat
 }
-```
