@@ -98,6 +98,17 @@ AppEvents: {
     }
 
 
+    #[meter-overage]
+    /**
+     * Meter overage.
+     * Called when a Limit mode is "soft" and the meter value is over the limit.
+     * Equal to #[meter-changed], but only fires when the new value is over the defined limit.
+     */
+    fn app_meter_overage(value: obj) {
+        if (lib('App')) ?App.meter_overage(stringify('json', value));
+    }
+
+
     #[meter-limit]
     /**
      * Meter limited.

@@ -118,13 +118,13 @@ Limitr: {
         }
 
         /// Change the value of an entitlement meter for a subject.
-        fn meter(id: str!, entitlement: str!, value: float = 0, enforce: bool = true) -> bool {
-            ?self.get().meter(id, entitlement, value, enforce)
+        fn meter(id: str!, entitlement: str!, value: float = 0) -> bool {
+            ?self.get().meter(id, entitlement, value)
         }
 
         /// Perform an entitlement check for a subject by ID.
-        fn check(id: str!, entitlement: str!, value: float = 0, enforce: bool = false) -> bool {
-            ?self.get().check(id, entitlement, value, enforce)
+        fn check(id: str!, entitlement: str!, value: float = 0) -> bool {
+            ?self.get().check(id, entitlement, value)
         }
 
 
@@ -257,7 +257,7 @@ Limitr: {
      */
     fn limit(id: str!, entitlement: str!) -> float {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null && !ent.limit.unlimited) return ent.limit.value;
+        if (ent != null && ent.limit != null && ent.limit.mode != 'observe') return ent.limit.value;
         null
     }
 
@@ -270,7 +270,7 @@ Limitr: {
         const subject = self.subject(id);
         if (subject != null) {
             const ent = self.entitlement(id, entitlement);
-            if (ent != null && ent.limit != null && !ent.limit.unlimited) {
+            if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
                 const meter: Meter = subject.meters.get(entitlement);
                 if (meter != null) return ent.limit.value - meter.value;
                 return ent.limit.value;
@@ -340,7 +340,7 @@ Limitr: {
      *
      * This may be the only function you need to use in your codebase.
      */
-    fn meter(id: str!, entitlement: str!, value: float = 0, enforce: bool = true) -> bool {
+    fn meter(id: str!, entitlement: str!, value: float = 0) -> bool {
         const subject = self.subject(id);
         if (subject != null) {
             const plan = self.plan_for(id);
@@ -357,10 +357,11 @@ Limitr: {
                         new_value = value;
                     }
 
-                    const res = ent.check(new_value, enforce);
+                    const res = ent.check(new_value);
 
                     // create/change meter if there is a limit defined
-                    if (res && ent.limit != null) {
+                    // if not a valid value and mode is "soft", emit overage and allow
+                    if (ent.limit != null && (res || ent.limit.mode == 'soft')) {
                         if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
@@ -386,6 +387,7 @@ Limitr: {
                                 credit,
                             };
                             await <Event>.send('meter-changed', event_value);
+                            if (!res) await <Event>.send('meter-overage', event_value);
                             drop(event_value);
                         }
                     } else if (ent.limit != null && !res) {
@@ -413,7 +415,7 @@ Limitr: {
      * Perform an entitlement check for a subject by ID.
      * By default, any limit enforcements will not take effect.
      */
-    fn check(id: str!, entitlement: str!, value: float = 0, enforce: bool = false) -> bool {
+    fn check(id: str!, entitlement: str!, value: float = 0) -> bool {
         const subject = self.subject(id);
         if (subject != null) {
             const plan = self.plan_for(id);
@@ -428,7 +430,7 @@ Limitr: {
                         new_value = value;
                     }
 
-                    return ent.check(new_value, enforce);
+                    return ent.check(new_value);
                 }
             }
         }

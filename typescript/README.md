@@ -5,6 +5,7 @@ Simple, open-source policy engine for embedded monetization logic, designed for 
 
 - Define plans, limits, and entitlements in a simple policy document, not code
 - Works offline, embedded, over-the-wire, and self-hosted
+- No redeploy required to change limits
 - Stripe-agnostic, billing-agnostic
 - Inspectable and auditable for everyone
 - Evolves independently from product

@@ -23,9 +23,11 @@ Limit: {
     /// Credit ID.
     str! credit: '';
 
-    /// Unlimited?
-    /// If true, this limit defines a credit type and meter, but does not enforce an actual limit.
-    bool unlimited: false;
+    /// Mode.
+    /// "hard" - (default) Deny immediately.
+    /// "soft" - Allow, but emit overage events instead of changed events after limit.
+    /// "observe" - Never deny, only record (unlimited value).
+    str! mode: 'hard';
 
     /// Value of this limit.
     float value: 0;
@@ -44,15 +46,8 @@ Limit: {
     /**
      * Check this limit against a value.
      */
-    fn check(value: float = 0, enforce: bool = true) -> bool {
-        if (value > self.value && !self.unlimited) {
-            if (enforce) {
-                if ((typeof self.enforcement) == 'fn') self.enforcement();
-                else if ((typeof self.enforcement) == 'obj') {
-                    if ((typeof self.enforcement.callback) == 'fn') self.enforcement.callback();
-                    else self.enforcement.run();
-                }
-            }
+    fn check(value: float = 0) -> bool {
+        if (value > self.value && self.mode != 'observe') {
             return false;
         }
         true
@@ -78,9 +73,9 @@ Entitlement: {
     /**
      * Check this entitlement.
      */
-    fn check(value: float = 0, enforce: bool = true) -> bool {
+    fn check(value: float = 0) -> bool {
         if (!self.enabled) return false;
-        if (self.limit != null) return self.limit.check(value, enforce);
+        if (self.limit != null) return self.limit.check(value);
         true
     }
 }

@@ -31,19 +31,19 @@ export class Limitr {
      * Make sure StofDoc.initialize() has been called for Stof first.
      * This will always add the Limitr Stof types, etc.
      */
-    constructor(policy: string = 'Limitr policy: {}') {
+    constructor(policy: string = 'Limitr policy: {}', format: string = 'stof') {
         this.doc = new StofDoc();
         this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-        this.doc.parse(policy);
+        this.doc.parse(policy, format);
     }
 
 
     /**
      * Async constructor that ensures Stof wasm initialization.
      */
-    static async new(policy: string = 'Limitr policy: {}'): Promise<Limitr> {
+    static async new(policy: string = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
         await StofDoc.initialize();
-        return new Limitr(policy);
+        return new Limitr(policy, format);
     }
 
 
@@ -268,7 +268,7 @@ export class Limitr {
      * Same as "check" for entitlements without a limit/meter (boolean entitlement).
      */
     async meter(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.meter', subject, entitlement, value, true) as boolean;
+        return await this.doc.call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
     }
 
 
@@ -276,6 +276,6 @@ export class Limitr {
      * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
      */
     async check(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.check', subject, entitlement, value, false) as boolean;
+        return await this.doc.call('<Limitr>.api.check', subject, entitlement, value) as boolean;
     }
 }

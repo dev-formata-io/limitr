@@ -42,7 +42,7 @@ Limitr policy: {
                     description: 'Unlimited token spend.'
                     Limit limit: {
                         credit: 'token'
-                        unlimited: true
+                        mode: 'observe'
                     }
                 }
             }
