@@ -14,14 +14,11 @@
 // limitations under the License.
 //
 
-import { StofDoc } from '@formata/stof';
 import { assert } from '@std/assert';
-import { limitrApi } from "../limitr.ts";
+import { Limitr } from "../main.ts";
 
 
-const doc = await StofDoc.new();
-doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-doc.parse(`
+const limitr = await Limitr.new(`
 Limitr policy: {
     credits: {
         Credit seat: {
@@ -51,18 +48,17 @@ Limitr policy: {
 
 // Create a test subject to play with
 const sid = 'cus_example_id';
-await doc.call('<Limitr>.api.create_subject', sid, 'free', 'organization', 'Organization', null, ['formata']);
-
+await limitr.addSubject(sid, 'free', 'org', 'Formata', null, ['formata']);
 
 // Check the seats policy for our subject
-doc.lib('App', 'meter_limit', (json: string) => {
+limitr.doc.lib('App', 'meter_limit', (json: string) => {
     const record = JSON.parse(json);
     console.log('LIMIT HIT FOR: ', record);
 });
-assert(await doc.call('<Limitr>.api.increment', 'formata', 'seats'));
-assert(await doc.call('<Limitr>.api.increment', sid, 'seats'));
-assert(await doc.call('<Limitr>.api.increment', 'formata', 'seats'));
-assert(!(await doc.call('<Limitr>.api.increment', sid, 'seats'))); // hit max
+assert(await limitr.increment(sid, 'seats'));
+assert(await limitr.increment(sid, 'seats'));
+assert(await limitr.increment('formata', 'seats'));
+assert(!(await limitr.increment(sid, 'seats'))); // hit max
 
-
-// await doc.run(); // PRINT POLICY AS TOML
+assert(await limitr.deincrement(sid, 'seats')); // remove one seat
+assert(await limitr.increment(sid, 'seats')); // add another seat

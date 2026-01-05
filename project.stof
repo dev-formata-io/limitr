@@ -19,8 +19,8 @@ import 'src/mod' as self.Imported;
 
 #[typescript]
 async fn create_typescript() {
-    const string: str = blobify('bstf', self.Imported).base64();
-    const out = "export const limitrApi: Uint8Array = Uint8Array.from(atob(`" + string + "`), c=>c.charCodeAt(0));";
+    const array: list = blobify('bstf', self.Imported);
+    const out = `export const limitrApi = new Uint8Array(${str(array)});`;
     fs.write('typescript/limitr.ts', out);
 }
 
