@@ -62,7 +62,7 @@ Limitr is a good fit if you are:
 - Supporting self-hosted or open-source deployments
 - Tired of hardcoding pricing logic in application code
 
-## Example: Seat-Based Plan Enforcement (TypeScript)
+## Example: Seat-Based Plan Enforcement (TypeScript [JSR](https://jsr.io/@formata/limitr))
 ```typescript
 import { Limitr } from 'jsr:@formata/limitr';
 
