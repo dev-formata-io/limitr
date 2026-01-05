@@ -14,23 +14,18 @@
 // limitations under the License.
 //
 
+import 'src/mod' as self.Imported;
 
-#[type]
-/**
- * A Limitr credit (abstract currency).
- * Could be a seat, token, etc.
- */
-Credit: {
-    /// Unit (singular).
-    str! unit: 'credit';
 
-    /// Optional description.
-    str description: '';
+#[typescript]
+async fn create_typescript() {
+    const string: str = blobify('bstf', self.Imported).base64();
+    const out = "export const limitrApi: Uint8Array = Uint8Array.from(atob(`" + string + "`), c=>c.charCodeAt(0));";
+    fs.write('typescript/limitr.ts', out);
+}
 
-    /// Human-facing label for this credit.
-    str! label: 'Credit';
 
-    /// Exchange rate (per credit).
-    /// Use however you'd like.
-    float exchange: 1;
+#[main]
+fn main() {
+    self.create_typescript();
 }

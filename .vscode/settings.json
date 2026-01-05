@@ -10,5 +10,5 @@
         "activityBar.foreground": "#fff",
     },
     "rust-analyzer.showUnlinkedFileNotification": false,
-    "deno.enablePaths": ["web"],
+    "deno.enablePaths": ["typescript"],
 }

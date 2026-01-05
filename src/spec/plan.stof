@@ -23,9 +23,6 @@ Plan: {
     /// Human-facing label for this plan.
     str! label: '';
 
-    /// Version of this plan.
-    ver! version: 0.1.0;
-
     /// Entitlements that this plan contains.
     obj! entitlements: {};
 }
