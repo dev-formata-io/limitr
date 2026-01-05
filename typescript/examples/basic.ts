@@ -62,3 +62,20 @@ assert(!(await limitr.increment(sid, 'seats'))); // hit max
 
 assert(await limitr.deincrement(sid, 'seats')); // remove one seat
 assert(await limitr.increment(sid, 'seats')); // add another seat
+
+
+// Update the free plan to have 5 seats
+await limitr.setPlan('free', `
+label: 'Free'
+entitlements: {
+    Entitlement seats: {
+        description: 'How many seats per organization are allowed.'
+        Limit limit: {
+            credit: 'seat'
+            value: 5
+            increment: 1
+        }
+    }
+}
+`);
+console.log(await limitr.creditFor(sid, 'seats'));

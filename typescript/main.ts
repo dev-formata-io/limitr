@@ -48,8 +48,88 @@ export class Limitr {
 
 
     /*****************************************************************************
+     * Plans API.
+     *****************************************************************************/
+
+    /**
+     * Get a plan record by ID (plan ID or subject ID).
+     */
+    async plan(id: string): Promise<Record<string, unknown> | undefined> {
+        const planNode = await this.doc.call('<Limitr>.api.plan', id);
+        if (typeof planNode === 'string') return this.doc.record(planNode);
+        return undefined;
+    }
+    
+    
+    /**
+     * Set a plan on this policy by name/ID.
+     * Returns a node ID to the resulting Plan.
+     */
+    async setPlan(id: string, planStof: string): Promise<string | null> {
+        return await this.doc.call('<Limitr>.api.set_plan', id, planStof) as string | null;
+    }
+
+
+    /**
+     * Delete a plan by ID.
+     */
+    async deletePlan(id: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.delete_plan', id) as boolean;
+    }
+
+
+    /*****************************************************************************
+     * Credits API.
+     *****************************************************************************/
+    
+    /**
+     * Get a credit record by ID/type.
+     */
+    async credit(id: string): Promise<Record<string, unknown> | undefined> {
+        const node = await this.doc.call('<Limitr>.api.credit', id);
+        if (typeof node === 'string') return this.doc.record(node);
+        return undefined;
+    }
+
+
+    /**
+     * Get a credit record for a specific entitlement.
+     * ID can be a plan ID or a subject ID.
+     */
+    async creditFor(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
+        const node = await this.doc.call('<Limitr>.api.credit_for', id, entitlement);
+        if (typeof node === 'string') return this.doc.record(node);
+        return undefined;
+    }
+
+
+    /*****************************************************************************
      * Subjects API.
      *****************************************************************************/
+
+    /**
+     * Get a subject record by ID (or alternative IDs).
+     */
+    async subject(id: string): Promise<Record<string, unknown> | undefined> {
+        const subNode = await this.doc.call('<Limitr>.api.subject', id);
+        if (typeof subNode === 'string') return this.doc.record(subNode);
+        return undefined;
+    }
+
+
+    /**
+     * Get all subjects as a single record.
+     * Subjects contain all state information, so this is all that is required to save/load.
+     */
+    async subjects(): Promise<Record<string, unknown> | undefined> {
+        const node = await this.doc.call('<Limitr>.api.get');
+        if (typeof node === 'string') {
+            const subs = this.doc.get('subjects', node);
+            if (typeof subs === 'string') return this.doc.record(subs);
+        }
+        return undefined;
+    }
+
     
     /**
      * Add a new subject to this Limitr.
@@ -57,6 +137,63 @@ export class Limitr {
      */
     async addSubject(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
         await this.doc.call('<Limitr>.api.create_subject', id, plan, type, label, org, alts)
+    }
+
+
+    /**
+     * Set a subject on this policy by ID.
+     * Returns a node ID to the resulting Subject.
+     */
+    async setSubject(id: string, subjectStof: string): Promise<string | null> {
+        return await this.doc.call('<Limitr>.api.set_subject', id, subjectStof) as string | null;
+    }
+
+
+    /**
+     * Load many subjects as records.
+     * This is all that is required for save/load since subjects contain all state information.
+     */
+    async loadSubjects(subjects: Record<string, unknown> | Record<string, unknown>[]) {
+        let subs: Record<string, unknown>[] = [];
+        if (!Array.isArray(subjects)) {
+            for (const [k, v] of Object.entries(subjects)) {
+                const val = v as Record<string, unknown>;
+                val.id = k; // make sure it has the correct ID
+                subs.push(val);
+            }
+        } else {
+            subs = subjects;
+        }
+        for (const sub of subs) {
+            const id = sub.id;
+            if (typeof id === 'string') {
+                await this.setSubject(id, JSON.stringify(sub));
+            }
+        }
+    }
+
+
+    /**
+     * Remove a subject by ID.
+     */
+    async removeSubject(id: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.delete_subject', id) as boolean;
+    }
+
+
+    /**
+     * Add an alternative subject ID to an existing subject.
+     */
+    async addAltID(existing: string, alt: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.set_alt_subject_id', existing, alt) as boolean;
+    }
+
+
+    /**
+     * Remove an alternative subject ID from an existing subject.
+     */
+    async removeAltID(alt: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.delete_alt_subject_id', alt) as boolean;
     }
 
 

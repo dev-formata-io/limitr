@@ -61,14 +61,20 @@ Limitr: {
          * Plans.
          *****************************************************************************/
         
-        /// Plan from ID.
+        /// Plan from ID (subject ID or plan ID).
         fn plan(id: str!) -> Plan {
             ?self.get().plan(id)
         }
 
-        /// Plan for a subject ID.
-        fn plan_for(id: str!) -> Plan {
-            ?self.get().plan_for(id)
+        /// Delete a plan by plan ID.
+        /// Be careful, as subjects that have this plan will no longer work as expected.
+        fn delete_plan(id: str!) -> bool {
+            ?self.get().delete_plan(id)
+        }
+
+        /// Set/create a plan with a name & internal Stof.
+        fn set_plan(id: str!, internal_stof: str!) -> Plan {
+            ?self.get().set_plan(id, internal_stof)
         }
 
 
@@ -152,6 +158,11 @@ Limitr: {
             ?self.get().create_subject(id, plan, type, label, org, alts)
         }
 
+        /// Set/create a subject with an id & internal Stof.
+        fn set_subject(id: str!, internal_stof: str!) -> Subject {
+            ?self.get().set_subject(id, internal_stof)
+        }
+
         /// Delete a subject.
         fn delete_subject(id: str!) -> bool {
             ?self.get().delete_subject(id)
@@ -174,10 +185,10 @@ Limitr: {
      *****************************************************************************/
     
     /**
-     * Get a plan by ID.
+     * Get a plan by ID (either a plan ID or a subject ID).
      */
     fn plan(id: str!) -> Plan {
-        self.plans.get(id)
+        self.plans.get(id) ?? self.plan_for(id)
     }
 
 
@@ -187,11 +198,36 @@ Limitr: {
     fn plan_for(subject_id: str!) -> Plan {
         const subject = self.subject(subject_id);
         if (subject != null) {
-            let pn = self.plan(subject.plan);
+            let pn = self.plans.get(subject.plan);
             if (pn == null && subject.org != null) pn = self.plan_for(subject.org);
             pn
         }
         null
+    }
+
+
+    /**
+     * Delete a plan by plan ID.
+     * Be careful, as subjects that have this plan will no longer work as expected.
+     */
+    fn delete_plan(id: str!) -> bool {
+        self.plans.remove(id, shallow = false)
+    }
+
+
+    /**
+     * Set/create a plan with a name & internal Stof.
+     */
+    fn set_plan(id: str!, internal_stof: str!) -> Plan {
+        self.delete_plan(id);
+        const plan = new {} on self.plans;
+        try parse(internal_stof, plan, 'stof');
+        catch {
+            drop(plan);
+            return null;
+        }
+        self.plans.insert(id, plan);
+        plan as Plan
     }
 
 
@@ -203,8 +239,7 @@ Limitr: {
      * Get a plan entitlement from either a subject ID or plan ID.
      */
     fn entitlement(id: str!, entitlement: str!) -> Entitlement {
-        let pn: Plan = self.plan(id);
-        if (pn == null) pn = self.plan_for(id);
+        const pn: Plan = self.plan(id);
         if (pn != null) {
             return pn.entitlements.get(entitlement);
         }
@@ -472,6 +507,25 @@ Limitr: {
             return subject;
         }
         null
+    }
+
+
+    /**
+     * Set/create a subject with an id & internal Stof.
+     */
+    fn set_subject(id: str!, internal_stof: str!) -> Subject {
+        self.delete_subject(id);
+        const sub = new {} on self.subjects;
+        try parse(internal_stof, sub, 'stof');
+        catch {
+            drop(sub);
+            return null;
+        }
+
+        self.subjects.insert(id, sub as Subject);
+        for (const alt in sub.alt_ids ?? []) self.set_alt_subject_id(id, alt);
+        <Event>.send('subject-added', subject);
+        sub
     }
 
 
