@@ -211,6 +211,10 @@ Limitr: {
      * Be careful, as subjects that have this plan will no longer work as expected.
      */
     fn delete_plan(id: str!) -> bool {
+        const plan = self.plans.get(id);
+        if (plan != null) {
+            await <Event>.send('plan-removed', plan);
+        }
         self.plans.remove(id, shallow = false)
     }
 
@@ -227,7 +231,8 @@ Limitr: {
             return null;
         }
         self.plans.insert(id, plan);
-        plan as Plan
+        await <Event>.send('plan-set', plan as Plan);
+        plan
     }
 
 
@@ -487,7 +492,7 @@ Limitr: {
                 existing.label = label;
                 existing.plan = plan;
                 existing.org = org ?? existing.org;
-                <Event>.send('subject-updated', existing);
+                await <Event>.send('subject-set', existing);
                 return existing;
             }
 
@@ -503,7 +508,7 @@ Limitr: {
             // init alternative ids
             if (alts != null) for (const alt in alts) self.set_alt_subject_id(id, alt);
 
-            <Event>.send('subject-added', subject);
+            await <Event>.send('subject-set', subject);
             return subject;
         }
         null
@@ -524,7 +529,7 @@ Limitr: {
 
         self.subjects.insert(id, sub as Subject);
         for (const alt in sub.alt_ids ?? []) self.set_alt_subject_id(id, alt);
-        <Event>.send('subject-added', subject);
+        await <Event>.send('subject-set', subject);
         sub
     }
 
@@ -535,7 +540,7 @@ Limitr: {
     fn delete_subject(id: str!) -> bool {
         const subject = self.subject(id);
         if (subject != null) {
-            await <Event>.send('subject-removing', subject);
+            await <Event>.send('subject-removed', subject);
             for (const alt in subject.alt_ids) self.delete_alt_subject_id(alt);
             return self.subjects.remove(subject.id);
         }
@@ -552,6 +557,7 @@ Limitr: {
             subject.alt_ids.remove_all(alt_id);
             subject.alt_ids.push_back(alt_id);
             self.alt_subject_ids.insert(alt_id, subject_id);
+            await <Event>.send('subject-set', subject);
             return true;
         }
         false
@@ -563,9 +569,11 @@ Limitr: {
      */
     fn delete_alt_subject_id(subject_id: str!) -> bool {
         const subject = self.subject(subject_id);
+        const res = self.alt_subject_ids.remove(subject_id);
         if (subject != null) {
             subject.alt_ids.remove_all(subject_id);
+            await <Event>.send('subject-set', subject);
         }
-        self.alt_subject_ids.remove(subject_id)
+        res
     }
 }

@@ -42,6 +42,17 @@ Event: {
         }
         await handles;
     }
+
+
+    #[static]
+    /**
+     * Send a temp obj as a value.
+     * Helper for deleting obj after.
+     */
+    async fn send_tmp(key: str | list | set, value: obj) {
+        await <Event>.send(key, value);
+        drop(value);
+    }
 }
 
 
@@ -49,6 +60,28 @@ Event: {
  * Call out to an external "App" library (added by user).
  */
 AppEvents: {
+
+    /*****************************************************************************
+     * Plans.
+     *****************************************************************************/
+    
+    #[plan-removed]
+    /**
+     * Called when a plan is being removed via Limitr.delete_plan.
+     */
+    fn app_plan_removed(value: Plan) {
+        if (lib('App')) ?App.plan_removed(stringify('json', value));
+    }
+
+
+    #[plan-set]
+    /**
+     * Called when a plan has just been set via Limitr.set_plan.
+     */
+    fn app_set_plan(value: Plan) {
+        if (lib('App')) ?App.plan_set(stringify('json', value));
+    }
+
 
     /*****************************************************************************
      * Meters.
@@ -79,29 +112,18 @@ AppEvents: {
      * Subjects.
      *****************************************************************************/
     
-    #[subject-updated]
+    #[subject-set]
     /**
-     * Subject updated.
-     * Called when an existing subject has been updated/merged in the Limitr.
+     * Subject has been set/modified.
      */
-    fn app_subject_updated(subject: Subject) {
-        if (lib('App')) ?App.subject_updated(stringify('json', subject));
+    fn app_subject_set(subject: Subject) {
+        if (lib('App')) ?App.subject_set(stringify('json', subject));
     }
 
 
-    #[subject-added]
+    #[subject-removed]
     /**
-     * Subject added.
-     * Called when a new subject has been added to the Limitr.
-     */
-    fn app_subject_added(subject: Subject) {
-        if (lib('App')) ?App.subject_added(stringify('json', subject));
-    }
-
-
-    #[subject-removing]
-    /**
-     * Subject is actively being removed.
+     * Subject is being removed.
      * Called when <Limitr>.delete_subject is called.
      */
     fn app_subject_removing(subject: Subject) {
