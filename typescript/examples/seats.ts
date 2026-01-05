@@ -61,7 +61,19 @@ await policy.addSubject('cus_paid_customer', 'paid');
 await policy.increment('cus_free_customer', 'seats'); // adds one seat
 await policy.increment('cus_paid_customer', 'seats'); // adds one seat
 
+// Add callbacks to the document directly or as a library function
+policy.doc.lib('App', 'meter_limit', (json: string) => {
+    const record = JSON.parse(json);
+    if (record.subject.plan === 'free' && record.entitlement === 'seats') {
+        console.log('FREE PLAN SEAT LIMIT HIT, current: ', record.subject.meters.seats.value, ' requested: ', record.invalid_value);
+    }
+});
+
+// Will return false and send an meter-limit event in the doc (if App.meter_limit exists, it will also be called)
 if (await policy.increment('cus_free_customer', 'seats')) throw Error("will not get here");
+if (await policy.meter('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
 if (await policy.increment('cus_paid_customer', 'seats')) {
     // paid customer can add a second seat
+} else {
+    throw Error("will not get here");
 }
