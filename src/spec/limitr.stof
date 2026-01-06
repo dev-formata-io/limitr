@@ -267,7 +267,8 @@ Limitr: {
         if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
             const credit = self.credit(ent.limit.credit);
             const stof_units = credit != null ? credit.stof_units : 'float';
-            return ent.limit.value.to_units(stof_units);
+            const limit = ent.limit.value as float; // can be a str w units
+            return limit.to_units(stof_units);
         }
         null
     }
@@ -286,8 +287,8 @@ Limitr: {
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
                 const meter: Meter = subject.meters.get(entitlement);
-                if (meter != null) return (ent.limit.value - meter.value).to_units(stof_units);
-                return ent.limit.value.to_units(stof_units);
+                if (meter != null) return ((ent.limit.value as float) - meter.value).to_units(stof_units);
+                return (ent.limit.value as float).to_units(stof_units);
             }
         }
         null
@@ -354,7 +355,8 @@ Limitr: {
      *
      * This may be the only function you need to use in your codebase.
      */
-    fn meter(id: str!, entitlement: str!, value: float = 0) -> bool {
+    fn meter(id: str!, entitlement: str!, value: float | str = 0) -> bool {
+        if ((typeof value) == 'str') value = value as float; // takes units into consideration too
         const subject = self.subject(id);
         if (subject != null) {
             const plan = self.plan_for(id);
@@ -371,16 +373,17 @@ Limitr: {
                         new_value = value;
                     }
 
-                    let res = ent.check(new_value); // ok if new_value has different, but compatable units here...
+                    // put new_value into the credit's units, casting if needed (in case no units were given)
+                    const credit = ent.limit != null ? self.credit(ent.limit.credit) : null;
+                    const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+                    new_value = ?new_value.to_units(stof_units) ?? new_value;
+
+                    let res = ent.check(new_value);
 
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
                     if (ent.limit != null && (res || ent.limit.mode == 'soft')) {
                         if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
-                        const credit = self.credit(ent.limit.credit);
-                        const stof_units = credit != null ? credit.stof_units : 'float';
-                        new_value = ?new_value.to_units(stof_units) ?? new_value;
-
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
                         existing_meter.credit = ent.limit.credit;
@@ -402,7 +405,7 @@ Limitr: {
                                 entitlement,
                                 plan,
                                 credit,
-                                balance: ent.limit.value - existing_meter.value,
+                                balance: (ent.limit.value as float) - existing_meter.value,
                             };
                             await <Event>.send('meter-changed', event_value);
                             if (!res) await <Event>.send('meter-overage', event_value);
@@ -434,7 +437,8 @@ Limitr: {
      * Perform an entitlement check for a subject by ID.
      * By default, any limit enforcements will not take effect.
      */
-    fn check(id: str!, entitlement: str!, value: float = 0) -> bool {
+    fn check(id: str!, entitlement: str!, value: float | str = 0) -> bool {
+        if ((typeof value) == 'str') value = value as float; // takes units into consideration too
         const subject = self.subject(id);
         if (subject != null) {
             const plan = self.plan_for(id);
@@ -448,6 +452,11 @@ Limitr: {
                     if (existing_meter != null && existing_meter.reset != null && ent.limit != null && ent.limit.resets && Time.now() > existing_meter.reset) {
                         new_value = value;
                     }
+
+                    // put new_value into the credit's units, casting if needed (in case no units were given)
+                    const credit = ent.limit != null ? self.credit(ent.limit.credit) : null;
+                    const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+                    new_value = ?new_value.to_units(stof_units) ?? new_value;
 
                     let res = ent.check(new_value);
                     if (!res && ent.limit != null && ent.limit.mode == 'soft') res = true;

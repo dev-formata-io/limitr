@@ -73,7 +73,7 @@ Limitr policy: {
                     description: 'How many Megabytes of usage does this user get?'
                     Limit limit: {
                         credit: 'mb'
-                        value: 2GB
+                        value: '2GB' // can just be 2GB too ofc
                         resets: true
                         reset_inc: 30days // 2GB per month, tracked in MB
                     }
@@ -192,6 +192,10 @@ fn usage_units() {
     // paid plan usage test
     assert_eq(self.policy.limit('cj', 'usage'), 2GB);
     assert_eq(typename self.policy.limit('cj', 'usage'), 'MB'); // return in credit's units
+
+    assert(self.policy.meter('cj', 'usage', 3)); // default is credit units (MB)
+    assert_eq(self.policy.value('cj', 'usage'), 3MB);
+    assert(self.policy.meter('cj', 'usage', '-3MB')); // can use strings instead of just numbers (non-stof contexts)
 
     assert(self.policy.meter('cj', 'usage', 500MB));
     assert(self.policy.meter('cj', 'usage', 1GB));

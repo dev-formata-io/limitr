@@ -30,11 +30,13 @@ Limit: {
     str! mode: 'hard';
 
     /// Value of this limit.
-    float value: 0;
+    /// If a str, can use units, but must be a valid stof number.
+    float | str value: 0;
 
     /// Optional increment for an operation with this limit.
     /// Used with <Limitr>.increment.
-    float increment: 0;
+    /// If a str, can use units, but must be a valid stof number.
+    float | str increment: 0;
 
     /// Should the meter reset after a certain period?
     bool resets: false;
@@ -47,7 +49,7 @@ Limit: {
      * Check this limit against a value.
      */
     fn check(value: float = 0) -> bool {
-        if (value > self.value && self.mode != 'observe') {
+        if (value > (self.value as float) && self.mode != 'observe') {
             return false; // delay the "soft" mode check for events in limitr.stof
         }
         true

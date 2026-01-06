@@ -301,6 +301,7 @@ export class Limitr {
     /**
      * Get the limit value for a metered entitlement.
      * ID can be a subject ID or a plan ID (to get the specific entitlement from a plan).
+     * Will always be in the units of the credit associated with this entitlement (ex. limit.value = '2GB', credit.stof_units = 'MB', limit = 2000).
      */
     limit(id: string, entitlement: string): number | null {
         return this.doc.sync_call('<Limitr>.api.limit', id, entitlement) as number | null;
@@ -309,6 +310,7 @@ export class Limitr {
 
     /**
      * Get the remaining balance for a subject's entitlement (limit - current (metered) value).
+     * Will always be in the units of the credit associated with this entitlement.
      */
     balance(subject: string, entitlement: string): number | null {
         return this.doc.sync_call('<Limitr>.api.balance', subject, entitlement) as number | null;
@@ -317,6 +319,7 @@ export class Limitr {
 
     /**
      * Get the current meter value for a subject's entitlement.
+     * Will always be in the units of the credit associated with this entitlement.
      */
     value(subject: string, entitlement: string): number | null {
         return this.doc.sync_call('<Limitr>.api.value', subject, entitlement) as number | null;
@@ -335,6 +338,7 @@ export class Limitr {
      * Try changing the value of a metered entitlement using a standard increment (defined in the Limit).
      * This is the same as using "meter" with the "cost" of a standard increment for this entitlement.
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
+     * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async increment(subject: string, entitlement: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.increment', subject, entitlement) as boolean;
@@ -345,6 +349,7 @@ export class Limitr {
      * Try changing the value of a metered entitlement using a standard increment (defined in the Limit).
      * This is the same as using "meter" with the "cost" of a standard increment for this entitlement.
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
+     * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     incrementSync(subject: string, entitlement: string): boolean {
         return this.doc.sync_call('<Limitr>.api.increment', subject, entitlement) as boolean;
@@ -354,6 +359,7 @@ export class Limitr {
     /**
      * Try changing the value of a metered entitlement by removing a standard increment (defined in the Limit).
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
+     * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async deincrement(subject: string, entitlement: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
@@ -363,6 +369,7 @@ export class Limitr {
     /**
      * Try changing the value of a metered entitlement by removing a standard increment (defined in the Limit).
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
+     * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     deincrementSync(subject: string, entitlement: string): boolean {
         return this.doc.sync_call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
@@ -372,8 +379,9 @@ export class Limitr {
     /**
      * Try changing the value of a metered entitlement by the given value.
      * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async meter(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
+    async meter(subject: string, entitlement: string, value: number | string = 0): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
     }
 
@@ -381,24 +389,27 @@ export class Limitr {
     /**
      * Try changing the value of a metered entitlement by the given value.
      * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    meterSync(subject: string, entitlement: string, value: number = 0): boolean {
+    meterSync(subject: string, entitlement: string, value: number | string = 0): boolean {
         return this.doc.sync_call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
     }
 
 
     /**
      * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async check(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
+    async check(subject: string, entitlement: string, value: number | string = 0): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.check', subject, entitlement, value) as boolean;
     }
 
 
     /**
      * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    checkSync(subject: string, entitlement: string, value: number = 0): boolean {
+    checkSync(subject: string, entitlement: string, value: number | string = 0): boolean {
         return this.doc.sync_call('<Limitr>.api.check', subject, entitlement, value) as boolean;
     }
 }
