@@ -151,6 +151,14 @@ export class Limitr {
 
 
     /**
+     * Get the subject organization subject ID if defined.
+     */
+    subjectOrg(id: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.subject_org', id) as string | null;
+    }
+
+
+    /**
      * Set/change a subject's plan ID.
      * Returns true if the plan has changed (and emits a subject-set event).
      */

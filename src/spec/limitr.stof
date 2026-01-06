@@ -153,6 +153,11 @@ Limitr: {
             ?self.get().subject(id)
         }
 
+        /// Get the subject's org subject ID if defined.
+        fn subject_org(id: str!) -> str {
+            ?self.get().subject_org(id)
+        }
+
         /// Change a subject's plan ID.
         fn set_subject_plan(id: str!, plan: str!) -> bool {
             ?self.get().set_subject_plan(id, plan)
@@ -511,6 +516,15 @@ Limitr: {
 
 
     /**
+     * Get the subject organization subject ID (if defined).
+     */
+    fn subject_org(id: str!) -> str {
+        const sub = self.subject(id);
+        sub != null ? sub.org : null
+    }
+
+
+    /**
      * Change a subject's plan ID.
      */
     fn set_subject_plan(id: str!, plan: str!) -> bool {
@@ -529,7 +543,8 @@ Limitr: {
      * Create a subject with an ID and plan ID.
      */
     fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Subject {
-        const pn = self.plan(plan);
+        let pn = self.plan(plan);
+        if (pn == null && org != null) pn = self.plan(org);
         if (pn != null) {
 
             // check for existing subject to update
