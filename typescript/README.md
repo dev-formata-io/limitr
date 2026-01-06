@@ -10,7 +10,8 @@ It is designed for AI products, developer tools, and open-source software where 
 > Limitr answers the question:
 > **"What is this subject allowed to consume, right now, and what happens if it exceeds the limit?"**
 
-👉 Jump to the [Quick Example](#example-seat-based-plan-enforcement-typescript)
+- 👉 Jump to the [Quick Example](#example-seat-based-plan-enforcement-typescript)
+- Additional [info and examples](https://docs.stof.dev/applications/limitr)
 
 ## What Limitr Gives You
 - Define plans, entitlements, and limits in a policy document — not application code
