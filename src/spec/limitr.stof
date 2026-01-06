@@ -357,7 +357,7 @@ Limitr: {
                         new_value = value;
                     }
 
-                    const res = ent.check(new_value);
+                    let res = ent.check(new_value);
 
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
@@ -385,11 +385,14 @@ Limitr: {
                                 entitlement,
                                 plan,
                                 credit,
+                                balance: ent.limit.value - existing_meter.value,
                             };
                             await <Event>.send('meter-changed', event_value);
                             if (!res) await <Event>.send('meter-overage', event_value);
                             drop(event_value);
                         }
+
+                        res = true; // meter was changed!
                     } else if (ent.limit != null && !res) {
                         const credit = self.credit(ent.limit.credit);
                         const event_value = new {
@@ -430,7 +433,9 @@ Limitr: {
                         new_value = value;
                     }
 
-                    return ent.check(new_value);
+                    let res = ent.check(new_value);
+                    if (!res && ent.limit != null && ent.limit.mode == 'soft') res = true;
+                    return res;
                 }
             }
         }

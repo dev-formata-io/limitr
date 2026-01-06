@@ -55,7 +55,7 @@ policy: {
     }
 }
 `);
-console.log(await limitr.plan('paid'));
+console.log(limitr.plan('paid'));
 
 // Create a test subject to play with
 const sid = 'cus_example_id';
@@ -95,4 +95,4 @@ entitlements: {
     }
 }
 `);
-console.log(await limitr.creditFor(sid, 'seats'));
+console.log(limitr.creditFor(sid, 'seats'));

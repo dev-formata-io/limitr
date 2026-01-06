@@ -20,6 +20,7 @@ import { limitrApi } from "./limitr.ts";
 
 /**
  * Limitr base class.
+ * TODO: sync API for meter, etc.
  */
 export class Limitr {
     /** StofDoc. */
@@ -34,8 +35,7 @@ export class Limitr {
     constructor(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof') {
         this.doc = new StofDoc();
         this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-        if (policy instanceof Uint8Array) this.doc.stof.binaryImport(policy, format, null, 'prod');
-        else this.doc.parse(policy, format);
+        this.doc.parse(policy, format);
     }
 
 
@@ -55,8 +55,8 @@ export class Limitr {
     /**
      * Get a plan record by ID (plan ID or subject ID).
      */
-    async plan(id: string): Promise<Record<string, unknown> | undefined> {
-        const planNode = await this.doc.call('<Limitr>.api.plan', id);
+    plan(id: string): Record<string, unknown> | undefined {
+        const planNode = this.doc.sync_call('<Limitr>.api.plan', id);
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
@@ -86,8 +86,8 @@ export class Limitr {
     /**
      * Get a credit record by ID/type.
      */
-    async credit(id: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.doc.call('<Limitr>.api.credit', id);
+    credit(id: string): Record<string, unknown> | undefined {
+        const node = this.doc.sync_call('<Limitr>.api.credit', id);
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -97,8 +97,8 @@ export class Limitr {
      * Get a credit record for a specific entitlement.
      * ID can be a plan ID or a subject ID.
      */
-    async creditFor(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.doc.call('<Limitr>.api.credit_for', id, entitlement);
+    creditFor(id: string, entitlement: string): Record<string, unknown> | undefined {
+        const node = this.doc.sync_call('<Limitr>.api.credit_for', id, entitlement);
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -111,8 +111,8 @@ export class Limitr {
     /**
      * Get a subject record by ID (or alternative IDs).
      */
-    async subject(id: string): Promise<Record<string, unknown> | undefined> {
-        const subNode = await this.doc.call('<Limitr>.api.subject', id);
+    subject(id: string): Record<string, unknown> | undefined {
+        const subNode = this.doc.sync_call('<Limitr>.api.subject', id);
         if (typeof subNode === 'string') return this.doc.record(subNode);
         return undefined;
     }
@@ -122,8 +122,8 @@ export class Limitr {
      * Get all subjects as a single record.
      * Subjects contain all state information, so this is all that is required to save/load.
      */
-    async subjects(): Promise<Record<string, unknown> | undefined> {
-        const node = await this.doc.call('<Limitr>.api.get');
+    subjects(): Record<string, unknown> | undefined {
+        const node = this.doc.sync_call('<Limitr>.api.get');
         if (typeof node === 'string') {
             const subs = this.doc.get('subjects', node);
             if (typeof subs === 'string') return this.doc.record(subs);
@@ -185,16 +185,16 @@ export class Limitr {
     /**
      * Add an alternative subject ID to an existing subject.
      */
-    async addAltID(existing: string, alt: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.set_alt_subject_id', existing, alt) as boolean;
+    addAltID(existing: string, alt: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.set_alt_subject_id', existing, alt) as boolean;
     }
 
 
     /**
      * Remove an alternative subject ID from an existing subject.
      */
-    async removeAltID(alt: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.delete_alt_subject_id', alt) as boolean;
+    removeAltID(alt: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.delete_alt_subject_id', alt) as boolean;
     }
 
 
@@ -205,8 +205,8 @@ export class Limitr {
     /**
      * Get an entitlement record with a plan ID or subject ID and an entitlement name.
      */
-    async entitlement(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.doc.call('<Limitr>.api.entitlement', id, entitlement);
+    entitlement(id: string, entitlement: string): Record<string, unknown> | undefined {
+        const node = this.doc.sync_call('<Limitr>.api.entitlement', id, entitlement);
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -216,32 +216,32 @@ export class Limitr {
      * Get the limit value for a metered entitlement.
      * ID can be a subject ID or a plan ID (to get the specific entitlement from a plan).
      */
-    async limit(id: string, entitlement: string): Promise<number | null> {
-        return await this.doc.call('<Limitr>.api.limit', id, entitlement) as number | null;
+    limit(id: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.limit', id, entitlement) as number | null;
     }
 
 
     /**
      * Get the remaining balance for a subject's entitlement (limit - current (metered) value).
      */
-    async balance(subject: string, entitlement: string): Promise<number | null> {
-        return await this.doc.call('<Limitr>.api.balance', subject, entitlement) as number | null;
+    balance(subject: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.balance', subject, entitlement) as number | null;
     }
 
 
     /**
      * Get the current meter value for a subject's entitlement.
      */
-    async value(subject: string, entitlement: string): Promise<number | null> {
-        return await this.doc.call('<Limitr>.api.value', subject, entitlement) as number | null;
+    value(subject: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.value', subject, entitlement) as number | null;
     }
 
 
     /**
      * Get the cost for a standard increment on an entitlement (if set on its limit).
      */
-    async cost(id: string, entitlement: string): Promise<number | null> {
-        return await this.doc.call('<Limitr>.api.cost', id, entitlement) as number | null;
+    cost(id: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.cost', id, entitlement) as number | null;
     }
 
     

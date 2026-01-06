@@ -1,13 +1,13 @@
 {
   "version": "4",
   "specifiers": {
-    "jsr:@formata/stof@~0.9.3": "0.9.3",
+    "jsr:@formata/stof@~0.9.6": "0.9.6",
     "jsr:@std/assert@^1.0.16": "1.0.16",
     "jsr:@std/internal@^1.0.12": "1.0.12"
   },
   "jsr": {
-    "@formata/stof@0.9.3": {
-      "integrity": "6fd9c4bafa22de081ff3860117d01af358e38fb40e899e14807f0a48dd3a0a2f"
+    "@formata/stof@0.9.6": {
+      "integrity": "d3e84f12b327aa2c590785670e82c5e64f0b90dba6900ceb7864e7c072bd73bd"
     },
     "@std/assert@1.0.16": {
       "integrity": "6a7272ed1eaa77defe76e5ff63ca705d9c495077e2d5fd0126d2b53fc5bd6532",
@@ -21,7 +21,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@formata/stof@~0.9.3"
+      "jsr:@formata/stof@~0.9.6"
     ]
   }
 }

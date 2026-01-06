@@ -13,6 +13,6 @@
     "exclude": ["./examples/**/*", "./node_modules/**/*"]
   },
   "imports": {
-    "@formata/stof": "jsr:@formata/stof@^0.9.3"
+    "@formata/stof": "jsr:@formata/stof@^0.9.6"
   }
 }

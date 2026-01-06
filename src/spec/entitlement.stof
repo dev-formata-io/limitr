@@ -48,7 +48,7 @@ Limit: {
      */
     fn check(value: float = 0) -> bool {
         if (value > self.value && self.mode != 'observe') {
-            return false;
+            return false; // delay the "soft" mode check for events in limitr.stof
         }
         true
     }

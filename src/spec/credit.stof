@@ -19,6 +19,7 @@
 /**
  * A Limitr credit (abstract currency).
  * Could be a seat, token, etc.
+ * TODO: units for this credit to stay in (Num.to_units).
  */
 Credit: {
     /// Unit (singular).
