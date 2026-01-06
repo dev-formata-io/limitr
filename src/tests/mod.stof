@@ -24,8 +24,14 @@ Limitr policy: {
 
         Credit token: {
             unit: 'token'
-            version: 0.1.0-test
             label: 'Token'
+        }
+
+        Credit mb: {
+            unit: 'megabyte'
+            description: 'A single megabyte of usage in our platform.'
+            label: 'Megabytes'
+            stof_units: 'MB'
         }
     }
 
@@ -45,6 +51,15 @@ Limitr policy: {
                         mode: 'observe'
                     }
                 }
+                Entitlement usage: {
+                    description: 'How many Megabytes of usage does this user get?'
+                    Limit limit: {
+                        credit: 'mb'
+                        value: 1GB
+                        resets: true
+                        reset_inc: 30days // 1GB per month, tracked in MB
+                    }
+                }
             }
         }
 
@@ -54,6 +69,15 @@ Limitr policy: {
             entitlements: {
                 Entitlement prep: <Free>.entitlements.prep
                 Entitlement spend: <Free>.entitlements.spend
+                Entitlement usage: {
+                    description: 'How many Megabytes of usage does this user get?'
+                    Limit limit: {
+                        credit: 'mb'
+                        value: 2GB
+                        resets: true
+                        reset_inc: 30days // 2GB per month, tracked in MB
+                    }
+                }
                 Entitlement chat: {
                     description: 'Allow user to chat.'
                     Limit limit: {
@@ -161,4 +185,29 @@ fn unlimited_spend() {
     const credit = self.policy.credit_for('cj', 'spend');
     assert_eq(credit.unit, 'token');
     assert_eq(credit.exchange, 1);
+}
+
+#[test]
+fn usage_units() {
+    // paid plan usage test
+    assert_eq(self.policy.limit('cj', 'usage'), 2GB);
+    assert_eq(typename self.policy.limit('cj', 'usage'), 'MB'); // return in credit's units
+
+    assert(self.policy.meter('cj', 'usage', 500MB));
+    assert(self.policy.meter('cj', 'usage', 1GB));
+    assert(self.policy.meter('cj', 'usage', 2_000_000bytes));
+
+    let val = self.policy.value('cj', 'usage');
+    assert_eq(typename val, 'MB');
+    assert_eq(val, 1502MB);
+    assert_eq(val, 1.502GB);
+
+    assert_not(self.policy.meter('cj', 'usage', 500MB));
+    assert_not(self.policy.meter('cj', 'usage', 1GB));
+    assert(self.policy.meter('cj', 'usage', 10MiB));
+
+    val = self.policy.value('cj', 'usage');
+    let balance = self.policy.balance('cj', 'usage');
+    assert_eq(val.round(2), 1512.49MB);
+    assert_eq(balance.round(2), 487.51MB); // The MiB made things more floaty
 }

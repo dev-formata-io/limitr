@@ -19,7 +19,6 @@
 /**
  * A Limitr credit (abstract currency).
  * Could be a seat, token, etc.
- * TODO: units for this credit to stay in (Num.to_units).
  */
 Credit: {
     /// Unit (singular).
@@ -34,4 +33,10 @@ Credit: {
     /// Exchange rate (per credit).
     /// Use however you'd like.
     float exchange: 1;
+
+    /// Stof units for this credit (ex. 'GB', 'MiB', 'meters', 'kg', etc.).
+    /// Anytime this credit is used in metering, these units will be kept for that meter.
+    /// Default is 'float', which will not perform casts on values.
+    /// Entitlement limit values do not get cast automatically, so set to the units you'd like.
+    str! stof_units: 'float';
 }

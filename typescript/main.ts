@@ -20,7 +20,8 @@ import { limitrApi } from "./limitr.ts";
 
 /**
  * Limitr base class.
- * TODO: sync API for meter, etc.
+ * Note: Any sync_calls on this doc will not work with async TS lib functions (ex. fetch).
+ *       This is okay for a lot of calls, especially without HTTP adapters and events, but keep it in mind.
  */
 export class Limitr {
     /** StofDoc. */
@@ -72,10 +73,27 @@ export class Limitr {
 
 
     /**
+     * Set a plan on this policy by name/ID.
+     * Returns a node ID to the resulting Plan.
+     */
+    setPlanSync(id: string, planStof: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.set_plan', id, planStof) as string | null;
+    }
+
+
+    /**
      * Delete a plan by ID.
      */
     async deletePlan(id: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.delete_plan', id) as boolean;
+    }
+
+
+    /**
+     * Delete a plan by ID.
+     */
+    deletePlanSync(id: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.delete_plan', id) as boolean;
     }
 
 
@@ -131,13 +149,40 @@ export class Limitr {
         return undefined;
     }
 
+
+    /**
+     * Set/change a subject's plan ID.
+     * Returns true if the plan has changed (and emits a subject-set event).
+     */
+    async setSubjectPlan(id: string, plan: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.set_subject_plan', id, plan) as boolean;
+    }
+
+
+    /**
+     * Set/change a subject's plan ID.
+     * Returns true if the plan has changed (and emits a subject-set event).
+     */
+    setSubjectPlanSync(id: string, plan: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.set_subject_plan', id, plan) as boolean;
+    }
+
     
     /**
      * Add a new subject to this Limitr.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      */
     async addSubject(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
-        await this.doc.call('<Limitr>.api.create_subject', id, plan, type, label, org, alts)
+        await this.doc.call('<Limitr>.api.create_subject', id, plan, type, label, org, alts);
+    }
+
+
+    /**
+     * Add a new subject to this Limitr.
+     * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
+     */
+    addSubjectSync(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
+        this.doc.sync_call('<Limitr>.api.create_subject', id, plan, type, label, org, alts);
     }
 
 
@@ -147,6 +192,15 @@ export class Limitr {
      */
     async setSubject(id: string, subjectStof: string): Promise<string | null> {
         return await this.doc.call('<Limitr>.api.set_subject', id, subjectStof) as string | null;
+    }
+
+
+    /**
+     * Set a subject on this policy by ID.
+     * Returns a node ID to the resulting Subject.
+     */
+    setSubjectSync(id: string, subjectStof: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.set_subject', id, subjectStof) as string | null;
     }
 
 
@@ -175,10 +229,42 @@ export class Limitr {
 
 
     /**
+     * Load many subjects as records.
+     * This is all that is required for save/load since subjects contain all state information.
+     */
+    loadSubjectsSync(subjects: Record<string, unknown> | Record<string, unknown>[]) {
+        let subs: Record<string, unknown>[] = [];
+        if (!Array.isArray(subjects)) {
+            for (const [k, v] of Object.entries(subjects)) {
+                const val = v as Record<string, unknown>;
+                val.id = k; // make sure it has the correct ID
+                subs.push(val);
+            }
+        } else {
+            subs = subjects;
+        }
+        for (const sub of subs) {
+            const id = sub.id;
+            if (typeof id === 'string') {
+                this.setSubjectSync(id, JSON.stringify(sub));
+            }
+        }
+    }
+
+
+    /**
      * Remove a subject by ID.
      */
     async removeSubject(id: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.delete_subject', id) as boolean;
+    }
+
+
+    /**
+     * Remove a subject by ID.
+     */
+    removeSubjectSync(id: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.delete_subject', id) as boolean;
     }
 
 
@@ -256,11 +342,30 @@ export class Limitr {
 
 
     /**
+     * Try changing the value of a metered entitlement using a standard increment (defined in the Limit).
+     * This is the same as using "meter" with the "cost" of a standard increment for this entitlement.
+     * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
+     */
+    incrementSync(subject: string, entitlement: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.increment', subject, entitlement) as boolean;
+    }
+
+
+    /**
      * Try changing the value of a metered entitlement by removing a standard increment (defined in the Limit).
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      */
     async deincrement(subject: string, entitlement: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
+    }
+
+
+    /**
+     * Try changing the value of a metered entitlement by removing a standard increment (defined in the Limit).
+     * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
+     */
+    deincrementSync(subject: string, entitlement: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
     }
 
 
@@ -274,9 +379,26 @@ export class Limitr {
 
 
     /**
+     * Try changing the value of a metered entitlement by the given value.
+     * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     */
+    meterSync(subject: string, entitlement: string, value: number = 0): boolean {
+        return this.doc.sync_call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
+    }
+
+
+    /**
      * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
      */
     async check(subject: string, entitlement: string, value: number = 0): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.check', subject, entitlement, value) as boolean;
+    }
+
+
+    /**
+     * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     */
+    checkSync(subject: string, entitlement: string, value: number = 0): boolean {
+        return this.doc.sync_call('<Limitr>.api.check', subject, entitlement, value) as boolean;
     }
 }

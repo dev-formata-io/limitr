@@ -153,6 +153,11 @@ Limitr: {
             ?self.get().subject(id)
         }
 
+        /// Change a subject's plan ID.
+        fn set_subject_plan(id: str!, plan: str!) -> bool {
+            ?self.get().set_subject_plan(id, plan)
+        }
+
         /// Create a new subject.
         fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Subject {
             ?self.get().create_subject(id, plan, type, label, org, alts)
@@ -254,26 +259,35 @@ Limitr: {
 
     /**
      * Get the limit value for an entitlement.
+     * Returns a value in the units of the meter (credit) (not always the same as defined limit units).
+     * Ex. limit.value = 2GB, but credit.stof_units = 'MB', limit(..) => MB
      */
     fn limit(id: str!, entitlement: str!) -> float {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null && ent.limit.mode != 'observe') return ent.limit.value;
+        if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
+            const credit = self.credit(ent.limit.credit);
+            const stof_units = credit != null ? credit.stof_units : 'float';
+            return ent.limit.value.to_units(stof_units);
+        }
         null
     }
 
 
     /**
      * Get the remaining entitlement balance value for a subject ID (limit - current (metered) value).
-     * TODO: credit grants on the subject.
+     * Returns a value in the units of the meter (not always the same as defined limit units).
      */
     fn balance(id: str!, entitlement: str!) -> float {
         const subject = self.subject(id);
         if (subject != null) {
             const ent = self.entitlement(id, entitlement);
             if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
+                const credit = self.credit(ent.limit.credit);
+                const stof_units = credit != null ? credit.stof_units : 'float';
+
                 const meter: Meter = subject.meters.get(entitlement);
-                if (meter != null) return ent.limit.value - meter.value;
-                return ent.limit.value;
+                if (meter != null) return (ent.limit.value - meter.value).to_units(stof_units);
+                return ent.limit.value.to_units(stof_units);
             }
         }
         null
@@ -357,12 +371,16 @@ Limitr: {
                         new_value = value;
                     }
 
-                    let res = ent.check(new_value);
+                    let res = ent.check(new_value); // ok if new_value has different, but compatable units here...
 
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
                     if (ent.limit != null && (res || ent.limit.mode == 'soft')) {
                         if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
+                        const credit = self.credit(ent.limit.credit);
+                        const stof_units = credit != null ? credit.stof_units : 'float';
+                        new_value = ?new_value.to_units(stof_units) ?? new_value;
+
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
                         existing_meter.credit = ent.limit.credit;
@@ -375,7 +393,6 @@ Limitr: {
                         subject.meters.insert(entitlement, existing_meter);
                         
                         if (changed) {
-                            const credit = self.credit(existing_meter.credit);
                             const event_value = new {
                                 meter: new {
                                     old: old_value,
@@ -394,7 +411,6 @@ Limitr: {
 
                         res = true; // meter was changed!
                     } else if (ent.limit != null && !res) {
-                        const credit = self.credit(ent.limit.credit);
                         const event_value = new {
                             subject,
                             entitlement,
@@ -482,6 +498,21 @@ Limitr: {
             if (alt != null) return self.subject(alt);
         }
         sub
+    }
+
+
+    /**
+     * Change a subject's plan ID.
+     */
+    fn set_subject_plan(id: str!, plan: str!) -> bool {
+        const sub = self.subject(id);
+        const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a subject ID here
+        if (pn != null && sub.plan != plan) {
+            sub.plan = plan;
+            await <Event>.send('subject-set', sub);
+            return true;
+        }
+        false
     }
 
 
