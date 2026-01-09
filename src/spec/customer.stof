@@ -37,7 +37,7 @@ Customer: {
     str org: null;
 
     /// An optional type of this customer.
-    /// Ex. user, organization, seat, etc.
+    /// Ex. user, org, seat, etc.
     str! type: 'user';
 
     /// Human-facing label for this customer.

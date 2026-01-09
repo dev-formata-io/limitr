@@ -41,6 +41,15 @@ Limitr policy: {
             label: 'Free Plan'
             version: 0.1.0-test
             entitlements: {
+                Entitlement seats: {
+                    description: 'How many seats does this org get?'
+                    scope: 'org'
+                    Limit limit: {
+                        credit: 'seat'
+                        value: 3
+                        increment: 1
+                    }
+                }
                 Entitlement prep: {
                     description: 'Allow a user to do prep.'
                 }
@@ -93,6 +102,10 @@ Limitr policy: {
     #[init]
     fn init_test_customers() {
         self.create_customer('me', 'paid', alts=['cj']);
+
+        self.create_customer('free_org', 'free', 'org', 'Free Org');
+        self.create_customer('free_user_1', '', org='free_org');
+        self.create_customer('free_user_2', '', org='free_org');
     }
 }
 
@@ -214,4 +227,30 @@ fn usage_units() {
     let remaining = self.policy.remaining('cj', 'usage');
     assert_eq(val.round(2), 1512.49MB);
     assert_eq(remaining.round(2), 487.51MB); // The MiB made things more floaty
+}
+
+#[test]
+fn org_scope_entitlements() {
+    assert(self.policy.increment('free_user_1', 'seats'));
+    assert(self.policy.increment('free_org', 'seats'));
+
+    // test limit, remaining, costs, & value
+    assert_eq(self.policy.limit('free_user_1', 'seats'), 3);
+    assert_eq(self.policy.limit('free_user_2', 'seats'), 3);
+    assert_eq(self.policy.limit('free_org', 'seats'), 3);
+    assert_eq(self.policy.remaining('free_user_1', 'seats'), 1);
+    assert_eq(self.policy.remaining('free_user_2', 'seats'), 1);
+    assert_eq(self.policy.remaining('free_org', 'seats'), 1);
+    assert_eq(self.policy.cost('free_user_1', 'seats'), 1);
+    assert_eq(self.policy.cost('free_user_2', 'seats'), 1);
+    assert_eq(self.policy.cost('free_org', 'seats'), 1);
+    assert_eq(self.policy.value('free_user_1', 'seats'), 2);
+    assert_eq(self.policy.value('free_user_2', 'seats'), 2);
+    assert_eq(self.policy.value('free_org', 'seats'), 2);
+
+    assert(self.policy.increment('free_user_2', 'seats')); // last for org
+
+    assert_not(self.policy.increment('free_user_1', 'seats'));
+    assert_not(self.policy.increment('free_user_2', 'seats'));
+    assert_not(self.policy.increment('free_org', 'seats'));
 }

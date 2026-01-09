@@ -286,10 +286,19 @@ Limitr: {
      * Returns a value in the units of the meter (not always the same as defined limit units).
      */
     fn remaining(id: str!, entitlement: str!) -> float {
-        const customer = self.customer(id);
+        let customer = self.customer(id);
         if (customer != null) {
             const ent = self.entitlement(id, entitlement);
             if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
+                // check entitlement scope for org customer
+                // so when ent.scope is org, will use "org" customer for meters if present
+                if (ent.scope == 'org' && customer.type != "org") {
+                    if (customer.org == null) return null;
+
+                    customer = self.customer(customer.org);
+                    if (customer == null) return null;
+                }
+
                 const credit = self.credit(ent.limit.credit);
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
@@ -307,13 +316,25 @@ Limitr: {
      * Returns null if the entitlement doesn't exist.
      */
     fn value(id: str!, entitlement: str!) -> float {
-        const customer = self.customer(id);
+        let customer = self.customer(id);
         if (customer != null) {
-            const meter: Meter = customer.meters.get(entitlement);
-            if (meter != null) {
-                return meter.value;
-            } else if (self.entitlement(id, entitlement) != null) {
-                return 0;
+            const ent = self.entitlement(id, entitlement);
+            if (ent != null) {
+                // check entitlement scope for org customer
+                // so when ent.scope is org, will use "org" customer for meters if present
+                if (ent.scope == 'org' && customer.type != "org") {
+                    if (customer.org == null) return null;
+
+                    customer = self.customer(customer.org);
+                    if (customer == null) return null;
+                }
+
+                const meter: Meter = customer.meters.get(entitlement);
+                if (meter != null) {
+                    return meter.value;
+                } else if (self.entitlement(id, entitlement) != null) {
+                    return 0;
+                }
             }
         }
         null
@@ -361,12 +382,21 @@ Limitr: {
      */
     fn allow(id: str!, entitlement: str!, value: float | str = 0) -> bool {
         if ((typeof value) == 'str') value = value as float; // takes units into consideration too
-        const customer = self.customer(id);
+        let customer = self.customer(id);
         if (customer != null) {
             const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
+                    // check entitlement scope for org customer
+                    // so when ent.scope is org, will use "org" customer for meters if present
+                    if (ent.scope == 'org' && customer.type != "org") {
+                        if (customer.org == null) return false;
+
+                        customer = self.customer(customer.org);
+                        if (customer == null) return false;
+                    }
+
                     let existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
@@ -443,12 +473,21 @@ Limitr: {
      */
     fn check(id: str!, entitlement: str!, value: float | str = 0) -> bool {
         if ((typeof value) == 'str') value = value as float; // takes units into consideration too
-        const customer = self.customer(id);
+        let customer = self.customer(id);
         if (customer != null) {
             const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
+                    // check entitlement scope for org customer
+                    // so when ent.scope is org, will use "org" customer for meters if present
+                    if (ent.scope == 'org' && customer.type != "org") {
+                        if (customer.org == null) return false;
+
+                        customer = self.customer(customer.org);
+                        if (customer == null) return false;
+                    }
+
                     const existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 

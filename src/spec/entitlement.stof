@@ -71,6 +71,10 @@ Entitlement: {
     /// Optional limit for this entitlement.
     Limit limit: null;
 
+    /// Scope of this entitlement.
+    /// Either "user" or "org" - if "org", will default to looking for an "org" subject when in use.
+    str scope: 'user';
+
 
     /**
      * Check this entitlement.
