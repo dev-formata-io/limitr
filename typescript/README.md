@@ -8,7 +8,7 @@ It is designed for AI products, developer tools, and open-source software where 
 - and not hard-coded into application logic
 
 > Limitr answers the question:
-> **"What is this subject allowed to consume, right now, and what happens if it exceeds the limit?"**
+> **"What is this customer allowed to consume, right now, and what happens if it exceeds the limit?"**
 
 - 👉 Jump to the [Quick Example](#example-seat-based-plan-enforcement-typescript)
 - Additional [info and examples](https://docs.stof.dev/applications/limitr)
@@ -73,12 +73,12 @@ const policy = await Limitr.new(`
 policy:
   credits:
     seat:
-      description: 'A single seat credit that can be tracked per subject.'
+      description: 'A single seat credit that can be tracked per customer.'
   plans:
     free:
       entitlements:
         seats:
-          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          description: 'Each customer (user, org, etc.) with this plan can have up to this many seats.'
           limit:
             credit: 'seat'
             value: 1
@@ -86,7 +86,7 @@ policy:
     paid:
       entitlements:
         seats:
-          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          description: 'Each customer (user, org, etc.) with this plan can have up to this many seats.'
           limit:
             credit: 'seat'
             value: 3
@@ -94,11 +94,11 @@ policy:
 `, 'yaml');
 
 // Entitlements define features + limits (gated behaviors) on plans.
-// Meters are state stored per subject per entitlement.
+// Meters are state stored per customer per entitlement.
 
-// Create/save/load subjects (database, Stripe, etc.)
-await policy.addSubject('cus_free_customer', 'free');
-await policy.addSubject('cus_paid_customer', 'paid');
+// Create/save/load customers (database, Stripe, etc.)
+await policy.addCustomer('cus_free_customer', 'free');
+await policy.addCustomer('cus_paid_customer', 'paid');
 
 // Perform entitlement checks, meter usage, etc.
 await policy.increment('cus_free_customer', 'seats'); // adds one seat
@@ -107,14 +107,14 @@ await policy.increment('cus_paid_customer', 'seats'); // adds one seat
 // Add callbacks to the document directly or as a library function
 policy.doc.lib('App', 'meter_limit', (json: string) => {
     const record = JSON.parse(json);
-    if (record.subject.plan === 'free' && record.entitlement === 'seats') {
-        console.log('FREE PLAN SEAT LIMIT HIT, current: ', record.subject.meters.seats.value, ' requested: ', record.invalid_value);
+    if (record.customer.plan === 'free' && record.entitlement === 'seats') {
+        console.log('FREE PLAN SEAT LIMIT HIT, current: ', record.customer.meters.seats.value, ' requested: ', record.invalid_value);
     }
 });
 
 // Will return false and emit an meter-limit event in the doc (if App.meter_limit exists, it will also be called)
 if (await policy.increment('cus_free_customer', 'seats')) throw Error("will not get here");
-if (await policy.meter('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
+if (await policy.allow('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
 if (await policy.increment('cus_paid_customer', 'seats')) {
     // paid customer can add a second seat
 } else {
@@ -128,9 +128,9 @@ FREE PLAN SEAT LIMIT HIT, current:  1  requested:  3
 ```
 
 ### What's happening here?
-- Plans define which entitlements a subject has
+- Plans define which entitlements a customer has
 - Entitlements define how a meter is allowed to change with limits
-- Meters are stored on each subject as state
+- Meters are stored on each customer as state
 - Limitr enforces limits and emits events when limits are hit
 - The application decides how to respond (deny, warn, bill, notify)
 

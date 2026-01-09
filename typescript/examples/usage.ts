@@ -43,21 +43,21 @@ policy:
             reset_inc: 24hr
 `, 'yaml');
 
-// load subjects (Stripe, user db, etc.) (helpers exist for batches of records)
-await policy.addSubject('free_user', 'free');
-await policy.addSubject('pro_user', 'pro');
+// load customers (Stripe, user db, etc.) (helpers exist for batches of records)
+await policy.addCustomer('free_user', 'free');
+await policy.addCustomer('pro_user', 'pro');
 
-// start metering usage per subject and let Limitr handle the rest
+// start metering usage per customer and let Limitr handle the rest
 // default units, value, balance, limit, etc. all in units of the credit
-assert(await policy.meter('free_user', 'usage', '20.5MB'));
-assert(await policy.meter('free_user', 'usage', 500));
+assert(await policy.allow('free_user', 'usage', '20.5MB'));
+assert(await policy.allow('free_user', 'usage', 500));
 
 assertEquals(policy.value('free_user', 'usage'), 520.5);
-assertEquals(Math.round(policy.balance('free_user', 'usage') as number), 479);
+assertEquals(Math.round(policy.remaining('free_user', 'usage') as number), 479);
 assertEquals(Math.round(policy.limit('free_user', 'usage') as number), 1000);
 
 // hard limit of 1GB, so this fails and meter-limit emitted
-assertFalse(await policy.meter('free_user', 'usage', 1 + 'GB'));
+assertFalse(await policy.allow('free_user', 'usage', 1 + 'GB'));
 
-// print the entitlement record (can be subject or plan)
+// print the entitlement record (can be customer or plan)
 console.log(policy.entitlement('free', 'usage'));

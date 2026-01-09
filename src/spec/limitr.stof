@@ -26,11 +26,11 @@ Limitr: {
     /// Available plan definitions by ID.
     obj plans: {};
 
-    /// Subjects by ID.
-    obj subjects: {};
+    /// Customers by ID.
+    obj customers: {};
 
-    /// Alternative subject ID mappings.
-    obj alt_subject_ids: {};
+    /// Alternative customer ID mappings.
+    obj alt_customer_ids: {};
 
 
     #[no-export]
@@ -61,13 +61,13 @@ Limitr: {
          * Plans.
          *****************************************************************************/
         
-        /// Plan from ID (subject ID or plan ID).
+        /// Plan from ID (customer ID or plan ID).
         fn plan(id: str!) -> Plan {
             ?self.get().plan(id)
         }
 
         /// Delete a plan by plan ID.
-        /// Be careful, as subjects that have this plan will no longer work as expected.
+        /// Be careful, as customers that have this plan will no longer work as expected.
         fn delete_plan(id: str!) -> bool {
             ?self.get().delete_plan(id)
         }
@@ -82,7 +82,7 @@ Limitr: {
          * Entitlements.
          *****************************************************************************/
         
-        /// Get a plan entitlement from a subject or plan ID.
+        /// Get a plan entitlement from a customer or plan ID.
         fn entitlement(id: str!, entitlement: str!) -> Entitlement {
             ?self.get().entitlement(id, entitlement)
         }
@@ -92,12 +92,12 @@ Limitr: {
             ?self.get().limit(id, entitlement)
         }
 
-        /// Get the remaining balance value for a subject ID (limit - current (metered) value).
-        fn balance(id: str!, entitlement: str!) -> float {
-            ?self.get().balance(id, entitlement)
+        /// Get the remaining balance value for a customer ID (limit - current (metered) value).
+        fn remaining(id: str!, entitlement: str!) -> float {
+            ?self.get().remaining(id, entitlement)
         }
 
-        /// Get the current value of a mtered entitlement for a subject ID.
+        /// Get the current value of a mtered entitlement for a customer ID.
         fn value(id: str!, entitlement: str!) -> float {
             ?self.get().value(id, entitlement)
         }
@@ -117,12 +117,14 @@ Limitr: {
             ?self.get().deincrement(id, entitlement)
         }
 
-        /// Change the value of an entitlement meter for a subject.
-        fn meter(id: str!, entitlement: str!, value: float = 0) -> bool {
-            ?self.get().meter(id, entitlement, value)
+        /// Allow this entitlement to change by "value"?
+        /// A boolean entitlement check if value is 0 or a limit does not exist for the entitlement.
+        /// Changes a meter for this customer if true.
+        fn allow(id: str!, entitlement: str!, value: float = 0) -> bool {
+            ?self.get().allow(id, entitlement, value)
         }
 
-        /// Perform an entitlement check for a subject by ID.
+        /// Would "allow" be true if called with this "value"?
         fn check(id: str!, entitlement: str!, value: float = 0) -> bool {
             ?self.get().check(id, entitlement, value)
         }
@@ -138,54 +140,54 @@ Limitr: {
         }
 
         /// Get a credit type for a specific entitlement (limited/metered).
-        /// ID can be a plan ID or a subject ID.
+        /// ID can be a plan ID or a customer ID.
         fn credit_for(id: str!, entitlement: str!) -> Credit {
             ?self.get().credit_for(id, entitlement)
         }
 
 
         /*****************************************************************************
-         * Subjects.
+         * Customers.
          *****************************************************************************/
         
-        /// Get a subject by ID.
-        fn subject(id: str!) -> Subject {
-            ?self.get().subject(id)
+        /// Get a customer by ID.
+        fn customer(id: str!) -> Customer {
+            ?self.get().customer(id)
         }
 
-        /// Get the subject's org subject ID if defined.
-        fn subject_org(id: str!) -> str {
-            ?self.get().subject_org(id)
+        /// Get the customer's org customer ID if defined.
+        fn customer_org(id: str!) -> str {
+            ?self.get().customer_org(id)
         }
 
-        /// Change a subject's plan ID.
-        fn set_subject_plan(id: str!, plan: str!) -> bool {
-            ?self.get().set_subject_plan(id, plan)
+        /// Change a customer's plan ID.
+        fn set_customer_plan(id: str!, plan: str!) -> bool {
+            ?self.get().set_customer_plan(id, plan)
         }
 
-        /// Create a new subject.
-        fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Subject {
-            ?self.get().create_subject(id, plan, type, label, org, alts)
+        /// Create a new customer.
+        fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Customer {
+            ?self.get().create_customer(id, plan, type, label, org, alts)
         }
 
-        /// Set/create a subject with an id & internal Stof.
-        fn set_subject(id: str!, internal_stof: str!) -> Subject {
-            ?self.get().set_subject(id, internal_stof)
+        /// Set/create a customer with an id & internal Stof.
+        fn set_customer(id: str!, internal_stof: str!) -> Customer {
+            ?self.get().set_customer(id, internal_stof)
         }
 
-        /// Delete a subject.
-        fn delete_subject(id: str!) -> bool {
-            ?self.get().delete_subject(id)
+        /// Delete a customer.
+        fn delete_customer(id: str!) -> bool {
+            ?self.get().delete_customer(id)
         }
 
-        /// Set an alternative subject ID (must be unique).
-        fn set_alt_subject_id(id: str!, alt: str!) -> bool {
-            ?self.get().set_alt_subject_id(id, alt)
+        /// Set an alternative customer ID (must be unique).
+        fn set_alt_customer_id(id: str!, alt: str!) -> bool {
+            ?self.get().set_alt_customer_id(id, alt)
         }
 
-        /// Delete an alternative subject ID.
-        fn delete_alt_subject_id(alt: str!) -> bool {
-            ?self.get().delete_alt_subject_id(alt)
+        /// Delete an alternative customer ID.
+        fn delete_alt_customer_id(alt: str!) -> bool {
+            ?self.get().delete_alt_customer_id(alt)
         }
     }
 
@@ -195,7 +197,7 @@ Limitr: {
      *****************************************************************************/
     
     /**
-     * Get a plan by ID (either a plan ID or a subject ID).
+     * Get a plan by ID (either a plan ID or a customer ID).
      */
     fn plan(id: str!) -> Plan {
         self.plans.get(id) ?? self.plan_for(id)
@@ -203,13 +205,13 @@ Limitr: {
 
 
     /**
-     * Get a plan by subject ID.
+     * Get a plan by customer ID.
      */
-    fn plan_for(subject_id: str!) -> Plan {
-        const subject = self.subject(subject_id);
-        if (subject != null) {
-            let pn = self.plans.get(subject.plan);
-            if (pn == null && subject.org != null) pn = self.plan_for(subject.org);
+    fn plan_for(customer_id: str!) -> Plan {
+        const customer = self.customer(customer_id);
+        if (customer != null) {
+            let pn = self.plans.get(customer.plan);
+            if (pn == null && customer.org != null) pn = self.plan_for(customer.org);
             return pn;
         }
         null
@@ -218,7 +220,7 @@ Limitr: {
 
     /**
      * Delete a plan by plan ID.
-     * Be careful, as subjects that have this plan will no longer work as expected.
+     * Be careful, as customers that have this plan will no longer work as expected.
      */
     fn delete_plan(id: str!) -> bool {
         const plan = self.plans.get(id);
@@ -251,7 +253,7 @@ Limitr: {
      *****************************************************************************/
     
     /**
-     * Get a plan entitlement from either a subject ID or plan ID.
+     * Get a plan entitlement from either a customer ID or plan ID.
      */
     fn entitlement(id: str!, entitlement: str!) -> Entitlement {
         const pn: Plan = self.plan(id);
@@ -280,18 +282,18 @@ Limitr: {
 
 
     /**
-     * Get the remaining entitlement balance value for a subject ID (limit - current (metered) value).
+     * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
      * Returns a value in the units of the meter (not always the same as defined limit units).
      */
-    fn balance(id: str!, entitlement: str!) -> float {
-        const subject = self.subject(id);
-        if (subject != null) {
+    fn remaining(id: str!, entitlement: str!) -> float {
+        const customer = self.customer(id);
+        if (customer != null) {
             const ent = self.entitlement(id, entitlement);
             if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
                 const credit = self.credit(ent.limit.credit);
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
-                const meter: Meter = subject.meters.get(entitlement);
+                const meter: Meter = customer.meters.get(entitlement);
                 if (meter != null) return ((ent.limit.value as float) - meter.value).to_units(stof_units);
                 return (ent.limit.value as float).to_units(stof_units);
             }
@@ -301,13 +303,13 @@ Limitr: {
 
 
     /**
-     * Get the current value of a metered entitlement for a subject ID.
+     * Get the current value of a metered entitlement for a customer ID.
      * Returns null if the entitlement doesn't exist.
      */
     fn value(id: str!, entitlement: str!) -> float {
-        const subject = self.subject(id);
-        if (subject != null) {
-            const meter: Meter = subject.meters.get(entitlement);
+        const customer = self.customer(id);
+        if (customer != null) {
+            const meter: Meter = customer.meters.get(entitlement);
             if (meter != null) {
                 return meter.value;
             } else if (self.entitlement(id, entitlement) != null) {
@@ -335,7 +337,7 @@ Limitr: {
     fn increment(id: str!, entitlement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
         if (ent != null && ent.limit != null) {
-            return self.meter(id, entitlement, ent.limit.increment);
+            return self.allow(id, entitlement, ent.limit.increment);
         }
         false
     }
@@ -347,28 +349,25 @@ Limitr: {
     fn deincrement(id: str!, enforcement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
         if (ent != null && ent.limit != null) {
-            return self.meter(id, entitlement, ent.limit.increment * -1);
+            return self.allow(id, entitlement, ent.limit.increment * -1);
         }
         false
     }
 
 
     /**
-     * Change the value of an entitlement meter for a subject.
-     * Be default, any limit enforcements will take effect.
-     * Returns true if the subject has access with the requested value.
-     *
-     * This may be the only function you need to use in your codebase.
+     * Allow an entitlement for a customer to change by "value"?
+     * A basic entitlement boolean check if value is 0 or a limit does not exist for an entitlement.
      */
-    fn meter(id: str!, entitlement: str!, value: float | str = 0) -> bool {
+    fn allow(id: str!, entitlement: str!, value: float | str = 0) -> bool {
         if ((typeof value) == 'str') value = value as float; // takes units into consideration too
-        const subject = self.subject(id);
-        if (subject != null) {
+        const customer = self.customer(id);
+        if (customer != null) {
             const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
-                    let existing_meter: Meter = subject.meters.get(entitlement);
+                    let existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
                     // check if the new value should be reset!
@@ -388,7 +387,7 @@ Limitr: {
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
                     if (ent.limit != null && (res || ent.limit.mode == 'soft')) {
-                        if (existing_meter == null) existing_meter = new Meter { } on subject.meters;
+                        if (existing_meter == null) existing_meter = new Meter { } on customer.meters;
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
                         existing_meter.credit = ent.limit.credit;
@@ -398,7 +397,7 @@ Limitr: {
                             existing_meter.reset = Time.now() + ent.limit.reset_inc;
                         }
 
-                        subject.meters.insert(entitlement, existing_meter);
+                        customer.meters.insert(entitlement, existing_meter);
                         
                         if (changed) {
                             const event_value = new {
@@ -406,11 +405,11 @@ Limitr: {
                                     old: old_value,
                                     value: existing_meter.value,
                                 },
-                                subject,
+                                customer,
                                 entitlement,
                                 plan,
                                 credit,
-                                balance: (ent.limit.value as float) - existing_meter.value,
+                                remaining: (ent.limit.value as float) - existing_meter.value,
                             };
                             await <Event>.send('meter-changed', event_value);
                             if (!res) await <Event>.send('meter-overage', event_value);
@@ -420,7 +419,7 @@ Limitr: {
                         res = true; // meter was changed!
                     } else if (ent.limit != null && !res) {
                         const event_value = new {
-                            subject,
+                            customer,
                             entitlement,
                             plan,
                             credit,
@@ -439,18 +438,18 @@ Limitr: {
 
 
     /**
-     * Perform an entitlement check for a subject by ID.
-     * By default, any limit enforcements will not take effect.
+     * If one were to call "allow" for this entitlement and value, would it be valid?
+     * Does not change meters for this customer.
      */
     fn check(id: str!, entitlement: str!, value: float | str = 0) -> bool {
         if ((typeof value) == 'str') value = value as float; // takes units into consideration too
-        const subject = self.subject(id);
-        if (subject != null) {
+        const customer = self.customer(id);
+        if (customer != null) {
             const plan = self.plan_for(id);
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
-                    const existing_meter: Meter = subject.meters.get(entitlement);
+                    const existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
                     // check if the new value should be reset!
@@ -487,7 +486,7 @@ Limitr: {
 
     /**
      * Get a credit type for a specific entitlement (that has a limit).
-     * ID can be a plan ID or a subject ID.
+     * ID can be a plan ID or a customer ID.
      */
     fn credit_for(id: str!, entitlement: str!) -> Credit {
         const ent = self.entitlement(id, entitlement);
@@ -499,40 +498,40 @@ Limitr: {
 
 
     /*****************************************************************************
-     * Subjects.
+     * Customers.
      *****************************************************************************/
     
     /**
-     * Get a global subject by ID.
+     * Get a global customer by ID.
      */
-    fn subject(id: str!) -> Subject {
-        const sub = self.subjects.get(id);
+    fn customer(id: str!) -> Customer {
+        const sub = self.customers.get(id);
         if (sub == null) {
-            const alt = self.alt_subject_ids.get(id);
-            if (alt != null) return self.subject(alt);
+            const alt = self.alt_customer_ids.get(id);
+            if (alt != null) return self.customer(alt);
         }
         sub
     }
 
 
     /**
-     * Get the subject organization subject ID (if defined).
+     * Get the customer organization customer ID (if defined).
      */
-    fn subject_org(id: str!) -> str {
-        const sub = self.subject(id);
+    fn customer_org(id: str!) -> str {
+        const sub = self.customer(id);
         sub != null ? sub.org : null
     }
 
 
     /**
-     * Change a subject's plan ID.
+     * Change a customer's plan ID.
      */
-    fn set_subject_plan(id: str!, plan: str!) -> bool {
-        const sub = self.subject(id);
-        const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a subject ID here
+    fn set_customer_plan(id: str!, plan: str!) -> bool {
+        const sub = self.customer(id);
+        const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
         if (pn != null && sub.plan != plan) {
             sub.plan = plan;
-            await <Event>.send('subject-set', sub);
+            await <Event>.send('customer-set', sub);
             return true;
         }
         false
@@ -540,86 +539,86 @@ Limitr: {
 
 
     /**
-     * Create a subject with an ID and plan ID.
+     * Create a customer with an ID and plan ID.
      */
-    fn create_subject(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Subject {
+    fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Customer {
         let pn = self.plan(plan);
         if (pn == null && org != null) pn = self.plan(org);
         if (pn != null) {
 
-            // check for existing subject to update
-            const existing: Subject = self.subjects.get(id);
+            // check for existing customer to update
+            const existing: Customer = self.customers.get(id);
             if (existing != null) {
                 existing.type = type;
                 existing.label = label;
                 existing.plan = plan;
                 existing.org = org ?? existing.org;
-                await <Event>.send('subject-set', existing);
+                await <Event>.send('customer-set', existing);
                 return existing;
             }
 
-            const subject = new Subject {
+            const customer = new Customer {
                 id,
                 plan,
                 type,
                 label,
                 org,
-            } on self.subjects;
-            self.subjects.insert(id, subject);
+            } on self.customers;
+            self.customers.insert(id, customer);
 
             // init alternative ids
-            if (alts != null) for (const alt in alts) self.set_alt_subject_id(id, alt);
+            if (alts != null) for (const alt in alts) self.set_alt_customer_id(id, alt);
 
-            await <Event>.send('subject-set', subject);
-            return subject;
+            await <Event>.send('customer-set', customer);
+            return customer;
         }
         null
     }
 
 
     /**
-     * Set/create a subject with an id & internal Stof.
+     * Set/create a customer with an id & internal Stof.
      */
-    fn set_subject(id: str!, internal_stof: str!) -> Subject {
-        self.delete_subject(id);
-        const sub = new {} on self.subjects;
+    fn set_customer(id: str!, internal_stof: str!) -> Customer {
+        self.delete_customer(id);
+        const sub = new {} on self.customers;
         try parse(internal_stof, sub, 'stof');
         catch {
             drop(sub);
             return null;
         }
 
-        self.subjects.insert(id, sub as Subject);
-        for (const alt in sub.alt_ids ?? []) self.set_alt_subject_id(id, alt);
-        await <Event>.send('subject-set', subject);
+        self.customers.insert(id, sub as Customer);
+        for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt);
+        await <Event>.send('customer-set', customer);
         sub
     }
 
 
     /**
-     * Delete a subject.
+     * Delete a customer.
      */
-    fn delete_subject(id: str!) -> bool {
-        const subject = self.subject(id);
-        if (subject != null) {
-            await <Event>.send('subject-removed', subject);
-            for (const alt in subject.alt_ids) self.delete_alt_subject_id(alt);
-            return self.subjects.remove(subject.id);
+    fn delete_customer(id: str!) -> bool {
+        const customer = self.customer(id);
+        if (customer != null) {
+            await <Event>.send('customer-removed', customer);
+            for (const alt in customer.alt_ids) self.delete_alt_customer_id(alt);
+            return self.customers.remove(customer.id);
         }
         false
     }
 
 
     /**
-     * Set an alternative subject ID (must be unique).
+     * Set an alternative customer ID (must be unique).
      */
-    fn set_alt_subject_id(subject_id: str!, alt_id: str!) -> bool {
-        const subject = self.subject(subject_id);
-        if (subject != null) {
-            subject.alt_ids.remove_all(alt_id);
-            subject.alt_ids.push_back(alt_id);
-            self.alt_subject_ids.insert(alt_id, subject_id);
-            await <Event>.send('subject-set', subject);
+    fn set_alt_customer_id(customer_id: str!, alt_id: str!) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer != null) {
+            customer.alt_ids.remove_all(alt_id);
+            customer.alt_ids.push_back(alt_id);
+            self.alt_customer_ids.insert(alt_id, customer_id);
+            await <Event>.send('customer-set', customer);
             return true;
         }
         false
@@ -627,14 +626,14 @@ Limitr: {
 
 
     /**
-     * Delete an alternative subject ID.
+     * Delete an alternative customer ID.
      */
-    fn delete_alt_subject_id(subject_id: str!) -> bool {
-        const subject = self.subject(subject_id);
-        const res = self.alt_subject_ids.remove(subject_id);
-        if (subject != null) {
-            subject.alt_ids.remove_all(subject_id);
-            await <Event>.send('subject-set', subject);
+    fn delete_alt_customer_id(customer_id: str!) -> bool {
+        const customer = self.customer(customer_id);
+        const res = self.alt_customer_ids.remove(customer_id);
+        if (customer != null) {
+            customer.alt_ids.remove_all(customer_id);
+            await <Event>.send('customer-set', customer);
         }
         res
     }

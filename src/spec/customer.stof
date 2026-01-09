@@ -17,33 +17,33 @@
 
 #[type]
 /**
- * A Limitr subject.
+ * A Limitr customer.
  * Could be a user, organization, etc.
  */
-Subject: {
-    /// How to identify this subject.
+Customer: {
+    /// How to identify this customer.
     /// For a user, this could be an email, etc.
     /// This Id is used for metering, etc.
     str! id: '';
 
-    /// Plan ID for this subject.
+    /// Plan ID for this customer.
     str! plan: '';
 
-    /// Alternate IDs for this subject.
+    /// Alternate IDs for this customer.
     /// Use Limitr API.
     list! alt_ids: [];
 
-    /// Optional organization subject ID for this user.
+    /// Optional organization customer ID for this user.
     str org: null;
 
-    /// An optional type of this subject.
+    /// An optional type of this customer.
     /// Ex. user, organization, seat, etc.
     str! type: 'user';
 
-    /// Human-facing label for this subject.
+    /// Human-facing label for this customer.
     str! label: 'User';
 
-    /// Meters for this subject.
+    /// Meters for this customer.
     /// These map to entitlements by name for a plan.
     /// Lazily populated.
     obj! meters: {};

@@ -16,7 +16,7 @@
 
 package: {
     name: 'limitr'
-    version: 0.1.0
+    version: 0.2.0
     authors: ['CJ Cummings <cj@formata.io>']
     description: 'Embedded policy engine for usage, seats, and credits.'
     license: 'Apache-2.0'

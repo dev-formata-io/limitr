@@ -22,12 +22,12 @@ const policy = await Limitr.new(`
 policy:
   credits:
     seat:
-      description: 'A single seat credit that can be tracked per subject.'
+      description: 'A single seat credit that can be tracked per customer.'
   plans:
     free:
       entitlements:
         seats:
-          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          description: 'Each customer (user, org, etc.) with this plan can have up to this many seats.'
           limit:
             credit: 'seat'
             value: 1
@@ -35,16 +35,16 @@ policy:
     paid:
       entitlements:
         seats:
-          description: 'Each subject (user, org, etc.) with this plan can have up to this many seats.'
+          description: 'Each customer (user, org, etc.) with this plan can have up to this many seats.'
           limit:
             credit: 'seat'
             value: 3
             increment: 1
 `, 'yaml');
 
-// Create/save/load subjects (database, Stripe, etc.)
-await policy.addSubject('cus_free_customer', 'free');
-await policy.addSubject('cus_paid_customer', 'paid');
+// Create/save/load customers (database, Stripe, etc.)
+await policy.addCustomer('cus_free_customer', 'free');
+await policy.addCustomer('cus_paid_customer', 'paid');
 
 // Perform entitlement checks, meter usage, etc.
 await policy.increment('cus_free_customer', 'seats'); // adds one seat
@@ -53,14 +53,14 @@ await policy.increment('cus_paid_customer', 'seats'); // adds one seat
 // Add callbacks to the document directly or as a library function
 policy.doc.lib('App', 'meter_limit', (json: string) => {
     const record = JSON.parse(json);
-    if (record.subject.plan === 'free' && record.entitlement === 'seats') {
-        console.log('FREE PLAN SEAT LIMIT HIT, current: ', record.subject.meters.seats.value, ' requested: ', record.invalid_value);
+    if (record.customer.plan === 'free' && record.entitlement === 'seats') {
+        console.log('FREE PLAN SEAT LIMIT HIT, current: ', record.customer.meters.seats.value, ' requested: ', record.invalid_value);
     }
 });
 
 // Will return false and send an meter-limit event in the doc (if App.meter_limit exists, it will also be called)
 if (await policy.increment('cus_free_customer', 'seats')) throw Error("will not get here");
-if (await policy.meter('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
+if (await policy.allow('cus_free_customer', 'seats', 2)) throw Error("cannot request 2 additional seats..");
 if (await policy.increment('cus_paid_customer', 'seats')) {
     // paid customer can add a second seat
 } else {

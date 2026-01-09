@@ -33,7 +33,7 @@ policy: {
             entitlements: {
                 #[type('FreeSeats')]
                 Entitlement seats: {
-                    description: 'How many seats per subject are allowed.'
+                    description: 'How many seats per customer are allowed.'
                     limit: {
                         credit: 'seat'
                         value: 3
@@ -57,11 +57,11 @@ policy: {
 `);
 console.log(limitr.plan('paid'));
 
-// Create a test subject to play with
+// Create a test customer to play with
 const sid = 'cus_example_id';
-await limitr.addSubject(sid, 'free', 'org', 'Formata', null, ['formata']);
+await limitr.addCustomer(sid, 'free', 'org', 'Formata', null, ['formata']);
 
-// Check the seats policy for our subject
+// Check the seats policy for our customer
 limitr.doc.lib('App', 'meter_limit', (json: string) => {
     const record = JSON.parse(json);
     console.log('LIMIT HIT FOR: ', record);
@@ -76,8 +76,8 @@ assert(await limitr.increment(sid, 'seats')); // add another seat
 
 
 // Create a paid customer to test with
-await limitr.addSubject('cus_paid', 'paid');
-assert(await limitr.meter('cus_paid', 'seats', 10)); // take up all 10
+await limitr.addCustomer('cus_paid', 'paid');
+assert(await limitr.allow('cus_paid', 'seats', 10)); // take up all 10
 assert(!(await limitr.increment('cus_paid', 'seats')));
 
 

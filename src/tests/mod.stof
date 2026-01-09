@@ -91,8 +91,8 @@ Limitr policy: {
     }
 
     #[init]
-    fn init_test_subjects() {
-        self.create_subject('me', 'paid', alts=['cj']);
+    fn init_test_customers() {
+        self.create_customer('me', 'paid', alts=['cj']);
     }
 }
 
@@ -108,27 +108,27 @@ fn verify_plans() {
 }
 
 #[test]
-fn verify_me_subject() {
-    const me = self.policy.subject('me');
+fn verify_me_customer() {
+    const me = self.policy.customer('me');
     assert(me);
     assert_eq(self.policy.plan_for('me'), self.policy.plan('paid'));
-    assert_eq(self.policy.subject('cj'), me);
+    assert_eq(self.policy.customer('cj'), me);
     assert_eq(self.policy.plan_for('cj'), self.policy.plan('paid'));
 }
 
 #[test]
-fn add_remove_subject() {
-    assert(self.policy.create_subject('formata', 'free', 'organization', 'Formata'));
+fn add_remove_customer() {
+    assert(self.policy.create_customer('formata', 'free', 'organization', 'Formata'));
     assert_eq(self.policy.plan_for('formata'), self.policy.plan('free'));
 
-    self.policy.set_alt_subject_id('formata', 'fmta');
-    assert(self.policy.subject('fmta'));
-    self.policy.delete_alt_subject_id('fmta');
-    assert_not(self.policy.subject('fmta'));
-    assert(self.policy.subject('formata'));
+    self.policy.set_alt_customer_id('formata', 'fmta');
+    assert(self.policy.customer('fmta'));
+    self.policy.delete_alt_customer_id('fmta');
+    assert_not(self.policy.customer('fmta'));
+    assert(self.policy.customer('formata'));
 
-    self.policy.delete_subject('formata');
-    assert_not(self.policy.subject('formata'));
+    self.policy.delete_customer('formata');
+    assert_not(self.policy.customer('formata'));
 }
 
 #[test]
@@ -157,29 +157,29 @@ fn boolean_check() {
 fn seat_check() {
     assert_eq(self.policy.limit('cj', 'chat'), 3);
 
-    assert(self.policy.meter('cj', 'chat', 1));
-    assert_eq(self.policy.balance('cj', 'chat'), 2);
-    assert(self.policy.meter('cj', 'chat', 1));
-    assert_eq(self.policy.balance('cj', 'chat'), 1);
+    assert(self.policy.allow('cj', 'chat', 1));
+    assert_eq(self.policy.remaining('cj', 'chat'), 2);
+    assert(self.policy.allow('cj', 'chat', 1));
+    assert_eq(self.policy.remaining('cj', 'chat'), 1);
     assert(self.policy.check('cj', 'chat', 1));
     assert(self.policy.increment('cj', 'chat')); // max 3
-    assert_eq(self.policy.balance('cj', 'chat'), 0);
+    assert_eq(self.policy.remaining('cj', 'chat'), 0);
     assert_not(self.policy.check('cj', 'chat', 1));
     assert_not(self.policy.increment('cj', 'chat'));
 
-    assert(self.policy.meter('cj', 'chat', -1));
-    assert(self.policy.meter('cj', 'chat', 1)); // max 3
-    assert_not(self.policy.meter('cj', 'chat', 1));
+    assert(self.policy.allow('cj', 'chat', -1));
+    assert(self.policy.allow('cj', 'chat', 1)); // max 3
+    assert_not(self.policy.allow('cj', 'chat', 1));
 
     assert_eq(self.policy.cost('me', 'chat'), 1);
 }
 
 #[test]
 fn unlimited_spend() {
-    assert(self.policy.meter('cj', 'spend', 30.56));
+    assert(self.policy.allow('cj', 'spend', 30.56));
     assert(self.policy.check('cj', 'spend', 100));
-    assert(self.policy.meter('cj', 'spend', 44.34));
-    assert(self.policy.meter('cj', 'spend', -34));
+    assert(self.policy.allow('cj', 'spend', 44.34));
+    assert(self.policy.allow('cj', 'spend', -34));
     assert_eq(self.policy.value('cj', 'spend').round(1), 40.9);
 
     const credit = self.policy.credit_for('cj', 'spend');
@@ -193,25 +193,25 @@ fn usage_units() {
     assert_eq(self.policy.limit('cj', 'usage'), 2GB);
     assert_eq(typename self.policy.limit('cj', 'usage'), 'MB'); // return in credit's units
 
-    assert(self.policy.meter('cj', 'usage', 3)); // default is credit units (MB)
+    assert(self.policy.allow('cj', 'usage', 3)); // default is credit units (MB)
     assert_eq(self.policy.value('cj', 'usage'), 3MB);
-    assert(self.policy.meter('cj', 'usage', '-3MB')); // can use strings instead of just numbers (non-stof contexts)
+    assert(self.policy.allow('cj', 'usage', '-3MB')); // can use strings instead of just numbers (non-stof contexts)
 
-    assert(self.policy.meter('cj', 'usage', 500MB));
-    assert(self.policy.meter('cj', 'usage', 1GB));
-    assert(self.policy.meter('cj', 'usage', 2_000_000bytes));
+    assert(self.policy.allow('cj', 'usage', 500MB));
+    assert(self.policy.allow('cj', 'usage', 1GB));
+    assert(self.policy.allow('cj', 'usage', 2_000_000bytes));
 
     let val = self.policy.value('cj', 'usage');
     assert_eq(typename val, 'MB');
     assert_eq(val, 1502MB);
     assert_eq(val, 1.502GB);
 
-    assert_not(self.policy.meter('cj', 'usage', 500MB));
-    assert_not(self.policy.meter('cj', 'usage', 1GB));
-    assert(self.policy.meter('cj', 'usage', 10MiB));
+    assert_not(self.policy.allow('cj', 'usage', 500MB));
+    assert_not(self.policy.allow('cj', 'usage', 1GB));
+    assert(self.policy.allow('cj', 'usage', 10MiB));
 
     val = self.policy.value('cj', 'usage');
-    let balance = self.policy.balance('cj', 'usage');
+    let remaining = self.policy.remaining('cj', 'usage');
     assert_eq(val.round(2), 1512.49MB);
-    assert_eq(balance.round(2), 487.51MB); // The MiB made things more floaty
+    assert_eq(remaining.round(2), 487.51MB); // The MiB made things more floaty
 }

@@ -17,7 +17,7 @@
 import './events';
 import './credit';
 import './plan';
-import './subject';
+import './customer';
 import './entitlement';
 import './meter';
 import './limitr';

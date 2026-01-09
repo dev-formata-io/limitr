@@ -37,20 +37,20 @@ policy:
             value: 10000
 `, 'yaml');
 
-// create test subjects
-await policy.addSubject('free_user', 'free');
-await policy.addSubject('pro_user', 'pro');
+// create test customers
+await policy.addCustomer('free_user', 'free');
+await policy.addCustomer('pro_user', 'pro');
 
 // add events either in doc (its just stof) or to policy as pre-defined (App.meter_overage, etc..)
-policy.doc.lib('App', 'meter_overage', (json: string) => { const r = JSON.parse(json); console.log('Overage subject: ', r.subject, r.balance); });
-policy.doc.lib('Custom', 'example_event_handler', (user: string, balance: number) => { console.log("firing a custom event handler for", user, balance); });
+policy.doc.lib('App', 'meter_overage', (json: string) => { const r = JSON.parse(json); console.log('Overage customer: ', r.customer, r.remaining); });
+policy.doc.lib('Custom', 'example_event_handler', (user: string, remaining: number) => { console.log("firing a custom event handler for", user, remaining); });
 policy.doc.parse(`
     #[meter-overage]
     fn meter_over_limit(val: obj) {
-        ?Custom.example_event_handler(val.subject.id, val.balance);
+        ?Custom.example_event_handler(val.customer.id, val.remaining);
     }
 `);
 
 // determin allowed or not while metering usage
-const allowed = await policy.meter('free_user', 'tokens', 1400);
+const allowed = await policy.allow('free_user', 'tokens', 1400);
 if (!allowed) console.log('Free user is not allowed');

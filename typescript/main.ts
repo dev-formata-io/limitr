@@ -54,7 +54,7 @@ export class Limitr {
      *****************************************************************************/
 
     /**
-     * Get a plan record by ID (plan ID or subject ID).
+     * Get a plan record by ID (plan ID or customer ID).
      */
     plan(id: string): Record<string, unknown> | undefined {
         const planNode = this.doc.sync_call('<Limitr>.api.plan', id);
@@ -113,7 +113,7 @@ export class Limitr {
 
     /**
      * Get a credit record for a specific entitlement.
-     * ID can be a plan ID or a subject ID.
+     * ID can be a plan ID or a customer ID.
      */
     creditFor(id: string, entitlement: string): Record<string, unknown> | undefined {
         const node = this.doc.sync_call('<Limitr>.api.credit_for', id, entitlement);
@@ -123,27 +123,27 @@ export class Limitr {
 
 
     /*****************************************************************************
-     * Subjects API.
+     * Customers API.
      *****************************************************************************/
 
     /**
-     * Get a subject record by ID (or alternative IDs).
+     * Get a customer record by ID (or alternative IDs).
      */
-    subject(id: string): Record<string, unknown> | undefined {
-        const subNode = this.doc.sync_call('<Limitr>.api.subject', id);
+    customer(id: string): Record<string, unknown> | undefined {
+        const subNode = this.doc.sync_call('<Limitr>.api.customer', id);
         if (typeof subNode === 'string') return this.doc.record(subNode);
         return undefined;
     }
 
 
     /**
-     * Get all subjects as a single record.
-     * Subjects contain all state information, so this is all that is required to save/load.
+     * Get all customers as a single record.
+     * Customers contain all state information, so this is all that is required to save/load.
      */
-    subjects(): Record<string, unknown> | undefined {
+    customers(): Record<string, unknown> | undefined {
         const node = this.doc.sync_call('<Limitr>.api.get');
         if (typeof node === 'string') {
-            const subs = this.doc.get('subjects', node);
+            const subs = this.doc.get('customers', node);
             if (typeof subs === 'string') return this.doc.record(subs);
         }
         return undefined;
@@ -151,144 +151,144 @@ export class Limitr {
 
 
     /**
-     * Get the subject organization subject ID if defined.
+     * Get the customer organization customer ID if defined.
      */
-    subjectOrg(id: string): string | null {
-        return this.doc.sync_call('<Limitr>.api.subject_org', id) as string | null;
+    customerOrg(id: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.customer_org', id) as string | null;
     }
 
 
     /**
-     * Set/change a subject's plan ID.
-     * Returns true if the plan has changed (and emits a subject-set event).
+     * Set/change a customer's plan ID.
+     * Returns true if the plan has changed (and emits a customer-set event).
      */
-    async setSubjectPlan(id: string, plan: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.set_subject_plan', id, plan) as boolean;
+    async setCustomerPlan(id: string, plan: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.set_customer_plan', id, plan) as boolean;
     }
 
 
     /**
-     * Set/change a subject's plan ID.
-     * Returns true if the plan has changed (and emits a subject-set event).
+     * Set/change a customer's plan ID.
+     * Returns true if the plan has changed (and emits a customer-set event).
      */
-    setSubjectPlanSync(id: string, plan: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.set_subject_plan', id, plan) as boolean;
+    setCustomerPlanSync(id: string, plan: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.set_customer_plan', id, plan) as boolean;
     }
 
     
     /**
-     * Add a new subject to this Limitr.
+     * Add a new customer to this Limitr.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      */
-    async addSubject(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
-        await this.doc.call('<Limitr>.api.create_subject', id, plan, type, label, org, alts);
+    async addCustomer(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
+        await this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, org, alts);
     }
 
 
     /**
-     * Add a new subject to this Limitr.
+     * Add a new customer to this Limitr.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      */
-    addSubjectSync(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
-        this.doc.sync_call('<Limitr>.api.create_subject', id, plan, type, label, org, alts);
+    addCustomerSync(id: string, plan: string, type: string = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
+        this.doc.sync_call('<Limitr>.api.create_customer', id, plan, type, label, org, alts);
     }
 
 
     /**
-     * Set a subject on this policy by ID.
-     * Returns a node ID to the resulting Subject.
+     * Set a customer on this policy by ID.
+     * Returns a node ID to the resulting Customer.
      */
-    async setSubject(id: string, subjectStof: string): Promise<string | null> {
-        return await this.doc.call('<Limitr>.api.set_subject', id, subjectStof) as string | null;
+    async setCustomer(id: string, customerStof: string): Promise<string | null> {
+        return await this.doc.call('<Limitr>.api.set_customer', id, customerStof) as string | null;
     }
 
 
     /**
-     * Set a subject on this policy by ID.
-     * Returns a node ID to the resulting Subject.
+     * Set a customer on this policy by ID.
+     * Returns a node ID to the resulting Customer.
      */
-    setSubjectSync(id: string, subjectStof: string): string | null {
-        return this.doc.sync_call('<Limitr>.api.set_subject', id, subjectStof) as string | null;
+    setCustomerSync(id: string, customerStof: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.set_customer', id, customerStof) as string | null;
     }
 
 
     /**
-     * Load many subjects as records.
-     * This is all that is required for save/load since subjects contain all state information.
+     * Load many customers as records.
+     * This is all that is required for save/load since customers contain all state information.
      */
-    async loadSubjects(subjects: Record<string, unknown> | Record<string, unknown>[]) {
+    async loadCustomers(customers: Record<string, unknown> | Record<string, unknown>[]) {
         let subs: Record<string, unknown>[] = [];
-        if (!Array.isArray(subjects)) {
-            for (const [k, v] of Object.entries(subjects)) {
+        if (!Array.isArray(customers)) {
+            for (const [k, v] of Object.entries(customers)) {
                 const val = v as Record<string, unknown>;
                 val.id = k; // make sure it has the correct ID
                 subs.push(val);
             }
         } else {
-            subs = subjects;
+            subs = customers;
         }
         for (const sub of subs) {
             const id = sub.id;
             if (typeof id === 'string') {
-                await this.setSubject(id, JSON.stringify(sub));
+                await this.setCustomer(id, JSON.stringify(sub));
             }
         }
     }
 
 
     /**
-     * Load many subjects as records.
-     * This is all that is required for save/load since subjects contain all state information.
+     * Load many customers as records.
+     * This is all that is required for save/load since customers contain all state information.
      */
-    loadSubjectsSync(subjects: Record<string, unknown> | Record<string, unknown>[]) {
+    loadCustomersSync(customers: Record<string, unknown> | Record<string, unknown>[]) {
         let subs: Record<string, unknown>[] = [];
-        if (!Array.isArray(subjects)) {
-            for (const [k, v] of Object.entries(subjects)) {
+        if (!Array.isArray(customers)) {
+            for (const [k, v] of Object.entries(customers)) {
                 const val = v as Record<string, unknown>;
                 val.id = k; // make sure it has the correct ID
                 subs.push(val);
             }
         } else {
-            subs = subjects;
+            subs = customers;
         }
         for (const sub of subs) {
             const id = sub.id;
             if (typeof id === 'string') {
-                this.setSubjectSync(id, JSON.stringify(sub));
+                this.setCustomerSync(id, JSON.stringify(sub));
             }
         }
     }
 
 
     /**
-     * Remove a subject by ID.
+     * Remove a customer by ID.
      */
-    async removeSubject(id: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.delete_subject', id) as boolean;
+    async removeCustomer(id: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.delete_customer', id) as boolean;
     }
 
 
     /**
-     * Remove a subject by ID.
+     * Remove a customer by ID.
      */
-    removeSubjectSync(id: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.delete_subject', id) as boolean;
+    removeCustomerSync(id: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.delete_customer', id) as boolean;
     }
 
 
     /**
-     * Add an alternative subject ID to an existing subject.
+     * Add an alternative customer ID to an existing customer.
      */
     addAltID(existing: string, alt: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.set_alt_subject_id', existing, alt) as boolean;
+        return this.doc.sync_call('<Limitr>.api.set_alt_customer_id', existing, alt) as boolean;
     }
 
 
     /**
-     * Remove an alternative subject ID from an existing subject.
+     * Remove an alternative customer ID from an existing customer.
      */
     removeAltID(alt: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.delete_alt_subject_id', alt) as boolean;
+        return this.doc.sync_call('<Limitr>.api.delete_alt_customer_id', alt) as boolean;
     }
 
 
@@ -297,7 +297,7 @@ export class Limitr {
      *****************************************************************************/
 
     /**
-     * Get an entitlement record with a plan ID or subject ID and an entitlement name.
+     * Get an entitlement record with a plan ID or customer ID and an entitlement name.
      */
     entitlement(id: string, entitlement: string): Record<string, unknown> | undefined {
         const node = this.doc.sync_call('<Limitr>.api.entitlement', id, entitlement);
@@ -308,7 +308,7 @@ export class Limitr {
 
     /**
      * Get the limit value for a metered entitlement.
-     * ID can be a subject ID or a plan ID (to get the specific entitlement from a plan).
+     * ID can be a customer ID or a plan ID (to get the specific entitlement from a plan).
      * Will always be in the units of the credit associated with this entitlement (ex. limit.value = '2GB', credit.stof_units = 'MB', limit = 2000).
      */
     limit(id: string, entitlement: string): number | null {
@@ -317,20 +317,20 @@ export class Limitr {
 
 
     /**
-     * Get the remaining balance for a subject's entitlement (limit - current (metered) value).
+     * Get the remaining balance for a customer's entitlement (limit - current (metered) value).
      * Will always be in the units of the credit associated with this entitlement.
      */
-    balance(subject: string, entitlement: string): number | null {
-        return this.doc.sync_call('<Limitr>.api.balance', subject, entitlement) as number | null;
+    remaining(customer: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement) as number | null;
     }
 
 
     /**
-     * Get the current meter value for a subject's entitlement.
+     * Get the current meter value for a customer's entitlement.
      * Will always be in the units of the credit associated with this entitlement.
      */
-    value(subject: string, entitlement: string): number | null {
-        return this.doc.sync_call('<Limitr>.api.value', subject, entitlement) as number | null;
+    value(customer: string, entitlement: string): number | null {
+        return this.doc.sync_call('<Limitr>.api.value', customer, entitlement) as number | null;
     }
 
 
@@ -348,8 +348,8 @@ export class Limitr {
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async increment(subject: string, entitlement: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.increment', subject, entitlement) as boolean;
+    async increment(customer: string, entitlement: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.increment', customer, entitlement) as boolean;
     }
 
 
@@ -359,8 +359,8 @@ export class Limitr {
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    incrementSync(subject: string, entitlement: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.increment', subject, entitlement) as boolean;
+    incrementSync(customer: string, entitlement: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.increment', customer, entitlement) as boolean;
     }
 
 
@@ -369,8 +369,8 @@ export class Limitr {
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async deincrement(subject: string, entitlement: string): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
+    async deincrement(customer: string, entitlement: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.deincrement', customer, entitlement) as boolean;
     }
 
 
@@ -379,45 +379,55 @@ export class Limitr {
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    deincrementSync(subject: string, entitlement: string): boolean {
-        return this.doc.sync_call('<Limitr>.api.deincrement', subject, entitlement) as boolean;
+    deincrementSync(customer: string, entitlement: string): boolean {
+        return this.doc.sync_call('<Limitr>.api.deincrement', customer, entitlement) as boolean;
     }
 
 
     /**
-     * Try changing the value of a metered entitlement by the given value.
-     * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     * Allow changing this entitlement by "value" for this customer?
+     * A boolean entitlement check if value is 0 or a limit does not exist for the entitlement (bool flag).
+     * Changes a meter for this customer if true.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async meter(subject: string, entitlement: string, value: number | string = 0): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
+    async allow(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.allow', customer, entitlement, value) as boolean;
     }
 
 
     /**
-     * Try changing the value of a metered entitlement by the given value.
-     * Same as "check" for entitlements without a limit/meter (boolean entitlement).
+     * Allow changing this entitlement by "value" for this customer?
+     * A boolean entitlement check if value is 0 or a limit does not exist for the entitlement (bool flag).
+     * Changes a meter for this customer if true.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
+     *
+     * Note: Sync apis are faster, but any Stof event handlers cannot interact with JS async (ex. fetch).
+     * If you're unsure, use the "allow" function instead to be safe.
      */
-    meterSync(subject: string, entitlement: string, value: number | string = 0): boolean {
-        return this.doc.sync_call('<Limitr>.api.meter', subject, entitlement, value) as boolean;
+    allowSync(customer: string, entitlement: string, value: number | string = 0): boolean {
+        return this.doc.sync_call('<Limitr>.api.allow', customer, entitlement, value) as boolean;
     }
 
 
     /**
-     * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     * Would an "allow" call work for this entitlement and value on this customer?
+     * Does not change a meter (charge usage) for this customer, just checks if it would work.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async check(subject: string, entitlement: string, value: number | string = 0): Promise<boolean> {
-        return await this.doc.call('<Limitr>.api.check', subject, entitlement, value) as boolean;
+    async check(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.check', customer, entitlement, value) as boolean;
     }
 
 
     /**
-     * Just perform a check to see if the entitlement exists for this subject OR if a specific value change is valid.
+     * Would an "allow" call work for this entitlement and value on this customer?
+     * Does not change a meter (charge usage) for this customer, just checks if it would work.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
+     *
+     * Note: Sync apis are faster, but any Stof event handlers cannot interact with JS async (ex. fetch).
+     * For check, this should be safe since events are not emitted (just a bool return).
      */
-    checkSync(subject: string, entitlement: string, value: number | string = 0): boolean {
-        return this.doc.sync_call('<Limitr>.api.check', subject, entitlement, value) as boolean;
+    checkSync(customer: string, entitlement: string, value: number | string = 0): boolean {
+        return this.doc.sync_call('<Limitr>.api.check', customer, entitlement, value) as boolean;
     }
 }

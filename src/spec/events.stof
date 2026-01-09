@@ -91,7 +91,7 @@ AppEvents: {
     /**
      * Meter changed.
      * Called whenever a Meter is created/updated.
-     * Value includes meter (old & new values), subject, entitlement key, plan, and credit.
+     * Value includes meter (old & new values), customer, entitlement key, plan, and credit.
      */
     fn app_meter_changed(value: obj) {
         if (lib('App')) ?App.meter_changed(stringify('json', value));
@@ -120,24 +120,24 @@ AppEvents: {
 
 
     /*****************************************************************************
-     * Subjects.
+     * Customers.
      *****************************************************************************/
     
-    #[subject-set]
+    #[customer-set]
     /**
-     * Subject has been set/modified.
+     * Customer has been set/modified.
      */
-    fn app_subject_set(subject: Subject) {
-        if (lib('App')) ?App.subject_set(stringify('json', subject));
+    fn app_customer_set(customer: Customer) {
+        if (lib('App')) ?App.customer_set(stringify('json', customer));
     }
 
 
-    #[subject-removed]
+    #[customer-removed]
     /**
-     * Subject is being removed.
-     * Called when <Limitr>.delete_subject is called.
+     * Customer is being removed.
+     * Called when <Limitr>.delete_customer is called.
      */
-    fn app_subject_removing(subject: Subject) {
-        if (lib('App')) ?App.subject_removing(stringify('json', subject));
+    fn app_customer_removing(customer: Customer) {
+        if (lib('App')) ?App.customer_removing(stringify('json', customer));
     }
 }
