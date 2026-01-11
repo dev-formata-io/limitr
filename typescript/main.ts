@@ -27,6 +27,9 @@ export class Limitr {
     /** StofDoc. */
     doc: StofDoc;
 
+    /** Cloud policy pull interval. */
+    interval?: unknown;
+
 
     /**
      * Constructor.
@@ -75,7 +78,7 @@ export class Limitr {
     /**
      * Initialize with cloud.limitr.dev.
      */
-    static async cloud(token: string, address: string = 'https://api.limitr.dev', policy: string = 'active'): Promise<Limitr | undefined> {
+    static async cloud(token: string, address: string = 'https://api.limitr.dev', policy: string = 'active', ttl: number | null = 5000): Promise<Limitr | undefined> {
         const response = await fetch(address + `/v1/limitr/policies/${policy}`, {
             method: 'GET',
             headers: {
@@ -85,7 +88,23 @@ export class Limitr {
         if (response.ok) {
             await StofDoc.initialize();
             const bytes = await response.bytes();
-            return new Limitr(bytes, 'cloud.limitr.dev');
+            const policy = new Limitr(bytes, 'cloud.limitr.dev');
+            if (ttl !== null) {
+                policy.interval = setInterval(async () => {
+                    const response = await fetch(address + `/v1/policies/${policy}`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    if (response.ok) {
+                        const doc = policy.doc;
+                        const json = await response.text();
+                        await doc.call('<Limitr>.api.update_policy_internals', json, 'json');
+                    }
+                }, ttl);
+            }
+            return policy;
         }
         return undefined;
     }
@@ -323,6 +342,7 @@ export class Limitr {
 
     /**
      * Remove a customer by ID.
+     * If a cloud customer, they will not be removed from the cloud.
      */
     async removeCustomer(id: string): Promise<boolean> {
         return await this.doc.call('<Limitr>.api.delete_customer', id) as boolean;
@@ -331,6 +351,7 @@ export class Limitr {
 
     /**
      * Remove a customer by ID.
+     * If a cloud customer, they will not be removed from the cloud.
      */
     removeCustomerSync(id: string): boolean {
         return this.doc.sync_call('<Limitr>.api.delete_customer', id) as boolean;

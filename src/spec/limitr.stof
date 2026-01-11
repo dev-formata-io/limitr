@@ -56,6 +56,31 @@ Limitr: {
             null
         }
 
+
+        /// Replace the current active policy internals in this document with a new one.
+        /// Used to refresh this Limitr policies plans & credits (not customers).
+        fn update_policy_internals(updated: str!, format: str! = 'json') {
+            const policy = self.get();
+            if (policy == null) return;
+
+            try {
+                const p = new {};
+                parse(updated, p, format);
+                if ((typeof p.plans) == 'obj') {
+                    policy.remove('plans', shallow = false);
+                    policy.plans = p.plans;
+                    p.plans.move(policy);
+                }
+                if ((typeof p.credits) == 'obj') {
+                    policy.remove('credits', shallow = false);
+                    policy.credits = p.credits;
+                    p.credits.move(policy);
+                }
+            } catch {
+                // Nada...
+            }
+        }
+
         
         /*****************************************************************************
          * Plans.

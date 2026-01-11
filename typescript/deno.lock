@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@formata/stof@~0.9.6": "0.9.6",
     "jsr:@std/assert@^1.0.16": "1.0.16",
+    "jsr:@std/async@*": "1.0.16",
     "jsr:@std/internal@^1.0.12": "1.0.12"
   },
   "jsr": {
@@ -14,6 +15,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/async@1.0.16": {
+      "integrity": "6c9e43035313b67b5de43e2b3ee3eadb39a488a0a0a3143097f112e025d3ee9a"
     },
     "@std/internal@1.0.12": {
       "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
