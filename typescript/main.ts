@@ -77,8 +77,13 @@ export class Limitr {
 
     /**
      * Initialize with cloud.limitr.dev.
+     *
+     * @param token API token to use with cloud.limiter.dev.
+     * @param address Server URL.
+     * @param policy Policy ID or "active" for the active policy.
+     * @param ttl Policy time-to-live - if set, the policy will be updated on an interval (use with "active" policy, recommended to be > 5000ms if possible).
      */
-    static async cloud(token: string, address: string = 'https://api.limitr.dev', policy: string = 'active', ttl: number | null = 5000): Promise<Limitr | undefined> {
+    static async cloud(token: string, address: string = 'https://api.limitr.dev', policy: string = 'active', ttl: number | null = null): Promise<Limitr | undefined> {
         const response = await fetch(address + `/v1/limitr/policies/${policy}`, {
             method: 'GET',
             headers: {
@@ -88,9 +93,9 @@ export class Limitr {
         if (response.ok) {
             await StofDoc.initialize();
             const bytes = await response.bytes();
-            const policy = new Limitr(bytes, 'cloud.limitr.dev');
+            const result = new Limitr(bytes, 'cloud.limitr.dev');
             if (ttl !== null) {
-                policy.interval = setInterval(async () => {
+                result.interval = setInterval(async () => {
                     const response = await fetch(address + `/v1/policies/${policy}`, {
                         method: 'GET',
                         headers: {
@@ -98,13 +103,13 @@ export class Limitr {
                         }
                     });
                     if (response.ok) {
-                        const doc = policy.doc;
+                        const doc = result.doc;
                         const json = await response.text();
-                        await doc.call('<Limitr>.api.update_policy_internals', json, 'json');
+                        doc.sync_call('<Limitr>.api.update_policy_internals', json, 'json');
                     }
                 }, ttl);
             }
-            return policy;
+            return result;
         }
         return undefined;
     }
