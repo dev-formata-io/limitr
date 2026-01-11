@@ -35,8 +35,31 @@ export class Limitr {
      */
     constructor(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof') {
         this.doc = new StofDoc();
-        this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-        this.doc.parse(policy, format);
+        if (format === 'cloud.limitr.dev' && policy instanceof Uint8Array) {
+            // no timeout, query, or bearer options
+            this.doc.lib('Http', 'fetch', async (
+                url: string,
+                method: string = 'GET',
+                body: string | Uint8Array | null = null,
+                headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
+                const response = await fetch(url, {
+                    method,
+                    body: body ?? undefined,
+                    headers,
+                });
+                const result = new Map<string, unknown>();
+                result.set('status', response.status);
+                result.set('ok', response.ok);
+                result.set('headers', new Map(response.headers));
+                result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
+                result.set('bytes', await response.bytes());
+                return result;
+            }, true);
+            this.doc.parse(policy, 'bstf');
+        } else {
+            this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
+            this.doc.parse(policy, format);
+        }
     }
 
 
@@ -46,6 +69,25 @@ export class Limitr {
     static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
         await StofDoc.initialize();
         return new Limitr(policy, format);
+    }
+
+
+    /**
+     * Initialize with cloud.limitr.dev.
+     */
+    static async cloud(token: string, address: string = 'https://api.limitr.dev', policy: string = 'active'): Promise<Limitr | undefined> {
+        const response = await fetch(address + `/v1/limitr/policies/${policy}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        if (response.ok) {
+            await StofDoc.initialize();
+            const bytes = await response.bytes();
+            return new Limitr(bytes, 'cloud.limitr.dev');
+        }
+        return undefined;
     }
 
 
@@ -175,6 +217,25 @@ export class Limitr {
         return this.doc.sync_call('<Limitr>.api.set_customer_plan', id, plan) as boolean;
     }
 
+
+    /**
+     * Load customer from the cloud.
+     */
+    async addCloudCustomer(token: string, id: string, address: string = 'https://api.limitr.dev'): Promise<boolean> {
+        const response = await fetch(address + `/v1/customers/${id}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        if (response.ok) {
+            const json = JSON.stringify(await response.json());
+            const cus = await this.doc.call('<Limitr>.api.set_customer', id, json, false) as string | null;
+            return cus !== null;
+        }
+        return false;
+    }
+
     
     /**
      * Add a new customer to this Limitr.
@@ -199,7 +260,7 @@ export class Limitr {
      * Returns a node ID to the resulting Customer.
      */
     async setCustomer(id: string, customerStof: string): Promise<string | null> {
-        return await this.doc.call('<Limitr>.api.set_customer', id, customerStof) as string | null;
+        return await this.doc.call('<Limitr>.api.set_customer', id, customerStof, true) as string | null;
     }
 
 
@@ -208,7 +269,7 @@ export class Limitr {
      * Returns a node ID to the resulting Customer.
      */
     setCustomerSync(id: string, customerStof: string): string | null {
-        return this.doc.sync_call('<Limitr>.api.set_customer', id, customerStof) as string | null;
+        return this.doc.sync_call('<Limitr>.api.set_customer', id, customerStof, true) as string | null;
     }
 
 

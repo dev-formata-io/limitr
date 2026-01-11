@@ -171,8 +171,8 @@ Limitr: {
         }
 
         /// Set/create a customer with an id & internal Stof.
-        fn set_customer(id: str!, internal_stof: str!) -> Customer {
-            ?self.get().set_customer(id, internal_stof)
+        fn set_customer(id: str!, internal_stof: str!, event: bool = true) -> Customer {
+            ?self.get().set_customer(id, internal_stof, event)
         }
 
         /// Delete a customer.
@@ -618,7 +618,7 @@ Limitr: {
     /**
      * Set/create a customer with an id & internal Stof.
      */
-    fn set_customer(id: str!, internal_stof: str!) -> Customer {
+    fn set_customer(id: str!, internal_stof: str!, event: bool = true) -> Customer {
         self.delete_customer(id);
         const sub = new {} on self.customers;
         try parse(internal_stof, sub, 'stof');
@@ -629,7 +629,7 @@ Limitr: {
 
         self.customers.insert(id, sub as Customer);
         for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt);
-        await <Event>.send('customer-set', customer);
+        if (event) await <Event>.send('customer-set', customer);
         sub
     }
 
