@@ -230,7 +230,7 @@ export class Limitr {
         });
         if (response.ok) {
             const json = JSON.stringify(await response.json());
-            const cus = await this.doc.call('<Limitr>.api.set_customer', id, json, false) as string | null;
+            const cus = await this.doc.call('<Limitr>.api.set_customer', json, false) as string | null;
             return cus !== null;
         }
         return false;
@@ -259,8 +259,8 @@ export class Limitr {
      * Set a customer on this policy by ID.
      * Returns a node ID to the resulting Customer.
      */
-    async setCustomer(id: string, customerStof: string): Promise<string | null> {
-        return await this.doc.call('<Limitr>.api.set_customer', id, customerStof, true) as string | null;
+    async setCustomer(customerStof: string): Promise<string | null> {
+        return await this.doc.call('<Limitr>.api.set_customer', customerStof, true) as string | null;
     }
 
 
@@ -268,8 +268,8 @@ export class Limitr {
      * Set a customer on this policy by ID.
      * Returns a node ID to the resulting Customer.
      */
-    setCustomerSync(id: string, customerStof: string): string | null {
-        return this.doc.sync_call('<Limitr>.api.set_customer', id, customerStof, true) as string | null;
+    setCustomerSync(customerStof: string): string | null {
+        return this.doc.sync_call('<Limitr>.api.set_customer', customerStof, true) as string | null;
     }
 
 
@@ -291,7 +291,7 @@ export class Limitr {
         for (const sub of subs) {
             const id = sub.id;
             if (typeof id === 'string') {
-                await this.setCustomer(id, JSON.stringify(sub));
+                await this.setCustomer(JSON.stringify(sub));
             }
         }
     }
@@ -315,7 +315,7 @@ export class Limitr {
         for (const sub of subs) {
             const id = sub.id;
             if (typeof id === 'string') {
-                this.setCustomerSync(id, JSON.stringify(sub));
+                this.setCustomerSync(JSON.stringify(sub));
             }
         }
     }
