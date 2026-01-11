@@ -47,6 +47,12 @@ policy:
 await policy.addCustomer('free_user', 'free');
 await policy.addCustomer('pro_user', 'pro');
 
+// Override limits per customer
+await policy.addCustomer('override_user', 'pro');
+await policy.createCustomerOverride('override_user', 'usage', '10GB');
+assert(await policy.allow('override_user', 'usage', '9GB'));
+assertFalse(await policy.allow('override_user', 'usage', '1001MB')); // over by 1MB
+
 // start metering usage per customer and let Limitr handle the rest
 // default units, value, balance, limit, etc. all in units of the credit
 assert(await policy.allow('free_user', 'usage', '20.5MB'));

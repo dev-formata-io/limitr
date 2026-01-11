@@ -44,6 +44,10 @@ Limit: {
     /// Optional reset increment (default 30 days).
     ms reset_inc: 30days;
 
+    /// Expires on date (optional) for Limit overrides.
+    /// Not used outside of customer overrides.
+    ms override_expires_on: null;
+
 
     /**
      * Check this limit against a value.
@@ -79,9 +83,10 @@ Entitlement: {
     /**
      * Check this entitlement.
      */
-    fn check(value: float = 0) -> bool {
+    fn check(value: float = 0, override?: Limit) -> bool {
         if (!self.enabled) return false;
-        if (self.limit != null) return self.limit.check(value);
+        let limit = override ?? self.limit;
+        if (limit != null) return limit.check(value);
         true
     }
 }

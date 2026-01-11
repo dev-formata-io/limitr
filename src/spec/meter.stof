@@ -26,6 +26,6 @@ Meter: {
     /// This meter resets on this timestamp.
     ms reset: null;
 
-    /// Value of this meter.
+    /// Value of this meter (in credit's units).
     float value: 0;
 }

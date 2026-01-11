@@ -353,6 +353,25 @@ export class Limitr {
     }
 
 
+    /**
+     * Create a new customer override (limit).
+     * Overrides are specific to customers, and they override the limit defined on a specific entitlement for that customer.
+     *
+     * If the customer already has an override for this entitlement, it will be replaced.
+     */
+    async createCustomerOverride(id: string, entitlement: string, value?: string | number, expires_on?: number, credit?: string, mode?: string, increment?: number | string, resets?: boolean, reset_inc?: number | string): Promise<string | null> {
+        return await this.doc.call('<Limitr>.api.create_customer_override', id, entitlement, expires_on ?? null, credit ?? null, mode ?? null, value ?? null, increment ?? null, resets ?? null, reset_inc ?? null) as string | null;
+    }
+
+
+    /**
+     * Remove a customer override (limit).
+     */
+    async removeCustomerOverride(id: string, entitlement: string): Promise<boolean> {
+        return await this.doc.call('<Limitr>.api.remove_customer_override', id, entitlement) as boolean;
+    }
+
+
     /*****************************************************************************
      * Entitlements API.
      *****************************************************************************/

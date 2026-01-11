@@ -189,6 +189,16 @@ Limitr: {
         fn delete_alt_customer_id(alt: str!) -> bool {
             ?self.get().delete_alt_customer_id(alt)
         }
+
+        /// Create a new customer override (limit).
+        fn create_customer_override(id: str!, entitlement: str!, expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms) -> Limit {
+            ?self.get().create_customer_override(id, entitlement, expires, credit, mode, value, increment, resets, reset_inc)
+        }
+
+        /// Remove a customer override (limit).
+        fn remove_customer_override(id: str!, entitlement: str!) -> bool {
+            ?self.get().remove_customer_override(id, entitlement)
+        }
     }
 
 
@@ -271,11 +281,26 @@ Limitr: {
      */
     fn limit(id: str!, entitlement: str!) -> float {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
-            const credit = self.credit(ent.limit.credit);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null && limit.mode != 'observe') {
+            const credit = self.credit(limit.credit);
             const stof_units = credit != null ? credit.stof_units : 'float';
-            const limit = ent.limit.value as float; // can be a str w units
-            return limit.to_units(stof_units);
+            const lim = limit.value as float; // can be a str w units
+            return lim.to_units(stof_units);
         }
         null
     }
@@ -289,7 +314,19 @@ Limitr: {
         let customer = self.customer(id);
         if (customer != null) {
             const ent = self.entitlement(id, entitlement);
-            if (ent != null && ent.limit != null && ent.limit.mode != 'observe') {
+
+            // get the entitlement limit (potentially overridden for a customer)
+            let limit = ent != null ? ent.limit : null;
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+
+            if (ent != null && limit != null && limit.mode != 'observe') {
                 // check entitlement scope for org customer
                 // so when ent.scope is org, will use "org" customer for meters if present
                 if (ent.scope == 'org' && customer.type != "org") {
@@ -299,12 +336,12 @@ Limitr: {
                     if (customer == null) return null;
                 }
 
-                const credit = self.credit(ent.limit.credit);
+                const credit = self.credit(limit.credit);
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
                 const meter: Meter = customer.meters.get(entitlement);
-                if (meter != null) return ((ent.limit.value as float) - meter.value).to_units(stof_units);
-                return (ent.limit.value as float).to_units(stof_units);
+                if (meter != null) return ((limit.value as float) - meter.value).to_units(stof_units);
+                return (limit.value as float).to_units(stof_units);
             }
         }
         null
@@ -347,7 +384,22 @@ Limitr: {
      */
     fn cost(id: str!, entitlement: str!) -> float {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null) return ent.limit.increment;
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) return limit.increment;
         null
     }
 
@@ -357,8 +409,23 @@ Limitr: {
      */
     fn increment(id: str!, entitlement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null) {
-            return self.allow(id, entitlement, ent.limit.increment);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) {
+            return self.allow(id, entitlement, limit.increment);
         }
         false
     }
@@ -369,8 +436,23 @@ Limitr: {
      */
     fn deincrement(id: str!, enforcement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null) {
-            return self.allow(id, entitlement, ent.limit.increment * -1);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) {
+            return self.allow(id, entitlement, limit.increment * -1);
         }
         false
     }
@@ -400,31 +482,42 @@ Limitr: {
                     let existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
+                    // get the entitlement limit (potentially overridden for this customer)
+                    let limit = ent.limit;
+                    const override: Limit = customer.overrides.get(entitlement);
+                    if (override != null) {
+                        if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                            customer.overrides.remove(entitlement, shallow = false);
+                        } else {
+                            limit = override;
+                        }
+                    }
+
                     // check if the new value should be reset!
-                    if (existing_meter != null && existing_meter.reset != null && ent.limit != null && ent.limit.resets && Time.now() > existing_meter.reset) {
+                    if (existing_meter != null && existing_meter.reset != null && limit != null && limit.resets && Time.now() > existing_meter.reset) {
                         const now = Time.now();
-                        while (now > existing_meter.reset) existing_meter.reset += ent.limit.reset_inc;
+                        while (now > existing_meter.reset) existing_meter.reset += limit.reset_inc;
                         new_value = value;
                     }
 
                     // put new_value into the credit's units, casting if needed (in case no units were given)
-                    const credit = ent.limit != null ? self.credit(ent.limit.credit) : null;
+                    const credit = limit != null ? self.credit(limit.credit) : null;
                     const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
                     new_value = ?new_value.to_units(stof_units) ?? new_value;
 
-                    let res = ent.check(new_value);
+                    let res = ent.check(new_value, override);
 
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
-                    if (ent.limit != null && (res || ent.limit.mode == 'soft')) {
+                    if (limit != null && (res || limit.mode == 'soft')) {
                         if (existing_meter == null) existing_meter = new Meter { } on customer.meters;
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
-                        existing_meter.credit = ent.limit.credit;
+                        existing_meter.credit = limit.credit;
                         existing_meter.value = new_value;
 
-                        if (existing_meter.reset == null && ent.limit.resets) {
-                            existing_meter.reset = Time.now() + ent.limit.reset_inc;
+                        if (existing_meter.reset == null && limit.resets) {
+                            existing_meter.reset = Time.now() + limit.reset_inc;
                         }
 
                         customer.meters.insert(entitlement, existing_meter);
@@ -439,7 +532,7 @@ Limitr: {
                                 entitlement,
                                 plan,
                                 credit,
-                                remaining: (ent.limit.value as float) - existing_meter.value,
+                                remaining: (limit.value as float) - existing_meter.value,
                             };
                             await <Event>.send('meter-changed', event_value);
                             if (!res) await <Event>.send('meter-overage', event_value);
@@ -447,7 +540,7 @@ Limitr: {
                         }
 
                         res = true; // meter was changed!
-                    } else if (ent.limit != null && !res) {
+                    } else if (limit != null && !res) {
                         const event_value = new {
                             customer,
                             entitlement,
@@ -491,18 +584,29 @@ Limitr: {
                     const existing_meter: Meter = customer.meters.get(entitlement);
                     let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
+                    // get the entitlement limit (potentially overridden for this customer)
+                    let limit = ent.limit;
+                    const override: Limit = customer.overrides.get(entitlement);
+                    if (override != null) {
+                        if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                            customer.overrides.remove(entitlement, shallow = false);
+                        } else {
+                            limit = override;
+                        }
+                    }
+
                     // check if the new value should be reset!
-                    if (existing_meter != null && existing_meter.reset != null && ent.limit != null && ent.limit.resets && Time.now() > existing_meter.reset) {
+                    if (existing_meter != null && existing_meter.reset != null && limit != null && limit.resets && Time.now() > existing_meter.reset) {
                         new_value = value;
                     }
 
                     // put new_value into the credit's units, casting if needed (in case no units were given)
-                    const credit = ent.limit != null ? self.credit(ent.limit.credit) : null;
+                    const credit = limit != null ? self.credit(limit.credit) : null;
                     const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
                     new_value = ?new_value.to_units(stof_units) ?? new_value;
 
-                    let res = ent.check(new_value);
-                    if (!res && ent.limit != null && ent.limit.mode == 'soft') res = true;
+                    let res = ent.check(new_value, override);
+                    if (!res && limit != null && limit.mode == 'soft') res = true;
                     return res;
                 }
             }
@@ -529,8 +633,23 @@ Limitr: {
      */
     fn credit_for(id: str!, entitlement: str!) -> Credit {
         const ent = self.entitlement(id, entitlement);
-        if (ent != null && ent.limit != null) {
-            return self.credit(ent.limit.credit);
+        const customer = self.customer(id);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) {
+            return self.credit(limit.credit);
         }
         null
     }
@@ -675,5 +794,64 @@ Limitr: {
             await <Event>.send('customer-set', customer);
         }
         res
+    }
+
+
+    /**
+     * Create a customer override (limit).
+     * Overrides are specific to customers, and they override the default
+     * entitlement limit for that customer.
+     *
+     * If the customer already has an override for this entitlement, it will be replaced.
+     */
+    fn create_customer_override(customer_id: str!, entitlement: str!,
+        expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms) -> Limit {
+        
+        // Get the customer and entitlement
+        const ent = self.entitlement(customer_id, entitlement);
+        const customer = self.customer(customer_id);
+        if (customer == null || ent == null) return null;
+
+        // get the entitlement limit (potentially overridden for a customer)
+        // use these values for defaults if set
+        let existing_limit = ent.limit;
+        const override: Limit = customer.overrides.get(entitlement);
+        if (override != null) existing_limit = override;
+
+        // Create the limit
+        const limit = new Limit {
+            credit: credit ?? existing_limit.credit ?? '',
+            mode: mode ?? existing_limit.mode ?? 'hard',
+            value: value ?? existing_limit.value ?? 0,
+            increment: increment ?? existing_limit.increment ?? 0,
+            resets: resets ?? existing_limit.resets ?? false,
+            reset_inc: reset_inc ?? existing_limit.reset_inc ?? 30days,
+            override_expires_on: expires ?? existing_limit.override_expires_on,
+        };
+
+        // Make sure a credit exists for this override (need to know what we're tracking)
+        if (limit.credit == '' || self.credit(limit.credit) == null) {
+            drop(limit);
+            return null;
+        }
+
+        // Set the override on the customer and return
+        customer.set_override(entitlement, limit);
+        await <Event>.send('customer-set', customer);
+        return limit;
+    }
+
+
+    /**
+     * Remove a customer override (limit).
+     */
+    fn remove_customer_override(customer_id: str!, entitlement: str!) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer != null) {
+            const removed = customer.overrides.remove(entitlement, shallow = false);
+            if (removed) await <Event>.send('customer-set', customer);
+            return removed;
+        }
+        false
     }
 }

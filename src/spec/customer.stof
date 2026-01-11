@@ -47,4 +47,19 @@ Customer: {
     /// These map to entitlements by name for a plan.
     /// Lazily populated.
     obj! meters: {};
+
+    /// Override limits for this customer.
+    /// Entitlement -> Limit.
+    obj! overrides: {};
+
+
+    /**
+     * Set an override for this customer.
+     * Moves the limit and removes old override if any.
+     */
+    fn set_override(entitlement: str!, limit: Limit!) {
+        self.overrides.remove(entitlement, shallow = false);
+        self.overrides.insert(entitlement, limit);
+        limit.move(self.overrides);
+    }
 }

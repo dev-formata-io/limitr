@@ -106,7 +106,22 @@ Limitr policy: {
         self.create_customer('free_org', 'free', 'org', 'Free Org');
         self.create_customer('free_user_1', '', org='free_org');
         self.create_customer('free_user_2', '', org='free_org');
+
+        self.create_customer('override_user_1', 'free', 'org', 'Overridden Org');
+        self.create_customer_override('override_user_1', 'seats', value = 5);
     }
+}
+
+#[test]
+fn customer_seat_override() {
+    const user = 'override_user_1';
+    assert(self.policy.increment(user, 'seats'));
+    assert_eq(self.policy.limit(user, 'seats'), 5);
+    assert_eq(self.policy.remaining(user, 'seats'), 4);
+    assert_eq(self.policy.value(user, 'seats'), 1);
+    assert(self.policy.allow(user, 'seats', 3));
+    assert(self.policy.allow(user, 'seats', 1)); // 5
+    assert_not(self.policy.increment(user, 'seats')); // blocked by override
 }
 
 #[test]
