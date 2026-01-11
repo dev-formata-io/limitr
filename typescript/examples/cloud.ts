@@ -23,9 +23,14 @@ const token = 'test_9h2xRkFzlu8rdHWW5MPOpBQ7';
 const address = 'http://localhost:4242';
 const user = 'test_1';
 
-// create the policy from the cloud
-const policy = await Limitr.cloud(token, address) ?? await Limitr.new();
-await policy.addCloudCustomer(token, user, address);
+// grab policy & customer from server (add a ttl to update policy on an interval)
+const policy = await Limitr.cloud(token, address, 'active', null) ?? await Limitr.new();
+assert(await policy.addCloudCustomer(token, user, address));
 
-// Ready to go!
-assert(await policy.allow(user, 'tokens', 300));
+// ready to limit & track (use async API with cloud policies)
+if (await policy.allow(user, 'tokens', 200)) {
+    console.log('Success, now do the thing');
+} else {
+    console.log('Blocked!! Notify the user or something');
+}
+console.log(policy.customers());
