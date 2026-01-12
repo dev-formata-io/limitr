@@ -12,6 +12,7 @@ It is designed for AI products, developer tools, and open-source software where 
 
 - 👉 Jump to the [Quick Example](#example-seat-based-plan-enforcement-typescript)
 - Additional [info and examples](https://docs.stof.dev/applications/limitr)
+- [Limitr Cloud](https://limitr.dev)
 
 ## What Limitr Gives You
 - Define plans, entitlements, and limits in a policy document — not application code
@@ -27,7 +28,7 @@ It is designed for AI products, developer tools, and open-source software where 
 - Not a billing system
 - Not a payment processor
 - Not a hosted SaaS requirement
-- Not a feature-flag system
+- Not a feature-flag system (outside of entitlements)
 
 Limitr enforces **truth** about usage and limits.
 Billing and payments can subscribe to Limitr’s events.
@@ -63,7 +64,7 @@ Limitr is a good fit if you are:
 - Supporting self-hosted or open-source deployments
 - Tired of hardcoding pricing logic in application code
 
-## Example: Seat-Based Plan Enforcement (TypeScript)
+## Example: Seat-Based Plan Enforcement (TypeScript [JSR](https://jsr.io/@formata/limitr))
 ```typescript
 import { Limitr } from 'jsr:@formata/limitr';
 
@@ -140,6 +141,5 @@ Apache 2.0. See LICENSE for details.
 ## Contributing
 - Open issues or discussions on [GitHub](https://github.com/dev-formata-io/limitr)
 - Chat with us on [Discord](https://discord.gg/Up5kxdeXZt)
-- Star the project to support future development!
 
 > Reach out to info@stof.dev to contact us directly

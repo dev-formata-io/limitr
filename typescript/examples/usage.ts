@@ -58,9 +58,9 @@ assertFalse(await policy.allow('override_user', 'usage', '1001MB')); // over by 
 assert(await policy.allow('free_user', 'usage', '20.5MB'));
 assert(await policy.allow('free_user', 'usage', 500));
 
-assertEquals(policy.value('free_user', 'usage'), 520.5);
-assertEquals(Math.round(policy.remaining('free_user', 'usage') as number), 479);
-assertEquals(Math.round(policy.limit('free_user', 'usage') as number), 1000);
+assertEquals(await policy.value('free_user', 'usage'), 520.5);
+assertEquals(Math.round(await policy.remaining('free_user', 'usage') as number), 479);
+assertEquals(Math.round(await policy.limit('free_user', 'usage') as number), 1000);
 
 // hard limit of 1GB, so this fails and meter-limit emitted
 assertFalse(await policy.allow('free_user', 'usage', 1 + 'GB'));

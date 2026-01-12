@@ -84,8 +84,8 @@ await policy.addCustomer('free_user', '', undefined, undefined, 'free_org', ['cu
 
 // Now we're all set to track things for the org and user together!
 // Lets increment a few seats on the org first.
-assert(await policy.increment(policy.customerOrg('free_user') as string, 'seats'));
-assert(await policy.allow(policy.customerOrg('cus_alt') as string, 'seats', 2));
+assert(await policy.increment(await policy.customerOrg('free_user') as string, 'seats'));
+assert(await policy.allow(await policy.customerOrg('cus_alt') as string, 'seats', 2));
 assertFalse(await policy.increment('free_org', 'seats')); // cannot add a 4th seat to the org
 
 // Lets track model tokens individually, not on the org
@@ -96,13 +96,13 @@ assertFalse(await policy.allow('free_user', 'curie_tokens', 1001)); // over by 1
 
 // Usage is tracked per user as well, and we can use any alt ID for the user
 assert(await policy.allow('cus_alt', 'usage', 20 + 'MB'));
-assertEquals(policy.value('free_user', 'usage') as number, 20); // always units of credit (MB)
+assertEquals(await policy.value('free_user', 'usage') as number, 20); // always units of credit (MB)
 assertFalse(await policy.allow('free_user', 'usage', '1GB')); // max of 1GB, so over by 20MB
 
 // Now lets switch the plan for the org
 assert(await policy.setCustomerPlan('free_org', 'pro'));
 assert(await policy.allow('cus_alt', 'curie_tokens', 12200));
-assertEquals(policy.value('cus_alt', 'curie_tokens') as number, 13200); // already had 1k from above
+assertEquals(await policy.value('cus_alt', 'curie_tokens') as number, 13200); // already had 1k from above
 assertFalse(await policy.allow('cus_alt', 'curie_tokens', 7000)); // would be over by 200
 
 // Now lets store our customers (entire state info)

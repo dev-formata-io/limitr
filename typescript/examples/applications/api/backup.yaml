@@ -1,0 +1,149 @@
+policy:
+  plans:
+    free:
+      label: Free Plan
+      entitlements:
+        seats:
+          enabled: true
+          description: Number of seats for this plan (seat-based example).
+          scope: user
+          limit:
+            credit: seat
+            mode: hard
+            value: 1
+            increment: 1
+            resets: false
+            reset_inc: 2592000000
+        tokens:
+          enabled: true
+          description: AI tokens included with plan (token-based example).
+          scope: user
+          limit:
+            credit: token
+            mode: soft
+            value: 5000
+            increment: 0
+            resets: true
+            reset_inc: 86400000
+        storage:
+          enabled: true
+          description: Storage available on this plan (usage-based example).
+          scope: user
+          limit:
+            credit: storage
+            mode: hard
+            value: 1GB
+            increment: 0
+            resets: false
+            reset_inc: 2592000000
+        successful_runs:
+          enabled: true
+          description: A count of the number of successful runs this user has experienced (outcome-based example).
+          scope: user
+          limit:
+            credit: successful_run
+            mode: observe
+            value: 0
+            increment: 1
+            resets: true
+            reset_inc: 30days
+        good_gpu:
+          enabled: true
+          description: Using the good GPU.
+          scope: user
+          limit:
+            credit: gpu_time
+            mode: soft
+            value: 1hour
+            increment: 0
+            resets: true
+            reset_inc: '86400000'
+    paid:
+      label: Paid Plan
+      entitlements:
+        seats:
+          enabled: true
+          description: Number of available seats for this plan (seat-based example).
+          scope: user
+          limit:
+            credit: seat
+            mode: hard
+            value: 10
+            increment: 1
+            resets: false
+            reset_inc: 2592000000
+        tokens:
+          enabled: true
+          description: AI tokens included with plan (token-based example).
+          scope: user
+          limit:
+            credit: token
+            mode: soft
+            value: 10000
+            increment: 0
+            resets: true
+            reset_inc: 86400000
+        storage:
+          enabled: true
+          description: Storage available on this plan (usage-based example).
+          scope: user
+          limit:
+            credit: storage
+            mode: hard
+            value: 10GB
+            increment: 0
+            resets: false
+            reset_inc: 2592000000
+        successful_runs:
+          enabled: true
+          description: A count of the number of successful runs this user has experienced (outcome-based example).
+          scope: user
+          limit:
+            credit: successful_run
+            mode: observe
+            value: 0
+            increment: 1
+            resets: true
+            reset_inc: 30days
+        good_gpu:
+          enabled: true
+          description: Using the good GPU.
+          scope: user
+          limit:
+            credit: gpu_time
+            mode: soft
+            value: 5hours
+            increment: 0
+            resets: true
+            reset_inc: '86400000'
+  credits:
+    seat:
+      unit: seat
+      description: A single seat - tracked at the organization level.
+      label: seat
+      exchange: 1
+      stof_units: float
+    token:
+      unit: token
+      description: An AI token currency.
+      label: token
+      exchange: 1
+      stof_units: float
+    storage:
+      unit: storage
+      description: A MB worth of storage (usage-based).
+      label: storage
+      exchange: 1
+      stof_units: MB
+    successful_run:
+      unit: successful_run
+      description: A successful outcome from a run (of our app).
+      label: successful_run
+      exchange: 1
+      stof_units: float
+    gpu_time:
+      unit: gpu_time
+      description: Time spent using a GPU.
+      label: gpu_time
+      exchange: 1
+      stof_units: ms
