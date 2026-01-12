@@ -26,9 +26,14 @@ const policy =
     await Limitr.new(await Deno.readTextFile('typescript/examples/applications/backup.yaml'));
 
 // Populate some test customers just for testing!
-// In real life, these would be populated with a clear addCustomer workflow and each endpoint could addCloudCustomer if cache miss.
+// In real life, these would be populated with a clear addCustomer workflow and each endpoint could addCloudCustomer if cache miss
 if (!await policy.addCloudCustomer(token, 'org_Formata')) await policy.addCustomer('org_Formata', 'paid', 'org', 'Formata');
 if (!await policy.addCloudCustomer(token, 'cus_CJ')) await policy.addCustomer('cus_CJ', '', 'user', 'CJ Cummings', 'org_Formata');
+
+// Lets add some API keys to reference our two customers in the API
+// In real life, these would be unique API keys that our app could add/remove from the cloud customer and check independently
+await policy.addAltID('org_Formata', 'API_Formata');
+await policy.addAltID('cus_CJ', 'API_CJ');
 
 
 // Define routes for our API
@@ -37,8 +42,10 @@ const router = new Router();
 
 // Get the current number of seats for an organization
 // Since 'seats' scope is org, even a user passed here will work just fine
-router.get('/seats/:id', async (ctx) => {
-    const seats = await policy.value(ctx.params.id, 'seats');
+// Ex. `curl -H "Authorization: API_CJ" http://localhost:4242/seats`
+router.get('/seats', async (ctx) => {
+    const key = ctx.request.headers.get('Authorization');
+    const seats = key ? await policy.value(key, 'seats') : null;
     if (seats === null) {
         ctx.response.status = 404;
         ctx.response.body = { error: 'Not found' };
@@ -50,14 +57,16 @@ router.get('/seats/:id', async (ctx) => {
 
 
 // Modify seats.
+// Ex. add two seats: `curl -X POST -H "Authorization: API_CJ" -d "{ \"value\": 2 }" http://localhost:4242/seats`
 router.post('/seats', async (ctx) => {
-    const { id, value } = await ctx.request.body.json();
-    if (await policy.allow(id, 'seats', value)) {
+    const key = ctx.request.headers.get('Authorization');
+    const { value } = await ctx.request.body.json();
+    if (key && await policy.allow(key, 'seats', value)) {
         ctx.response.status = 200;
-        ctx.response.body = { total: await policy.value(id, 'seats'), ok: true };
+        ctx.response.body = { total: await policy.value(key, 'seats'), ok: true };
     } else {
         ctx.response.status = 400;
-        ctx.response.body = { error: 'Limited to ' + await policy.limit(id, 'seats') + ' seats, and already have ' + await policy.value(id, 'seats') };
+        ctx.response.body = { error: 'Limited to ' + await policy.limit(key ?? 'dne', 'seats') + ' seats, and already have ' + await policy.value(key ?? 'dne', 'seats') };
     }
 });
 

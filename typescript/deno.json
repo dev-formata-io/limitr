@@ -1,13 +1,13 @@
 {
   "name": "@formata/limitr",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "exports": "./main.ts",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/dev-formata-io/limitr"
   },
-  "homepage": "https://docs.stof.dev",
+  "homepage": "https://limitr.dev",
   "publish": {
     "include": ["./**/*"],
     "exclude": ["./examples/**/*", "./node_modules/**/*"]

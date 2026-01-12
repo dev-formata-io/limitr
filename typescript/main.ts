@@ -326,7 +326,7 @@ export class Limitr {
      * Add an alternative customer ID to an existing customer.
      */
     async addAltID(existing: string, alt: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_alt_customer_id', existing, alt)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_alt_customer_id', existing, alt)) as boolean;
     }
 
 
@@ -334,7 +334,7 @@ export class Limitr {
      * Remove an alternative customer ID from an existing customer.
      */
     async removeAltID(alt: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.delete_alt_customer_id', alt)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_alt_customer_id', alt)) as boolean;
     }
 
 
