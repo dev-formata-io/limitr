@@ -381,46 +381,52 @@ export class Limitr {
         await waitOnOpen(ws);
 
         const limitr = await Limitr.new();
+        const awaitInit = async () => {
+            await new Promise<boolean>((resolve, reject) => {
+                const intervalMs = 50;
+                const start = Date.now();
+                const poll = () => {
+                    if (limitr.wsInit) {
+                        resolve(true);
+                        return;
+                    }
+                    if (Date.now() - start > timeout) {
+                        reject(new Error(`wait for WebSocket policy init timed out`));
+                        return;
+                    }
+                    setTimeout(poll, intervalMs);
+                };
+                poll();
+            });
+        };
+        const reconnect = async () => {
+            const response = await fetch(ticketAddress + '/wss/ticket', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token })
+            });
+            if (response.ok) {
+                const { ticket } = await response.json();
+                const ws = new WebSocket(address + '/wss?ticket=' + ticket);
+                ws.binaryType = 'arraybuffer';
+                await waitOnOpen(ws);
+                
+                limitr.ws = ws;
+                limitr.ws.onclose = reconnect;
+                limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+            }
+        };
         limitr.ws = ws;
-        limitr.ws.onclose = ()=>{ limitr.wsInit = false; };
+        limitr.ws.onclose = reconnect;
         limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
         limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
-        
-        await new Promise<boolean>((resolve, reject) => {
-            const intervalMs = 50;
-            const start = Date.now();
-            const poll = () => {
-                if (limitr.wsInit) {
-                    resolve(true);
-                    return;
-                }
-                if (Date.now() - start > timeout) {
-                    reject(new Error(`wait for WebSocket policy init timed out`));
-                    return;
-                }
-                setTimeout(poll, intervalMs);
-            };
-            poll();
-        });
+        await awaitInit();
 
         const ping = async () => {
-            if (limitr.ws) { if (limitr.ws.readyState === WebSocket.OPEN) limitr.ws.send('ping'); }
-            else {
-                const response = await fetch(ticketAddress + '/wss/ticket', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token })
-                });
-                if (response.ok) {
-                    const { ticket } = await response.json();
-                    const ws = new WebSocket(address + '/wss?ticket=' + ticket);
-                    ws.binaryType = 'arraybuffer';
-                    await waitOnOpen(ws);
-                    
-                    limitr.ws = ws;
-                    limitr.ws.onclose = ()=>{ limitr.wsInit = false; };
-                    limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
-                }
+            if (!limitr.ws || limitr.ws.readyState === WebSocket.CLOSED || limitr.ws.readyState === WebSocket.CLOSING) {
+                await reconnect();
+            } else if (limitr.ws.readyState === WebSocket.OPEN) {
+                limitr.ws.send('ping');
             }
             limitr.wsTimeout = setTimeout(ping, 20000);
         };
@@ -461,9 +467,11 @@ export class Limitr {
      * Close connection to cloud.limitr.dev.
      */
     close() {
+        //@ts-ignore timeout
+        if (this.wsTimeout) clearTimeout(this.wsTimeout);
+        this.wsInit = false;
         if (this.ws && this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
-            //@ts-ignore timeout
-            if (this.wsTimeout) clearTimeout(this.wsTimeout);
+            this.ws.onclose = () => {}; // clear any auto re-connect behavior
             this.ws.close();
         }
     }
