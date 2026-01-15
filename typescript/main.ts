@@ -80,7 +80,7 @@ export class Limitr {
 
         const policy = typeof options === 'string' ? 'active' : options.policy ?? 'active';
         const address = typeof options === 'string' ? 'wss://api.limitr.dev' : options.address ?? 'wss://api.limitr.dev';
-        const ws = new WebSocket(address + '/wss', { headers: { 'Authorization': `Bearer ${token}` }});
+        const ws = new WebSocket(address + '/wss?token=' + token);
 
         const limitr = await Limitr.new();
         limitr.addCloudLib();
@@ -98,7 +98,7 @@ export class Limitr {
     protected cloudPing(address: string, token: string) {
         if (this.ws) this.ws.send('ping');
         else {
-            const ws = new WebSocket(address + '/wss', { headers: { 'Authorization': `Bearer ${token}` }});
+            const ws = new WebSocket(address + '/wss?token=' + token);
             this.ws = ws;
             this.ws.onmessage = (m)=>this.cloudMessageReceived(m);
         }
