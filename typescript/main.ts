@@ -16,7 +16,7 @@
 
 import { StofDoc } from "@formata/stof";
 import { limitrApi } from "./limitr.ts";
-import { LimitrGate } from "./gate.ts";
+import { LimitrGate, waitOnOpen } from "./gate.ts";
 
 
 /**
@@ -25,7 +25,9 @@ import { LimitrGate } from "./gate.ts";
 export interface LimitrCloudInit {
     token: string;
     policy?: string;
-    address?: string;
+    wsAddress?: string;
+    ticketAddress?: string;
+    connectTimeout?: number;
 }
 
 
@@ -39,8 +41,10 @@ export class Limitr {
     /** Gate. */
     protected gate: LimitrGate = new LimitrGate();
 
-    /** WebSocket cloud connection. */
+    /** cloud.limitr.dev connection. */
     protected ws?: WebSocket;
+    protected wsInit: boolean = false;
+    protected wsTimeout?: unknown;
 
 
     /**
@@ -60,137 +64,6 @@ export class Limitr {
     static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
         await StofDoc.initialize();
         return new Limitr(policy, format);
-    }
-
-
-    /*****************************************************************************
-     * Limitr Cloud.
-     *****************************************************************************/
-    
-    /**
-     * Initialize with cloud.limitr.dev.
-     *
-     * @param token API token to use with cloud.limiter.dev.
-     * @param address Server URL.
-     * @param policy Policy ID or "active" for the active policy.
-     */
-    static async cloud(options: LimitrCloudInit | string): Promise<Limitr | undefined> {
-        const token = typeof options === 'string' ? options : options.token;
-        if (token.length < 1) return undefined;
-
-        const policy = typeof options === 'string' ? 'active' : options.policy ?? 'active';
-        const address = typeof options === 'string' ? 'wss://api.limitr.dev' : options.address ?? 'wss://api.limitr.dev';
-        const ws = new WebSocket(address + '/wss?token=' + token);
-
-        const limitr = await Limitr.new();
-        limitr.addCloudLib();
-        limitr.ws = ws;
-        limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
-        limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
-        setTimeout(()=>limitr.cloudPing(address, token), 20000);
-        return limitr;
-    }
-
-
-    /**
-     * Start cloud WebSocket ping & reconnect loop.
-     */
-    protected cloudPing(address: string, token: string) {
-        if (this.ws) this.ws.send('ping');
-        else {
-            const ws = new WebSocket(address + '/wss?token=' + token);
-            this.ws = ws;
-            this.ws.onmessage = (m)=>this.cloudMessageReceived(m);
-        }
-        setTimeout(()=>this.cloudPing(address, token), 20000);
-    }
-
-
-    /**
-     * Add cloud doc library to Stof doc.
-     */
-    protected addCloudLib() {
-        // async Http.fetch
-        this.doc.lib('Http', 'fetch', async (
-            url: string,
-            method: string = 'GET',
-            body: BodyInit | undefined | null = null,
-            headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
-            const response = await fetch(url, {
-                method,
-                body: body ?? undefined,
-                headers: Object.fromEntries(headers.entries()),
-            });
-            const result = new Map<string, unknown>();
-            result.set('status', response.status);
-            result.set('ok', response.ok);
-            result.set('headers', new Map(response.headers));
-            result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
-            result.set('bytes', await response.bytes());
-            return result;
-        }, true);
-
-        // CloudWS.send
-        this.doc.lib('CloudWS', 'send', (data: string) => {
-            if (this.ws) this.ws.send(data);
-        });
-    }
-
-
-    /**
-     * Cloud message received.
-     */
-    //deno-lint-ignore no-explicit-any
-    protected async cloudMessageReceived(message: MessageEvent<any>) {
-        const data = message.data;
-        if (typeof data === 'string') {
-            if (data === 'pong' || data === 'ping') return;
-            try {
-                const record = JSON.parse(data);
-                if (!!record.policy && !!record.policy.plans) {
-                    await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
-                } else if (record.type === 'user' || record.type === 'org') {
-                    await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));
-                }
-            } catch {
-                // nada..
-            }
-        } else {
-            try {
-                const doc = new StofDoc();
-                if (doc.parse(data, 'bstf')) this.doc = doc;
-            } catch {
-                // nada..
-            }
-        }
-    }
-
-
-    /**
-     * Add a customer from the cloud.
-     */
-    async addCloudCustomer(id: string, timeout: number = 5000): Promise<boolean> {
-        const existing = await this.customer(id);
-        if (existing || !this.ws) return false;
-        await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.set_customer', `{ id: "${id}", placeholder: true }`, false));
-        this.ws.send(JSON.stringify({ type: 'customer', id }));
-        return new Promise<boolean>((resolve, reject) => {
-            const intervalMs = 50;
-            const start = Date.now();
-            const poll = async () => {
-                const cus = await this.customer(id);
-                if (cus && !cus.placeholder) {
-                    resolve(true);
-                    return;
-                }
-                if (Date.now() - start > timeout) {
-                    reject(new Error(`addCloudCustomer(${id}) timed out`));
-                    return;
-                }
-                setTimeout(poll, intervalMs);
-            };
-            poll();
-        });
     }
 
 
@@ -472,5 +345,180 @@ export class Limitr {
      */
     async check(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value)) as boolean;
+    }
+
+
+    /*****************************************************************************
+     * Limitr Cloud.
+     *****************************************************************************/
+    
+    /**
+     * Initialize with cloud.limitr.dev.
+     *
+     * @param token API token.
+     * @param address (optional) Server URL.
+     * @param policy (optional) Policy ID or "active" for the active policy.
+     * @param connectTimeout (optional) Time to wait when establishing an initial connection (ms).
+     */
+    static async cloud(options: LimitrCloudInit | string): Promise<Limitr | undefined> {
+        const token = typeof options === 'string' ? options : options.token;
+        if (token.length < 1) return undefined;
+
+        const policy = typeof options === 'string' ? 'active' : options.policy ?? 'active';
+        const address = typeof options === 'string' ? 'wss://api.limitr.dev' : options.wsAddress ?? 'wss://api.limitr.dev';
+        const ticketAddress = typeof options === 'string' ? 'https://api.limitr.dev' : options.ticketAddress ?? 'https://api.limitr.dev';
+        const timeout = typeof options === 'string' ? 5000 : options.connectTimeout ?? 5000;
+
+        const response = await fetch(ticketAddress + '/wss/ticket', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+        });
+        if (!response.ok) return undefined;
+        const { ticket } = await response.json();
+        const ws = new WebSocket(address + '/wss?ticket=' + ticket);
+        ws.binaryType = 'arraybuffer';
+        await waitOnOpen(ws);
+
+        const limitr = await Limitr.new();
+        limitr.ws = ws;
+        limitr.ws.onclose = ()=>{ limitr.wsInit = false; };
+        limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+        limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
+        
+        await new Promise<boolean>((resolve, reject) => {
+            const intervalMs = 50;
+            const start = Date.now();
+            const poll = () => {
+                if (limitr.wsInit) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > timeout) {
+                    reject(new Error(`wait for WebSocket policy init timed out`));
+                    return;
+                }
+                setTimeout(poll, intervalMs);
+            };
+            poll();
+        });
+
+        const ping = async () => {
+            if (limitr.ws) { if (limitr.ws.readyState === WebSocket.OPEN) limitr.ws.send('ping'); }
+            else {
+                const response = await fetch(ticketAddress + '/wss/ticket', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                if (response.ok) {
+                    const { ticket } = await response.json();
+                    const ws = new WebSocket(address + '/wss?ticket=' + ticket);
+                    ws.binaryType = 'arraybuffer';
+                    await waitOnOpen(ws);
+                    
+                    limitr.ws = ws;
+                    limitr.ws.onclose = ()=>{ limitr.wsInit = false; };
+                    limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+                }
+            }
+            limitr.wsTimeout = setTimeout(ping, 20000);
+        };
+        limitr.wsTimeout = setTimeout(ping, 20000);
+        return limitr;
+    }
+
+
+    /**
+     * Add a customer from the cloud.
+     */
+    async addCloudCustomer(id: string, timeout: number = 5000): Promise<boolean> {
+        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        if (existing || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_customer', `{ id: "${id}", placeholder: true }`, false));
+        this.ws.send(JSON.stringify({ type: 'customer', id }));
+        return new Promise<boolean>((resolve, reject) => {
+            const intervalMs = 50;
+            const start = Date.now();
+            const poll = async () => {
+                const cus = await this.customer(id);
+                if (cus && !cus.placeholder) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > timeout) {
+                    reject(new Error(`addCloudCustomer(${id}) timed out`));
+                    return;
+                }
+                setTimeout(poll, intervalMs);
+            };
+            poll();
+        });
+    }
+
+
+    /**
+     * Close connection to cloud.limitr.dev.
+     */
+    close() {
+        if (this.ws && this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
+            //@ts-ignore timeout
+            if (this.wsTimeout) clearTimeout(this.wsTimeout);
+            this.ws.close();
+        }
+    }
+
+
+    /**
+     * Cloud message received.
+     */
+    //deno-lint-ignore no-explicit-any
+    protected async cloudMessageReceived(message: MessageEvent<any>) {
+        const data = message.data;
+        if (typeof data === 'string') {
+            if (data === 'pong' || data === 'ping') return;
+            try {
+                const record = JSON.parse(data);
+                if (!!record.policy && !!record.policy.plans) {
+                    await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
+                } else if (record.type === 'user' || record.type === 'org') {
+                    await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));
+                }
+            } catch {
+                // nada..
+            }
+        } else {
+            try {
+                const array = new Uint8Array(data);
+                this.doc = new StofDoc();
+                this.doc.parse(array, 'bstf');
+                
+                this.doc.lib('Http', 'fetch', async (
+                    url: string,
+                    method: string = 'GET',
+                    body: BodyInit | undefined | null = null,
+                    headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
+                    const response = await fetch(url, {
+                        method,
+                        body: body ?? undefined,
+                        headers: Object.fromEntries(headers.entries()),
+                    });
+                    const result = new Map<string, unknown>();
+                    result.set('status', response.status);
+                    result.set('ok', response.ok);
+                    result.set('headers', new Map(response.headers));
+                    result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
+                    result.set('bytes', await response.bytes());
+                    return result;
+                }, true);
+                this.doc.lib('CloudWS', 'send', (data: string) => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
+                });
+
+                this.wsInit = true;
+            } catch {
+                // nada..
+            }
+        }
     }
 }

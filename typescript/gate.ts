@@ -42,14 +42,44 @@ export class LimitrGate {
      * Run at the front of this scheduler.
      */
     runFront<T>(fn: () => Promise<T> | T): Promise<T> {
-        const next = Promise.resolve().then(fn);
-        this.head = next
-            .then(() => this.head)
-            .catch(() => this.head);
-
-        if (this.tail === this.head) {
-            this.tail = this.head;
-        }
+        let release!: () => void;
+        const blocker = new Promise<void>(resolve => {
+            release = resolve;
+        });
+        const prevTail = this.tail;
+        this.tail = blocker;
+        const next = Promise.resolve()
+            .then(fn)
+            .finally(() => {
+                this.tail = prevTail;
+                release();
+            });
         return next;
     }
+}
+
+
+/**
+ * Helper function for waiting for the WebSocket to open.
+ */
+export function waitOnOpen(ws: WebSocket): Promise<void> {
+    if (ws.readyState === WebSocket.OPEN) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+        const onOpen = () => {
+            cleanup();
+            resolve();
+        };
+        const onError = (err: Event) => {
+            cleanup();
+            reject(err);
+        };
+        const cleanup = () => {
+            ws.removeEventListener("open", onOpen);
+            ws.removeEventListener("error", onError);
+        };
+        ws.addEventListener("open", onOpen);
+        ws.addEventListener("error", onError);
+    });
 }
