@@ -19,13 +19,13 @@ import { assert } from "jsr:@std/assert@^1.0.16/assert";
 import { Limitr } from "../main.ts";
 
 // testing vars
-const token = 'test_H8RkMKBOXQLWLpDRPcbdQjuN';
+const token = 'test_QZedPS1AgE7U7HmMd_mFD5ca';
 const address = 'http://localhost:4242';
-const user = 'test_1';
+const user = 'test_user';
 
 // grab policy & customer from server (add a ttl to update policy on an interval)
 const policy = await Limitr.cloud({ token, address }) ?? await Limitr.new();
-assert(await policy.addCloudCustomer(token, user, address));
+assert(await policy.addCloudCustomer(user));
 
 // ready to limit & track (use async API with cloud policies)
 if (await policy.allow(user, 'storage', "400MiB")) {
@@ -33,4 +33,4 @@ if (await policy.allow(user, 'storage', "400MiB")) {
 } else {
     console.log('Blocked!! Notify the user or something');
 }
-console.log(policy.customers());
+console.log(await policy.customers());

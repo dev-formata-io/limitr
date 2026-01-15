@@ -16,23 +16,7 @@
 
 import { StofDoc } from "@formata/stof";
 import { limitrApi } from "./limitr.ts";
-
-
-/**
- * Internally ensure there's no overlap between policy calls.
- * This may happen with the Limitr.cloud ttl (or patterns like it).
- * A common WASM in TS thing.
- */
-class StofGate {
-    //deno-lint-ignore no-explicit-any
-    private queue: any = Promise.resolve();
-
-    run<T>(fn: () => Promise<T> | T): Promise<T> {
-        const next = this.queue.then(fn);
-        this.queue = next.catch(() => {});
-        return next;
-    }
-}
+import { LimitrGate } from "./gate.ts";
 
 
 /**
@@ -40,60 +24,33 @@ class StofGate {
  */
 export interface LimitrCloudInit {
     token: string;
-    ttl?: number;
     policy?: string;
     address?: string;
 }
 
 
 /**
- * Limitr base class.
- * Note: Any sync_calls on this doc will not work with async TS lib functions (ex. fetch).
- *       This is okay for a lot of calls, especially without HTTP adapters and events, but keep it in mind.
+ * Limitr monetization policy.
  */
 export class Limitr {
     /** StofDoc. */
     doc: StofDoc;
 
     /** Gate. */
-    gate: StofGate = new StofGate();
+    protected gate: LimitrGate = new LimitrGate();
 
-    /** Cloud policy pull interval. */
-    interval?: unknown;
+    /** WebSocket cloud connection. */
+    protected ws?: WebSocket;
 
 
     /**
      * Constructor.
      * Make sure StofDoc.initialize() has been called for Stof first.
-     * This will always add the Limitr Stof types, etc.
      */
     constructor(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof') {
         this.doc = new StofDoc();
-        if (format === 'cloud.limitr.dev' && policy instanceof Uint8Array) {
-            // no timeout, query, or bearer options
-            this.doc.lib('Http', 'fetch', async (
-                url: string,
-                method: string = 'GET',
-                body: BodyInit | undefined | null = null,
-                headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
-                const response = await fetch(url, {
-                    method,
-                    body: body ?? undefined,
-                    headers: Object.fromEntries(headers.entries()),
-                });
-                const result = new Map<string, unknown>();
-                result.set('status', response.status);
-                result.set('ok', response.ok);
-                result.set('headers', new Map(response.headers));
-                result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
-                result.set('bytes', await response.bytes());
-                return result;
-            }, true);
-            this.doc.parse(policy, 'bstf');
-        } else {
-            this.doc.stof.binaryImport(limitrApi, 'bstf', null, 'prod');
-            this.doc.parse(policy, format);
-        }
+        this.doc.parse(limitrApi, 'bstf');
+        this.doc.parse(policy, format);
     }
 
 
@@ -106,46 +63,134 @@ export class Limitr {
     }
 
 
+    /*****************************************************************************
+     * Limitr Cloud.
+     *****************************************************************************/
+    
     /**
      * Initialize with cloud.limitr.dev.
      *
      * @param token API token to use with cloud.limiter.dev.
      * @param address Server URL.
      * @param policy Policy ID or "active" for the active policy.
-     * @param ttl Policy time-to-live - if set, the policy will be updated on an interval (use with "active" policy, recommended to be > 5000ms if possible).
      */
     static async cloud(options: LimitrCloudInit | string): Promise<Limitr | undefined> {
         const token = typeof options === 'string' ? options : options.token;
         if (token.length < 1) return undefined;
 
-        const ttl = typeof options === 'string' ? null : options.ttl ?? null;
         const policy = typeof options === 'string' ? 'active' : options.policy ?? 'active';
-        const address = typeof options === 'string' ? 'https://api.limitr.dev' : options.address ?? 'https://api.limitr.dev';
+        const address = typeof options === 'string' ? 'wss://api.limitr.dev' : options.address ?? 'wss://api.limitr.dev';
+        const ws = new WebSocket(address + '/wss', { headers: { 'Authorization': `Bearer ${token}` }});
 
-        const response = await fetch(address + `/v1/limitr/policies/${policy}`, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-            await StofDoc.initialize();
-            const bytes = await response.bytes();
-            const result = new Limitr(bytes, 'cloud.limitr.dev');
-            if (ttl !== null) {
-                result.interval = setInterval(async () => {
-                    const response = await fetch(address + `/v1/policies/${policy}`, {
-                        method: 'GET',
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    if (response.ok) {
-                        const doc = result.doc;
-                        const json = await response.text();
-                        result.gate.run(() => doc.sync_call('<Limitr>.api.update_policy_internals', json, 'json'));
-                    }
-                }, ttl);
-            }
-            return result;
+        const limitr = await Limitr.new();
+        limitr.addCloudLib();
+        limitr.ws = ws;
+        limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+        limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
+        setTimeout(()=>limitr.cloudPing(address, token), 20000);
+        return limitr;
+    }
+
+
+    /**
+     * Start cloud WebSocket ping & reconnect loop.
+     */
+    protected cloudPing(address: string, token: string) {
+        if (this.ws) this.ws.send('ping');
+        else {
+            const ws = new WebSocket(address + '/wss', { headers: { 'Authorization': `Bearer ${token}` }});
+            this.ws = ws;
+            this.ws.onmessage = (m)=>this.cloudMessageReceived(m);
         }
-        return undefined;
+        setTimeout(()=>this.cloudPing(address, token), 20000);
+    }
+
+
+    /**
+     * Add cloud doc library to Stof doc.
+     */
+    protected addCloudLib() {
+        // async Http.fetch
+        this.doc.lib('Http', 'fetch', async (
+            url: string,
+            method: string = 'GET',
+            body: BodyInit | undefined | null = null,
+            headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
+            const response = await fetch(url, {
+                method,
+                body: body ?? undefined,
+                headers: Object.fromEntries(headers.entries()),
+            });
+            const result = new Map<string, unknown>();
+            result.set('status', response.status);
+            result.set('ok', response.ok);
+            result.set('headers', new Map(response.headers));
+            result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
+            result.set('bytes', await response.bytes());
+            return result;
+        }, true);
+
+        // CloudWS.send
+        this.doc.lib('CloudWS', 'send', (data: string) => {
+            if (this.ws) this.ws.send(data);
+        });
+    }
+
+
+    /**
+     * Cloud message received.
+     */
+    //deno-lint-ignore no-explicit-any
+    protected async cloudMessageReceived(message: MessageEvent<any>) {
+        const data = message.data;
+        if (typeof data === 'string') {
+            if (data === 'pong' || data === 'ping') return;
+            try {
+                const record = JSON.parse(data);
+                if (!!record.policy && !!record.policy.plans) {
+                    await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
+                } else if (record.type === 'user' || record.type === 'org') {
+                    await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));
+                }
+            } catch {
+                // nada..
+            }
+        } else {
+            try {
+                const doc = new StofDoc();
+                if (doc.parse(data, 'bstf')) this.doc = doc;
+            } catch {
+                // nada..
+            }
+        }
+    }
+
+
+    /**
+     * Add a customer from the cloud.
+     */
+    async addCloudCustomer(id: string, timeout: number = 5000): Promise<boolean> {
+        const existing = await this.customer(id);
+        if (existing || !this.ws) return false;
+        await this.gate.runFront(() => this.doc.sync_call('<Limitr>.api.set_customer', `{ id: "${id}", placeholder: true }`, false));
+        this.ws.send(JSON.stringify({ type: 'customer', id }));
+        return new Promise<boolean>((resolve, reject) => {
+            const intervalMs = 50;
+            const start = Date.now();
+            const poll = async () => {
+                const cus = await this.customer(id);
+                if (cus && !cus.placeholder) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > timeout) {
+                    reject(new Error(`addCloudCustomer(${id}) timed out`));
+                    return;
+                }
+                setTimeout(poll, intervalMs);
+            };
+            poll();
+        });
     }
 
 
@@ -247,25 +292,6 @@ export class Limitr {
      */
     async setCustomerPlan(id: string, plan: string): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan)) as boolean;
-    }
-
-
-    /**
-     * Load customer from the cloud.
-     */
-    async addCloudCustomer(token: string, id: string, address: string = 'https://api.limitr.dev'): Promise<boolean> {
-        const response = await fetch(address + `/v1/customers/${id}`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
-        });
-        if (response.ok) {
-            const json = JSON.stringify(await response.json());
-            const cus = await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', json, false)) as string | null;
-            return cus !== null;
-        }
-        return false;
     }
 
     

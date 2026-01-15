@@ -57,28 +57,46 @@ Limitr: {
         }
 
 
+        /// Replace a customer internals within this Limitr policy.
+        fn update_customer_internals(customer: str!, format: str! = 'json') {
+            const policy = self.get();
+            if (policy == null) return;
+            const c = new {} on policy.customers;
+            try {
+                parse(customer, c, format);
+                const id = c.id ?? nanoid();
+                c.id = id;
+                policy.customers.remove(id, shallow = false);
+                policy.customers.insert(id, c as Customer);
+                for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt);
+            } catch {
+                drop(c);
+            }
+        }
+
+
         /// Replace the current active policy internals in this document with a new one.
         /// Used to refresh this Limitr policies plans & credits (not customers).
         fn update_policy_internals(updated: str!, format: str! = 'json') {
             const policy = self.get();
             if (policy == null) return;
-
+            const p = new {};
             try {
-                const p = new {};
                 parse(updated, p, format);
-                if ((typeof p.plans) == 'obj') {
+                if ((typeof p.policy.plans) == 'obj') {
                     policy.remove('plans', shallow = false);
-                    policy.plans = p.plans;
-                    p.plans.move(policy);
+                    policy.plans = p.policy.plans;
+                    p.policy.plans.move(policy);
                 }
-                if ((typeof p.credits) == 'obj') {
+                if ((typeof p.policy.credits) == 'obj') {
                     policy.remove('credits', shallow = false);
-                    policy.credits = p.credits;
-                    p.credits.move(policy);
+                    policy.credits = p.policy.credits;
+                    p.policy.credits.move(policy);
                 }
             } catch {
                 // Nada...
             }
+            drop(p);
         }
 
         
@@ -771,6 +789,7 @@ Limitr: {
         }
         const id = sub.id ?? nanoid();
         sub.id = id;
+        self.customers.remove(id, shallow = false);
         self.customers.insert(id, sub as Customer);
         for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt);
         if (event) await <Event>.send('customer-set', customer);
