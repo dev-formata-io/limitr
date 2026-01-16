@@ -285,6 +285,9 @@ export class Limitr {
      * Will always be in the units of the credit associated with this entitlement.
      */
     async remaining(customer: string, entitlement: string): Promise<number | null> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return null;
+        }
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement)) as number | null;
     }
 
@@ -294,6 +297,9 @@ export class Limitr {
      * Will always be in the units of the credit associated with this entitlement.
      */
     async value(customer: string, entitlement: string): Promise<number | null> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return null;
+        }
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement)) as number | null;
     }
 
@@ -313,6 +319,9 @@ export class Limitr {
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async increment(customer: string, entitlement: string): Promise<boolean> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return false;
+        }
         return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement)) as boolean;
     }
 
@@ -323,6 +332,9 @@ export class Limitr {
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async deincrement(customer: string, entitlement: string): Promise<boolean> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return false;
+        }
         return await this.gate.run(() => this.doc.call('<Limitr>.api.deincrement', customer, entitlement)) as boolean;
     }
 
@@ -334,6 +346,9 @@ export class Limitr {
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async allow(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return false;
+        }
         return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value)) as boolean;
     }
 
@@ -344,6 +359,9 @@ export class Limitr {
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async check(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
+            if (!await this.addCloudCustomer(customer)) return false;
+        }
         return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value)) as boolean;
     }
 
@@ -441,14 +459,12 @@ export class Limitr {
     async addCloudCustomer(id: string, timeout: number = 5000): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (existing || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
-        await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_customer', `{ id: "${id}", placeholder: true }`, false));
         this.ws.send(JSON.stringify({ type: 'customer', id }));
         return new Promise<boolean>((resolve, reject) => {
             const intervalMs = 50;
             const start = Date.now();
             const poll = async () => {
-                const cus = await this.customer(id);
-                if (cus && !cus.placeholder) {
+                if (await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id))) {
                     resolve(true);
                     return;
                 }
