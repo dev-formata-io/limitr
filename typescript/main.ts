@@ -28,6 +28,7 @@ export interface LimitrCloudInit {
     wsAddress?: string;
     ticketAddress?: string;
     connectTimeout?: number;
+    denyUnconnected?: boolean;
 }
 
 
@@ -41,7 +42,8 @@ export class Limitr {
     /** Gate. */
     protected gate: LimitrGate = new LimitrGate();
 
-    /** cloud.limitr.dev connection. */
+    /** Deny on cloud.limitr.dev connection loss (recommended)? */
+    denyUnconnected: boolean = true;
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
     protected wsTimeout?: unknown;
@@ -285,9 +287,7 @@ export class Limitr {
      * Will always be in the units of the credit associated with this entitlement.
      */
     async remaining(customer: string, entitlement: string): Promise<number | null> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return null;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return null;
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement)) as number | null;
     }
 
@@ -297,9 +297,7 @@ export class Limitr {
      * Will always be in the units of the credit associated with this entitlement.
      */
     async value(customer: string, entitlement: string): Promise<number | null> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return null;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return null;
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement)) as number | null;
     }
 
@@ -319,9 +317,7 @@ export class Limitr {
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async increment(customer: string, entitlement: string): Promise<boolean> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return false;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return false;
         return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement)) as boolean;
     }
 
@@ -332,9 +328,7 @@ export class Limitr {
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async deincrement(customer: string, entitlement: string): Promise<boolean> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return false;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return false;
         return await this.gate.run(() => this.doc.call('<Limitr>.api.deincrement', customer, entitlement)) as boolean;
     }
 
@@ -346,9 +340,7 @@ export class Limitr {
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async allow(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return false;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return false;
         return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value)) as boolean;
     }
 
@@ -359,9 +351,7 @@ export class Limitr {
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
     async check(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.customer(customer)) {
-            if (!await this.addCloudCustomer(customer)) return false;
-        }
+        if (!await this.cloudPreCheckContinue(customer)) return false;
         return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value)) as boolean;
     }
 
@@ -386,6 +376,7 @@ export class Limitr {
         const address = typeof options === 'string' ? 'wss://api.limitr.dev' : options.wsAddress ?? 'wss://api.limitr.dev';
         const ticketAddress = typeof options === 'string' ? 'https://api.limitr.dev' : options.ticketAddress ?? 'https://api.limitr.dev';
         const timeout = typeof options === 'string' ? 5000 : options.connectTimeout ?? 5000;
+        const denyUnconnected = typeof options === 'string' ? true : options.denyUnconnected ?? true;
 
         const response = await fetch(ticketAddress + '/wss/ticket', {
             method: 'POST',
@@ -399,6 +390,7 @@ export class Limitr {
         await waitOnOpen(ws);
 
         const limitr = await Limitr.new();
+        limitr.denyUnconnected = denyUnconnected;
         const awaitInit = async () => {
             await new Promise<boolean>((resolve, reject) => {
                 const intervalMs = 50;
@@ -476,6 +468,32 @@ export class Limitr {
             };
             poll();
         });
+    }
+
+
+    /**
+     * Cloud pre-check.
+     */
+    protected async cloudPreCheckContinue(customer: string): Promise<boolean> {
+        if (this.ws) {
+            switch (this.ws.readyState) {
+                case WebSocket.OPEN: {
+                    if (!this.customer(customer) && !await this.addCloudCustomer(customer)) return false;
+                    break;
+                }
+                case WebSocket.CONNECTING: {
+                    await waitOnOpen(this.ws);
+                    if (!this.customer(customer) && !await this.addCloudCustomer(customer)) return false;
+                    break;
+                }
+                case WebSocket.CLOSING:
+                case WebSocket.CLOSED: {
+                    if (this.denyUnconnected) return false;
+                    break;
+                }
+            }
+        }
+        return true;
     }
 
 
