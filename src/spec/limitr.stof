@@ -109,6 +109,26 @@ Limitr: {
             ?self.get().plan(id)
         }
 
+        /// Get a plan price (if any).
+        fn plan_price(id: str!) -> Price {
+            ?self.get().plan_price(id)
+        }
+
+        /// Get a plan price ID.
+        fn plan_price_id(id: str!) -> str {
+            ?self.get().plan_price_id(id)
+        }
+
+        /// Get a plan amount.
+        fn plan_amount(id: str!) -> float {
+            ?self.get().plan_amount(id)
+        }
+
+        /// Get a plan price label.
+        fn plan_price_label(id: str!) -> str {
+            ?self.get().plan_price_label(id)
+        }
+
         /// Delete a plan by plan ID.
         /// Be careful, as customers that have this plan will no longer work as expected.
         fn delete_plan(id: str!) -> bool {
@@ -208,6 +228,11 @@ Limitr: {
             ?self.get().customer(id)
         }
 
+        /// Get a customer's metadata object.
+        fn customer_metadata(id: str!) -> obj {
+            ?self.get().customer_metadata(id)
+        }
+
         /// Get the customer's org customer ID if defined.
         fn customer_org(id: str!) -> str {
             ?self.get().customer_org(id)
@@ -278,6 +303,42 @@ Limitr: {
             return pn;
         }
         null
+    }
+
+
+    /**
+     * Get a plan price (if any) by plan ID or by customer ID.
+     */
+    fn plan_price(id: str!) -> Price {
+        const plan = self.plan(id);
+        plan != null ? plan.price : null
+    }
+
+
+    /**
+     * Get a plan price ID.
+     */
+    fn plan_price_id(id: str!) -> str {
+        const price = self.plan_price(id);
+        price != null ? price.id : null
+    }
+
+
+    /**
+     * Get a plan amount.
+     */
+    fn plan_amount(id: str!) -> float {
+        const price = self.plan_price(id);
+        price != null ? price.amount : null
+    }
+
+
+    /**
+     * Get a plan price label.
+     */
+    fn plan_price_label(id: str!) -> str {
+        const price = self.plan_price(id);
+        price != null ? price.label() : null
     }
 
 
@@ -781,6 +842,15 @@ Limitr: {
             if (alt != null) return self.customer(alt);
         }
         sub
+    }
+
+
+    /**
+     * Get a customer's metadata object.
+     */
+    fn customer_metadata(id: str!) -> obj {
+        const customer = self.customer(id);
+        customer != null ? customer.metadata : null
     }
 
 

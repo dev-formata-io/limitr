@@ -109,6 +109,40 @@ export class Limitr {
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
+
+
+    /**
+     * Get a plan price by ID (plan ID or customer ID).
+     */
+    async planPrice(id: string): Promise<Record<string, unknown> | undefined> {
+        const priceNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price', id));
+        if (typeof priceNode === 'string') return this.doc.record(priceNode);
+        return undefined;
+    }
+
+
+    /**
+     * Get a plan price ID.
+     */
+    async planPriceId(id: string): Promise<string | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price_id', id)) as string | null;
+    }
+
+
+    /**
+     * Get a plan amount.
+     */
+    async planAmount(id: string): Promise<number | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_amount', id)) as number | null;
+    }
+
+
+    /**
+     * Get a plan price label.
+     */
+    async planPriceLabel(id: string): Promise<string | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price_label', id)) as string | null;
+    }
     
     
     /**
@@ -163,6 +197,16 @@ export class Limitr {
     async customer(id: string): Promise<Record<string, unknown> | undefined> {
         const subNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (typeof subNode === 'string') return this.doc.record(subNode);
+        return undefined;
+    }
+
+
+    /**
+     * Get a customer metadata object (if any).
+     */
+    async customerMetadata(id: string): Promise<Record<string, unknown> | undefined> {
+        const metaNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_metadata', id));
+        if (typeof metaNode === 'string') return this.doc.record(metaNode);
         return undefined;
     }
 
