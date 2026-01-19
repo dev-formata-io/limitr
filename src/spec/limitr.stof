@@ -167,6 +167,16 @@ Limitr: {
             ?self.get().allow(id, entitlement, value)
         }
 
+        /// Check if changing the value of a metered entitlement by a stardard increment would be allowed.
+        fn check_increment(id: str!, entitlement: str!) -> bool {
+            ?self.get().check_increment(id, entitlement)
+        }
+
+        /// Check if changing the vlaue of a metered entitlement by removing a standard increment would be allowed.
+        fn check_deincrement(id: str!, entitlement: str!) -> bool {
+            ?self.get().check_deincrement(id, entitlement)
+        }
+
         /// Would "allow" be true if called with this "value"?
         fn check(id: str!, entitlement: str!, value: float = 0) -> bool {
             ?self.get().check(id, entitlement, value)
@@ -598,6 +608,60 @@ Limitr: {
                     return res;
                 }
             }
+        }
+        false
+    }
+
+
+    /**
+     * Check if changing the value of a metered entitlement by a standard increment would be allowed (defined in the Limit).
+     */
+    fn check_increment(id: str!, entitlement: str!) -> bool {
+        const ent = self.entitlement(id, entitlement);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) {
+            return self.check(id, entitlement, limit.increment);
+        }
+        false
+    }
+
+
+    /**
+     * Check if changing the value of a metered entitlement by a negative standard increment would be allowed (defined in the Limit).
+     */
+    fn check_deincrement(id: str!, entitlement: str!) -> bool {
+        const ent = self.entitlement(id, entitlement);
+
+        // get the entitlement limit (potentially overridden for a customer)
+        const customer = self.customer(id);
+        let limit = ent != null ? ent.limit : null;
+        if (customer != null) {
+            const override: Limit = customer.overrides.get(entitlement);
+            if (override != null) {
+                if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+                    // Nada..
+                } else {
+                    limit = override;
+                }
+            }
+        }
+
+        if (ent != null && limit != null) {
+            return self.check(id, entitlement, limit.increment * -1);
         }
         false
     }

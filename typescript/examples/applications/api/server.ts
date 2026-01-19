@@ -25,8 +25,8 @@ const policy = await Limitr.cloud({ token }) ?? await Limitr.new();
 
 // Populate some test customers just for testing!
 // In real life, these would be populated with a clear addCustomer workflow and each endpoint could addCloudCustomer if cache miss
-if (!await policy.addCloudCustomer('org_Formata')) await policy.addCustomer('org_Formata', 'paid', 'org', 'Formata');
-if (!await policy.addCloudCustomer('cus_CJ')) await policy.addCustomer('cus_CJ', '', 'user', 'CJ Cummings', 'org_Formata');
+if (!await policy.addCloudCustomer('org_Formata')) await policy.createCustomer('org_Formata', 'paid', 'org', 'Formata');
+if (!await policy.addCloudCustomer('cus_CJ')) await policy.createCustomer('cus_CJ', '', 'user', 'CJ Cummings', 'org_Formata');
 
 // Lets add some API keys to reference our two customers in the API
 // In real life, these would be unique API keys that our app could add/remove from the cloud customer and check independently

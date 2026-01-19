@@ -38,8 +38,8 @@ policy:
 `, 'yaml');
 
 // create test customers
-await policy.addCustomer('free_user', 'free');
-await policy.addCustomer('pro_user', 'pro');
+await policy.createCustomer('free_user', 'free');
+await policy.createCustomer('pro_user', 'pro');
 
 // add events either in doc (its just stof) or to policy as pre-defined (App.meter_overage, etc..)
 policy.doc.lib('App', 'meter_overage', (json: string) => { const r = JSON.parse(json); console.log('Overage customer: ', r.customer, r.remaining); });

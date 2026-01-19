@@ -59,7 +59,7 @@ console.log(limitr.plan('paid'));
 
 // Create a test customer to play with
 const sid = 'cus_example_id';
-await limitr.addCustomer(sid, 'free', 'org', 'Formata', null, ['formata']);
+await limitr.createCustomer(sid, 'free', 'org', 'Formata', null, ['formata']);
 
 // Check the seats policy for our customer
 limitr.doc.lib('App', 'meter_limit', (json: string) => {
@@ -76,7 +76,7 @@ assert(await limitr.increment(sid, 'seats')); // add another seat
 
 
 // Create a paid customer to test with
-await limitr.addCustomer('cus_paid', 'paid');
+await limitr.createCustomer('cus_paid', 'paid');
 assert(await limitr.allow('cus_paid', 'seats', 10)); // take up all 10
 assert(!(await limitr.increment('cus_paid', 'seats')));
 

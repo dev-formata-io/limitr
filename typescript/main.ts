@@ -169,13 +169,80 @@ export class Limitr {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan)) as boolean;
     }
 
+
+    /**
+     * Ensure that a customer exists, creating one if necessary.
+     * This takes the cloud into consideration as well.
+     * Returns true if a new customer was created.
+     */
+    async ensureCustomer(id: string, plan: string, type: 'user' | 'org' = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null): Promise<boolean> {
+        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        if (existing) return false;
+        if (this.ws) {
+            switch (this.ws.readyState) {
+                case WebSocket.OPEN: {
+                    if (await this.addCloudCustomer(id)) return false;
+                    break;
+                }
+                case WebSocket.CONNECTING: {
+                    await waitOnOpen(this.ws);
+                    if (await this.addCloudCustomer(id)) return false;
+                    break;
+                }
+                case WebSocket.CLOSING:
+                case WebSocket.CLOSED: {
+                    if (this.denyUnconnected) return false;
+                    break;
+                }
+            }
+        }
+        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, org, alts));
+        return true;
+    }
+
     
     /**
-     * Add a new customer to this Limitr.
+     * Create a new customer and add to this Limitr.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
+     * Note: prefer ensureCustomer API in case this customer already exists.
      */
-    async addCustomer(id: string, plan: string, type: 'user' | 'org' = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
+    async createCustomer(id: string, plan: string, type: 'user' | 'org' = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
         await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, org, alts));
+    }
+
+
+    /**
+     * Ensure that a customer exists, creating one by record if necessary.
+     * This takes the cloud into consideration as well.
+     * Returns true if a new customer was created.
+     */
+    async ensureSetCustomer(customer: string | Record<string, unknown>): Promise<boolean> {
+        const record = typeof customer === 'string' ? JSON.parse(customer) : customer;
+        const id = record.id as string;
+        if (!id) throw new Error('Ensure setting a customer expects a customer record with an ID');
+
+        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        if (existing) return false;
+        if (this.ws) {
+            switch (this.ws.readyState) {
+                case WebSocket.OPEN: {
+                    if (await this.addCloudCustomer(id)) return false;
+                    break;
+                }
+                case WebSocket.CONNECTING: {
+                    await waitOnOpen(this.ws);
+                    if (await this.addCloudCustomer(id)) return false;
+                    break;
+                }
+                case WebSocket.CLOSING:
+                case WebSocket.CLOSED: {
+                    if (this.denyUnconnected) return false;
+                    break;
+                }
+            }
+        }
+        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', JSON.stringify(record), true)) as string | null;
+        return !!res;
     }
 
 
@@ -183,7 +250,8 @@ export class Limitr {
      * Set a customer on this policy by ID.
      * Returns a node ID to the resulting Customer.
      */
-    async setCustomer(customerStof: string): Promise<string | null> {
+    async setCustomer(customer: string | Record<string, unknown>): Promise<string | null> {
+        const customerStof = typeof customer === 'string' ? customer : JSON.stringify(customer);
         return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', customerStof, true)) as string | null;
     }
 
@@ -346,6 +414,26 @@ export class Limitr {
 
 
     /**
+     * Would a "check" call work for this entitlement and increment value on this customer?
+     * Does not change a meter (charge usage) for this customer, just checks if it would work.
+     */
+    async checkIncrement(customer: string, entitlement: string): Promise<boolean> {
+        if (!await this.cloudPreCheckContinue(customer)) return false;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_increment', customer, entitlement)) as boolean;
+    }
+
+
+    /**
+     * Would a "check" call work for this entitlement and deincrement value on this customer?
+     * Does not change a meter (charge usage) for this customer, just checks if it would work.
+     */
+    async checkDeincrement(customer: string, entitlement: string): Promise<boolean> {
+        if (!await this.cloudPreCheckContinue(customer)) return false;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_deincrement', customer, entitlement)) as boolean;
+    }
+
+
+    /**
      * Would an "allow" call work for this entitlement and value on this customer?
      * Does not change a meter (charge usage) for this customer, just checks if it would work.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
@@ -447,12 +535,14 @@ export class Limitr {
 
     /**
      * Add a customer from the cloud.
+     * Default is to wait 3 seconds before moving on.
      */
-    async addCloudCustomer(id: string, timeout: number = 5000): Promise<boolean> {
+    async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (existing || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        this._deniedCloudCustomers.delete(id);
         this.ws.send(JSON.stringify({ type: 'customer', id }));
-        return new Promise<boolean>((resolve, reject) => {
+        return new Promise<boolean>((resolve) => {
             const intervalMs = 50;
             const start = Date.now();
             const poll = async () => {
@@ -460,8 +550,13 @@ export class Limitr {
                     resolve(true);
                     return;
                 }
+                if (this._deniedCloudCustomers.has(id)) {
+                    this._deniedCloudCustomers.delete(id);
+                    resolve(false);
+                    return;
+                }
                 if (Date.now() - start > timeout) {
-                    reject(new Error(`addCloudCustomer(${id}) timed out`));
+                    resolve(false);
                     return;
                 }
                 setTimeout(poll, intervalMs);
@@ -514,6 +609,7 @@ export class Limitr {
     /**
      * Cloud message received.
      */
+    private _deniedCloudCustomers: Set<string> = new Set();
     //deno-lint-ignore no-explicit-any
     protected async cloudMessageReceived(message: MessageEvent<any>) {
         const data = message.data;
@@ -521,7 +617,11 @@ export class Limitr {
             if (data === 'pong' || data === 'ping') return;
             try {
                 const record = JSON.parse(data);
-                if (!!record.policy && !!record.policy.plans) {
+                if (!!record.error && !!record.id) {
+                    if (record.type === 'customer') {
+                        this._deniedCloudCustomers.add(record.id);
+                    }
+                } else if (!!record.policy && !!record.policy.plans) {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
                 } else if (record.type === 'user' || record.type === 'org') {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));

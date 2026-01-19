@@ -43,8 +43,8 @@ policy:
 `, 'yaml');
 
 // Create/save/load customers (database, Stripe, etc.)
-await policy.addCustomer('cus_free_customer', 'free');
-await policy.addCustomer('cus_paid_customer', 'paid');
+await policy.createCustomer('cus_free_customer', 'free');
+await policy.createCustomer('cus_paid_customer', 'paid');
 
 // Perform entitlement checks, meter usage, etc.
 await policy.increment('cus_free_customer', 'seats'); // adds one seat

@@ -77,10 +77,10 @@ policy:
 
 // Load customers (users, orgs, Stripe customers, etc.)
 // First lets create an org customer (for seats and anything tracked per org)
-await policy.addCustomer('free_org', 'free', 'org', 'Free Org');
+await policy.createCustomer('free_org', 'free', 'org', 'Free Org');
 
 // Now lets create a user test customer linked to the org plan, with an additional ID (Stripe customer ID, app ID, API key, etc.)
-await policy.addCustomer('free_user', '', undefined, undefined, 'free_org', ['cus_alt']);
+await policy.createCustomer('free_user', '', undefined, undefined, 'free_org', ['cus_alt']);
 
 // Now we're all set to track things for the org and user together!
 // Lets increment a few seats on the org first.
