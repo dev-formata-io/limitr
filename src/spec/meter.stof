@@ -23,8 +23,12 @@ Meter: {
     /// Credit ID.
     str! credit: '';
 
-    /// This meter resets on this timestamp.
-    ms reset: null;
+    /// This meter value started counting on this timestamp.
+    ms started: null;
+
+    // This meter resets on this timestamp.
+    // DEPRECATED! May still exist on some meters.
+    //ms reset: null;
 
     /// Value of this meter (in credit's units).
     float value: 0;

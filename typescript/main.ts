@@ -33,6 +33,12 @@ export interface LimitrCloudInit {
 
 
 /**
+ * Internal event handler type.
+ */
+export type LimitrEventHandler = (key: string, value: unknown)=>void;
+
+
+/**
  * Limitr monetization policy.
  */
 export class Limitr {
@@ -48,6 +54,9 @@ export class Limitr {
     protected wsInit: boolean = false;
     protected wsTimeout?: unknown;
 
+    /** Optional event handler for all Limitr events. */
+    protected eventHandlers: LimitrEventHandler[] = [];
+
 
     /**
      * Constructor.
@@ -57,6 +66,25 @@ export class Limitr {
         this.doc = new StofDoc();
         this.doc.parse(limitrApi, 'bstf');
         this.doc.parse(policy, format);
+    }
+
+
+    /**
+     * Add an event handler to this Limitr policy.
+     */
+    addHandler(handler: LimitrEventHandler) {
+        this.eventHandlers.push(handler);
+        this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
+            for (const handler of this.eventHandlers) handler(key, value);
+        });
+    }
+
+
+    /**
+     * Clear event handlers.
+     */
+    clearHandlers() {
+        this.eventHandlers = [];
     }
 
 
@@ -162,11 +190,11 @@ export class Limitr {
 
 
     /**
-     * Set/change a customer's plan ID.
-     * Returns true if the plan has changed (and emits a customer-set event).
+     * Set/change a customer's plan by plan ID.
+     * Returns true if the plan has changed (and emits customer-set & customer-plan-changed events).
      */
-    async setCustomerPlan(id: string, plan: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan)) as boolean;
+    async setCustomerPlan(id: string, plan: string, overwrite_meters: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan, overwrite_meters)) as boolean;
     }
 
 

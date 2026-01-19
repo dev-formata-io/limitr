@@ -214,8 +214,8 @@ Limitr: {
         }
 
         /// Change a customer's plan ID.
-        fn set_customer_plan(id: str!, plan: str!) -> bool {
-            ?self.get().set_customer_plan(id, plan)
+        fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
+            ?self.get().set_customer_plan(id, plan, overwrite_meters)
         }
 
         /// Create a new customer.
@@ -547,9 +547,14 @@ Limitr: {
                     }
 
                     // check if the new value should be reset!
-                    if (existing_meter != null && existing_meter.reset != null && limit != null && limit.resets && Time.now() > existing_meter.reset) {
+                    // account for old meter.reset timestamp first
+                    if (existing_meter != null && existing_meter.started == null) {
+                        if (existing_meter.reset != null && limit != null) existing_meter.started = existing_meter.reset - limit.reset_inc;
+                        else existing_meter.started = Time.now(); // fallback
+                    }
+                    if (existing_meter != null && limit != null && limit.resets && limit.reset_inc > 0 && (Time.now() - existing_meter.started) > limit.reset_inc) {
                         const now = Time.now();
-                        while (now > existing_meter.reset) existing_meter.reset += limit.reset_inc;
+                        while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
                         new_value = value;
                     }
 
@@ -563,16 +568,11 @@ Limitr: {
                     // create/change meter if there is a limit defined
                     // if not a valid value and mode is "soft", emit overage and allow
                     if (limit != null && (res || limit.mode == 'soft')) {
-                        if (existing_meter == null) existing_meter = new Meter { } on customer.meters;
+                        if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
                         const old_value = existing_meter.value;
                         const changed = new_value != old_value;
                         existing_meter.credit = limit.credit;
                         existing_meter.value = new_value;
-
-                        if (existing_meter.reset == null && limit.resets) {
-                            existing_meter.reset = Time.now() + limit.reset_inc;
-                        }
-
                         customer.meters.insert(entitlement, existing_meter);
                         
                         if (changed) {
@@ -703,7 +703,12 @@ Limitr: {
                     }
 
                     // check if the new value should be reset!
-                    if (existing_meter != null && existing_meter.reset != null && limit != null && limit.resets && Time.now() > existing_meter.reset) {
+                    // account for old meter.reset timestamp first
+                    if (existing_meter != null && existing_meter.started == null) {
+                        if (existing_meter.reset != null && limit != null) existing_meter.started = existing_meter.reset - limit.reset_inc;
+                        else existing_meter.started = Time.now(); // fallback
+                    }
+                    if (existing_meter != null && limit != null && limit.resets && limit.reset_inc > 0 && (Time.now() - existing_meter.started) > limit.reset_inc) {
                         new_value = value;
                     }
 
@@ -790,13 +795,39 @@ Limitr: {
 
     /**
      * Change a customer's plan ID.
+     * Will initialize any meters for the new plan, optionally overwritting previous usage.
      */
-    fn set_customer_plan(id: str!, plan: str!) -> bool {
+    fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
         const sub = self.customer(id);
         const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
-        if (pn != null && sub.plan != plan) {
+        if (pn != null && sub != null && sub.plan != plan) {
+            const prev = sub.plan;
             sub.plan = plan;
+
+            // init all plan entitlement meters for this new plan
+            // all plan meters are a synced starting point
+            const now = Time.now();
+            for (const pair in pn.entitlements.fields()) {
+                const name = pair[0];
+                const ent = pair[1];
+                if ((typeof ent) == 'obj' && ent.limit != null) {
+                    ent as Entitlement;
+                    if (overwrite_meters || sub.meters.get(name) == null) {
+                        const met = new Meter {
+                            credit: ent.limit.credit,
+                            started: now,
+                        } on sub.meters;
+                        sub.meters.insert(name, met);
+                    }
+                }
+            }
+
             await <Event>.send('customer-set', sub);
+            await <Event>.send_tmp('customer-plan-changed', new {
+                plans: self.plans,
+                customer: sub,
+                previous: prev,
+            });
             return true;
         }
         false
@@ -830,6 +861,22 @@ Limitr: {
                 org,
             } on self.customers;
             self.customers.insert(id, customer);
+
+            // init all plan entitlement meters for this new customer
+            // all plan meters are a synced starting point
+            const now = Time.now();
+            for (const pair in pn.entitlements.fields()) {
+                const name = pair[0];
+                const ent = pair[1];
+                if ((typeof ent) == 'obj' && ent.limit != null) {
+                    ent as Entitlement;
+                    const met = new Meter {
+                        credit: ent.limit.credit,
+                        started: now,
+                    } on customer.meters;
+                    customer.meters.insert(name, met);
+                }
+            }
 
             // init alternative ids
             if (alts != null) for (const alt in alts) self.set_alt_customer_id(id, alt);

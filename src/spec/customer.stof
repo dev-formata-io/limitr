@@ -52,6 +52,13 @@ Customer: {
     /// Entitlement -> Limit.
     obj! overrides: {};
 
+    /// Optional subscription object.
+    /// This field is open for your interpretation.
+    obj subscription: null;
+
+    /// Optional metadata object for this customer.
+    obj metadata: null;
+
 
     /**
      * Set an override for this customer.
