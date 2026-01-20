@@ -705,9 +705,18 @@ export class Limitr {
             }
         } else {
             try {
-                const array = new Uint8Array(data);
+                let buffer: Uint8Array;
+                if (data instanceof ArrayBuffer) {
+                    buffer = new Uint8Array(data);
+                } else if (data instanceof Blob) {
+                    buffer = new Uint8Array(await data.arrayBuffer());
+                } else {
+                    console.log('UNKNOWN: ', typeof data, data);
+                    return; // unknown binary type
+                }
+
                 this.doc = new StofDoc();
-                this.doc.parse(array, 'bstf');
+                this.doc.parse(buffer, 'bstf');
                 
                 this.doc.lib('Http', 'fetch', async (
                     url: string,
@@ -732,8 +741,8 @@ export class Limitr {
                 });
 
                 this.wsInit = true;
-            } catch {
-                // nada..
+            } catch (e) {
+                console.error('Error initializing Limitr Policy from BSTF: ', e);
             }
         }
     }
