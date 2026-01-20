@@ -547,7 +547,7 @@ export class Limitr {
         const { ticket } = await response.json();
         const ws = new WebSocket(address + '/wss?ticket=' + ticket);
         ws.binaryType = 'arraybuffer';
-        await waitOnOpen(ws);
+        const waitOpen = waitOnOpen(ws);
 
         const limitr = await Limitr.new();
         limitr.denyUnconnected = denyUnconnected;
@@ -579,16 +579,18 @@ export class Limitr {
                 const { ticket } = await response.json();
                 const ws = new WebSocket(address + '/wss?ticket=' + ticket);
                 ws.binaryType = 'arraybuffer';
-                await waitOnOpen(ws);
                 
                 limitr.ws = ws;
                 limitr.ws.onclose = reconnect;
                 limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+                await waitOnOpen(ws);
             }
         };
         limitr.ws = ws;
         limitr.ws.onclose = reconnect;
         limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
+        await waitOpen;
+
         limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
         await awaitInit();
 
