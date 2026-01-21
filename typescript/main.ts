@@ -711,7 +711,6 @@ export class Limitr {
                 } else if (data instanceof Blob) {
                     buffer = new Uint8Array(await data.arrayBuffer());
                 } else {
-                    console.log('UNKNOWN: ', typeof data, data);
                     return; // unknown binary type
                 }
 
