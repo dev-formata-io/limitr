@@ -613,10 +613,12 @@ Limitr: {
                         if (existing_meter.reset != null && limit != null) existing_meter.started = existing_meter.reset - limit.reset_inc;
                         else existing_meter.started = Time.now(); // fallback
                     }
+                    let existing_meter_reset = false;
                     if (existing_meter != null && limit != null && limit.resets && limit.reset_inc > 0 && (Time.now() - existing_meter.started) > limit.reset_inc) {
                         const now = Time.now();
                         while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
                         new_value = value;
+                        existing_meter_reset = true;
                     }
 
                     // put new_value into the credit's units, casting if needed (in case no units were given)
@@ -646,10 +648,11 @@ Limitr: {
                                 entitlement,
                                 plan,
                                 credit,
-                                remaining: (limit.value as float) - existing_meter.value,
+                                remaining: ((limit.value as float) - existing_meter.value).to_units(stof_units),
                             };
                             await <Event>.send('meter-changed', event_value);
                             if (!res) await <Event>.send('meter-overage', event_value);
+                            if (existing_meter_reset) await <Event>.send('meter-reset', event_value);
                             drop(event_value);
                         }
 
