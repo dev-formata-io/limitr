@@ -14,53 +14,29 @@
 // limitations under the License.
 //
 
+//deno-lint-ignore no-import-prefix no-unversioned-import
 import Anthropic from 'npm:@anthropic-ai/sdk';
-import { claudeModel, customer, policy } from "./limitr.ts";
-const client = new Anthropic({
-    apiKey: 'TOKEN',
-});
+const client = new Anthropic({ apiKey: 'TOKEN' });
 
 
 /**
- * Summarize some text, using Limitr for keeping track.
+ * Get the Claude model for a Limitr customer model, based on metadata.
  */
-export async function summarize(id: string, name: string, message: string): Promise<Record<string, unknown>> {
-    // Get (or create) customer in Limitr Cloud
-    const limitrCustomer = await customer(id, name);
-
-    // Get the claude model to use for this customer given limits (potential downgrades)
-    const model = claudeModel(limitrCustomer);
-
-    // Count the number of tokens we are about to use (free claude service endpoint)
-    const count = await claudeCountTokens(message, model);
-
-    // Check the active policy and do metering (could be a hard limit)
-    const res: Record<string, unknown> = {};
-    if (policy && await policy.allow(id, 'summary_tokens', count)) {
-        res.summary = await claudeSummarize(message, model);
-
-        // add extras just for reference
-        {
-            res.model = model;
-            res.count = count;
-            
-            const limitr = {} as Record<string, unknown>;
-            limitr.meter = await policy.value(id, 'summary_tokens');
-            limitr.remaining = await policy.remaining(id, 'summary_tokens');
-            limitr.limit = await policy.limit(id, 'summary_tokens');
-            res.limitr = limitr;
-        }
-    } else {
-        res.error = 'hard token limit reached: no summary available';
+export function claudeModel(customer: Record<string, unknown>): string {
+    if (!customer.metadata) customer.metadata = { model: 'good' };
+    const meta = customer.metadata as Record<string, unknown>;
+    const state = meta.model as string ?? 'good';
+    switch (state) {
+        case 'good': return 'claude-haiku-4-5-20251001';
+        default: return 'claude-3-haiku-20240307';
     }
-    return res;
 }
 
 
 /**
  * Count tokens with Claude, without incurring any costs.
  */
-async function claudeCountTokens(message: string, model: string = 'claude-haiku-4-5-20251001'): Promise<number> {
+export async function claudeCountTokens(message: string, model: string = 'claude-haiku-4-5-20251001'): Promise<number> {
     const res = await client.messages.countTokens({
         messages: [{ role: 'user', content: message }],
         model,
@@ -73,7 +49,7 @@ async function claudeCountTokens(message: string, model: string = 'claude-haiku-
 /**
  * Summarize some text with Claude.
  */
-async function claudeSummarize(message: string, model: string = 'claude-haiku-4-5-20251001'): Promise<string> {
+export async function claudeSummarize(message: string, model: string = 'claude-haiku-4-5-20251001'): Promise<string> {
     const msg = await client.messages.create({
         max_tokens: 1024,
         messages: [{ role: 'user', content: message }],

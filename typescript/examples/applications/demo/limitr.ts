@@ -14,39 +14,31 @@
 // limitations under the License.
 //
 
+
+// Connect to Limitr Cloud and stay synced with "active" policy
 import { Limitr } from '../../../main.ts';
-
-
-// Active cloud policy.
 export const policy = await Limitr.cloud({ token: 'TOKEN' });
 if (!policy) throw new Error('Could not connect to Limitr Cloud');
 
 
-// Add a handler to the policy for downgrading customer models when overages are hit.
+// Add a local Limitr event handler
 policy.addHandler(async (key: string, value: unknown) => {
     switch (key) {
+        case 'meter-reset':
         case 'meter-overage': {
             const record = JSON.parse(value as string);
             const customer = record.customer as Record<string, unknown>;
             const meta = customer.metadata as Record<string, unknown>;
 
-            if (record.entitlement === 'summary_tokens' && meta.model === 'good') {
-                meta.model = 'bad'; // downgrade model
-                console.log((new Date()).toString(), 'downgrading user model: bad');
-                await policy.setCustomer(customer);
-            }
-            break;
-        }
-        case 'meter-changed': {
-            const record = JSON.parse(value as string);
-            const customer = record.customer as Record<string, unknown>;
-            const meta = customer.metadata as Record<string, unknown>;
+            // downgrade AI models with overage, upgrade with reset
+            if (record.entitlement === 'summary_tokens') {
+                const prev = meta.model ?? 'good';
+                meta.model = key === 'meter-overage' ? 'bad' : 'good';
 
-            const remaining = record.remaining as number;
-            if (record.entitlement === 'summary_tokens' && meta.model === 'bad' && remaining > 0) {
-                meta.model = 'good'; // upgrade model
-                console.log((new Date()).toString(), 'upgrading user model: good');
-                await policy.setCustomer(customer);
+                if (meta.model !== prev) {
+                    console.log(`changing customer "${customer.id}" AI model from "${prev}" to "${meta.model}"`);
+                    await policy.setCustomer(customer);
+                }
             }
             break;
         }
@@ -55,38 +47,25 @@ policy.addHandler(async (key: string, value: unknown) => {
 
 
 /**
- * Get or create a new cloud customer (TEST HELPER: would normally be created in app via signup or something).
+ * Get or create a new cloud customer.
+ * TEST HELPER: customer would normally be created in app via signup or something.
  */
 export async function customer(id: string, name: string): Promise<Record<string, unknown>> {
     if (!policy) throw new Error('no active policy');
 
     let customer: Record<string, unknown> | undefined;
     if (await policy.ensureCustomer(id, 'starter', 'user', name)) {
-        // this customer is brand new (just created)
+        // init new customer
         customer = await policy.customer(id);
         if (customer && !customer.metadata) {
             customer.metadata = { model: 'good' };
             await policy.setCustomer(customer);
         }
     } else {
-        // this customer was added from Limitr Cloud, or already local
+        // already existed in cloud or local
         customer = await policy.customer(id);
     }
 
     if (!customer) throw new Error('unreachable');
     return customer;
-}
-
-
-/**
- * Get the Claude model for this Limitr customer, based on metadata.
- */
-export function claudeModel(customer: Record<string, unknown>): string {
-    if (!customer.metadata) customer.metadata = { model: 'good' };
-    const meta = customer.metadata as Record<string, unknown>;
-    const state = meta.model as string ?? 'good';
-    switch (state) {
-        case 'good': return 'claude-haiku-4-5-20251001';
-        default: return 'claude-3-haiku-20240307';
-    }
 }

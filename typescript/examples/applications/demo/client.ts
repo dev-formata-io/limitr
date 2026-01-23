@@ -20,7 +20,7 @@ for (let i = 0; i < 100; i++) users.push([`usr_${i}`, `User ${i}`]);
 
 const current = 0;
 const message = `
-    How tall was the tallest sand castle on earth?
+    Tell me 5 really good jokes about software.
 `;
 
 const response = await fetch('http://127.0.0.1:4242/summarize', {
