@@ -76,8 +76,8 @@ Entitlement: {
     Limit limit: null;
 
     /// Scope of this entitlement.
-    /// Either "user" or "org" - if "org", will default to looking for an "org" subject when in use.
-    str scope: 'user';
+    /// Must match customer type for operations if defined, will look through customer refs for proper type match.
+    str scope: null;
 
 
     /**

@@ -66,4 +66,4 @@ assertEquals(Math.round(await policy.limit('free_user', 'usage') as number), 100
 assertFalse(await policy.allow('free_user', 'usage', 1 + 'GB'));
 
 // print the entitlement record (can be customer or plan)
-console.log(policy.entitlement('free', 'usage'));
+console.log(await policy.entitlement('free', 'usage'));

@@ -33,8 +33,9 @@ Customer: {
     /// Use Limitr API.
     list! alt_ids: [];
 
-    /// Optional organization customer ID for this user.
-    str org: null;
+    /// Optional references to other customers.
+    /// Used for getting plan info, etc. if not present on this customer.
+    list! refs: [];
 
     /// An optional type of this customer.
     /// Ex. user, org, seat, etc.

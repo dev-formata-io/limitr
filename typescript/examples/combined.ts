@@ -80,12 +80,12 @@ policy:
 await policy.createCustomer('free_org', 'free', 'org', 'Free Org');
 
 // Now lets create a user test customer linked to the org plan, with an additional ID (Stripe customer ID, app ID, API key, etc.)
-await policy.createCustomer('free_user', '', undefined, undefined, 'free_org', ['cus_alt']);
+await policy.createCustomer('free_user', '', undefined, undefined, ['free_org'], ['cus_alt']);
 
 // Now we're all set to track things for the org and user together!
 // Lets increment a few seats on the org first.
-assert(await policy.increment(await policy.customerOrg('free_user') as string, 'seats'));
-assert(await policy.allow(await policy.customerOrg('cus_alt') as string, 'seats', 2));
+assert(await policy.increment('free_org', 'seats'));
+assert(await policy.allow('free_org', 'seats', 2));
 assertFalse(await policy.increment('free_org', 'seats')); // cannot add a 4th seat to the org
 
 // Lets track model tokens individually, not on the org
@@ -106,4 +106,4 @@ assertEquals(await policy.value('cus_alt', 'curie_tokens') as number, 13200); //
 assertFalse(await policy.allow('cus_alt', 'curie_tokens', 7000)); // would be over by 200
 
 // Now lets store our customers (entire state info)
-console.log(policy.customers());
+console.log(await policy.customers());

@@ -226,10 +226,10 @@ export class Limitr {
 
 
     /**
-     * Get the customer organization customer ID if defined.
+     * Get the customer reference IDs for a customer.
      */
-    async customerOrg(id: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_org', id)) as string | null;
+    async customerRefs(id: string): Promise<string[] | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_refs', id)) as string[] | null;
     }
 
 
@@ -247,7 +247,7 @@ export class Limitr {
      * This takes the cloud into consideration as well.
      * Returns true if a new customer was created.
      */
-    async ensureCustomer(id: string, plan: string, type: 'user' | 'org' = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null): Promise<boolean> {
+    async ensureCustomer(id: string, plan: string, type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (existing) return false;
         if (this.ws) {
@@ -268,7 +268,7 @@ export class Limitr {
                 }
             }
         }
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, org, alts));
+        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts));
         return true;
     }
 
@@ -278,8 +278,8 @@ export class Limitr {
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      * Note: prefer ensureCustomer API in case this customer already exists.
      */
-    async createCustomer(id: string, plan: string, type: 'user' | 'org' = 'user', label: string = 'User', org: string | null = null, alts: string[] | null = null) {
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, org, alts));
+    async createCustomer(id: string, plan: string, type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null) {
+        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts));
     }
 
 
@@ -700,7 +700,7 @@ export class Limitr {
                     }
                 } else if (!!record.policy && !!record.policy.plans) {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
-                } else if (record.type === 'user' || record.type === 'org') {
+                } else if (!!record.type && !!record.id) {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));
                 }
             } catch {

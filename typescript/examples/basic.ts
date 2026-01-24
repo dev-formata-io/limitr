@@ -59,7 +59,7 @@ console.log(limitr.plan('paid'));
 
 // Create a test customer to play with
 const sid = 'cus_example_id';
-await limitr.createCustomer(sid, 'free', 'org', 'Formata', null, ['formata']);
+await limitr.createCustomer(sid, 'free', 'org', 'Formata', [], ['formata']);
 
 // Check the seats policy for our customer
 limitr.doc.lib('App', 'meter_limit', (json: string) => {
@@ -95,4 +95,4 @@ entitlements: {
     }
 }
 `);
-console.log(limitr.creditFor(sid, 'seats'));
+console.log(await limitr.creditFor(sid, 'seats'));

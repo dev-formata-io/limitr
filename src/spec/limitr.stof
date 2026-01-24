@@ -233,9 +233,9 @@ Limitr: {
             ?self.get().customer_metadata(id)
         }
 
-        /// Get the customer's org customer ID if defined.
-        fn customer_org(id: str!) -> str {
-            ?self.get().customer_org(id)
+        /// Get the customer refs for the customer ID.
+        fn customer_refs(id: str!) -> list {
+            ?self.get().customer_refs(id)
         }
 
         /// Change a customer's plan ID.
@@ -244,8 +244,8 @@ Limitr: {
         }
 
         /// Create a new customer.
-        fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Customer {
-            ?self.get().create_customer(id, plan, type, label, org, alts)
+        fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', refs?: list, alts?: list) -> Customer {
+            ?self.get().create_customer(id, plan, type, label, refs, alts)
         }
 
         /// Set/create a customer with an id & internal Stof.
@@ -299,7 +299,12 @@ Limitr: {
         const customer = self.customer(customer_id);
         if (customer != null) {
             let pn = self.plans.get(customer.plan);
-            if (pn == null && customer.org != null) pn = self.plan_for(customer.org);
+            if (pn == null && customer.refs.any()) {
+                for (const ref in customer.refs) {
+                    pn = self.plan_for(ref);
+                    if (pn != null) break;
+                }
+            }
             return pn;
         }
         null
@@ -441,12 +446,16 @@ Limitr: {
             }
 
             if (ent != null && limit != null && limit.mode != 'observe') {
-                // check entitlement scope for org customer
-                // so when ent.scope is org, will use "org" customer for meters if present
-                if (ent.scope == 'org' && customer.type != "org") {
-                    if (customer.org == null) return null;
-
-                    customer = self.customer(customer.org);
+                // check entitlement scope for type of customer to use in refs (if different)
+                if (ent.scope != null && ent.scope != customer.type) {
+                    if (customer.refs.empty()) return null;
+                    for (const ref in customer.refs) {
+                        const tmp = self.customer(ref);
+                        if (tmp != null && tmp.type == ent.scope) {
+                            customer = tmp;
+                            break;
+                        }
+                    }
                     if (customer == null) return null;
                 }
 
@@ -471,12 +480,16 @@ Limitr: {
         if (customer != null) {
             const ent = self.entitlement(id, entitlement);
             if (ent != null) {
-                // check entitlement scope for org customer
-                // so when ent.scope is org, will use "org" customer for meters if present
-                if (ent.scope == 'org' && customer.type != "org") {
-                    if (customer.org == null) return null;
-
-                    customer = self.customer(customer.org);
+                // check entitlement scope for type of customer to use in refs (if different)
+                if (ent.scope != null && ent.scope != customer.type) {
+                    if (customer.refs.empty()) return null;
+                    for (const ref in customer.refs) {
+                        const tmp = self.customer(ref);
+                        if (tmp != null && tmp.type == ent.scope) {
+                            customer = tmp;
+                            break;
+                        }
+                    }
                     if (customer == null) return null;
                 }
 
@@ -584,13 +597,17 @@ Limitr: {
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
-                    // check entitlement scope for org customer
-                    // so when ent.scope is org, will use "org" customer for meters if present
-                    if (ent.scope == 'org' && customer.type != "org") {
-                        if (customer.org == null) return false;
-
-                        customer = self.customer(customer.org);
-                        if (customer == null) return false;
+                    // check entitlement scope for type of customer to use in refs (if different)
+                    if (ent.scope != null && ent.scope != customer.type) {
+                        if (customer.refs.empty()) return null;
+                        for (const ref in customer.refs) {
+                            const tmp = self.customer(ref);
+                            if (tmp != null && tmp.type == ent.scope) {
+                                customer = tmp;
+                                break;
+                            }
+                        }
+                        if (customer == null) return null;
                     }
 
                     let existing_meter: Meter = customer.meters.get(entitlement);
@@ -743,13 +760,17 @@ Limitr: {
             if (plan != null) {
                 const ent: Entitlement = plan.entitlements.get(entitlement);
                 if (ent != null) {
-                    // check entitlement scope for org customer
-                    // so when ent.scope is org, will use "org" customer for meters if present
-                    if (ent.scope == 'org' && customer.type != "org") {
-                        if (customer.org == null) return false;
-
-                        customer = self.customer(customer.org);
-                        if (customer == null) return false;
+                    // check entitlement scope for type of customer to use in refs (if different)
+                    if (ent.scope != null && ent.scope != customer.type) {
+                        if (customer.refs.empty()) return null;
+                        for (const ref in customer.refs) {
+                            const tmp = self.customer(ref);
+                            if (tmp != null && tmp.type == ent.scope) {
+                                customer = tmp;
+                                break;
+                            }
+                        }
+                        if (customer == null) return null;
                     }
 
                     const existing_meter: Meter = customer.meters.get(entitlement);
@@ -858,11 +879,11 @@ Limitr: {
 
 
     /**
-     * Get the customer organization customer ID (if defined).
+     * Get the customer refs for this customer ID.
      */
-    fn customer_org(id: str!) -> str {
+    fn customer_refs(id: str!) -> list {
         const sub = self.customer(id);
-        sub != null ? sub.org : null
+        sub != null ? sub.refs : null
     }
 
 
@@ -910,9 +931,14 @@ Limitr: {
     /**
      * Create a customer with an ID and plan ID.
      */
-    fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', org?: str, alts?: list) -> Customer {
+    fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', refs?: list, alts?: list) -> Customer {
         let pn = self.plan(plan);
-        if (pn == null && org != null) pn = self.plan(org);
+        if (pn == null && refs != null) {
+            for (const ref in refs) {
+                pn = self.plan(ref);
+                if (pn != null) break;
+            }
+        }
         if (pn != null) {
 
             // check for existing customer to update
@@ -921,7 +947,7 @@ Limitr: {
                 existing.type = type;
                 existing.label = label;
                 existing.plan = plan;
-                existing.org = org ?? existing.org;
+                existing.refs = refs ?? [];
                 await <Event>.send('customer-set', existing);
                 return existing;
             }
@@ -931,7 +957,7 @@ Limitr: {
                 plan,
                 type,
                 label,
-                org,
+                refs: refs ?? [],
             } on self.customers;
             self.customers.insert(id, customer);
 
