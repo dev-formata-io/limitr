@@ -68,7 +68,7 @@ Limitr: {
                 c.id = id;
                 policy.customers.remove(id, shallow = false);
                 policy.customers.insert(id, c as Customer);
-                for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt);
+                for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt, false);
             } catch {
                 drop(c);
             }
@@ -259,13 +259,13 @@ Limitr: {
         }
 
         /// Set an alternative customer ID (must be unique).
-        fn set_alt_customer_id(id: str!, alt: str!) -> bool {
-            ?self.get().set_alt_customer_id(id, alt)
+        fn set_alt_customer_id(id: str!, alt: str!, event: bool = true) -> bool {
+            ?self.get().set_alt_customer_id(id, alt, event)
         }
 
         /// Delete an alternative customer ID.
-        fn delete_alt_customer_id(alt: str!) -> bool {
-            ?self.get().delete_alt_customer_id(alt)
+        fn delete_alt_customer_id(alt: str!, event: bool = true) -> bool {
+            ?self.get().delete_alt_customer_id(alt, event)
         }
 
         /// Create a new customer override (limit).
@@ -952,7 +952,7 @@ Limitr: {
             }
 
             // init alternative ids
-            if (alts != null) for (const alt in alts) self.set_alt_customer_id(id, alt);
+            if (alts != null) for (const alt in alts) self.set_alt_customer_id(id, alt, false);
 
             await <Event>.send('customer-set', customer);
             return customer;
@@ -975,7 +975,7 @@ Limitr: {
         sub.id = id;
         self.customers.remove(id, shallow = false);
         self.customers.insert(id, sub as Customer);
-        for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt);
+        for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
         if (event) await <Event>.send('customer-set', customer);
         sub
     }
@@ -988,7 +988,7 @@ Limitr: {
         const customer = self.customer(id);
         if (customer != null) {
             await <Event>.send('customer-removed', customer);
-            for (const alt in customer.alt_ids) self.delete_alt_customer_id(alt);
+            for (const alt in customer.alt_ids) self.delete_alt_customer_id(alt, false);
             return self.customers.remove(customer.id);
         }
         false
@@ -998,13 +998,13 @@ Limitr: {
     /**
      * Set an alternative customer ID (must be unique).
      */
-    fn set_alt_customer_id(customer_id: str!, alt_id: str!) -> bool {
+    fn set_alt_customer_id(customer_id: str!, alt_id: str!, event: bool = true) -> bool {
         const customer = self.customer(customer_id);
         if (customer != null) {
             customer.alt_ids.remove_all(alt_id);
             customer.alt_ids.push_back(alt_id);
             self.alt_customer_ids.insert(alt_id, customer_id);
-            await <Event>.send('customer-set', customer);
+            if (event) await <Event>.send('customer-set', customer);
             return true;
         }
         false
@@ -1014,12 +1014,12 @@ Limitr: {
     /**
      * Delete an alternative customer ID.
      */
-    fn delete_alt_customer_id(customer_id: str!) -> bool {
+    fn delete_alt_customer_id(customer_id: str!, event: bool = true) -> bool {
         const customer = self.customer(customer_id);
         const res = self.alt_customer_ids.remove(customer_id);
         if (customer != null) {
             customer.alt_ids.remove_all(customer_id);
-            await <Event>.send('customer-set', customer);
+            if (event) await <Event>.send('customer-set', customer);
         }
         res
     }

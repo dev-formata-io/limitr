@@ -366,16 +366,16 @@ export class Limitr {
     /**
      * Add an alternative customer ID to an existing customer.
      */
-    async addAltID(existing: string, alt: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_alt_customer_id', existing, alt)) as boolean;
+    async addAltID(existing: string, alt: string, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_alt_customer_id', existing, alt, event)) as boolean;
     }
 
 
     /**
      * Remove an alternative customer ID from an existing customer.
      */
-    async removeAltID(alt: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_alt_customer_id', alt)) as boolean;
+    async removeAltID(alt: string, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_alt_customer_id', alt, event)) as boolean;
     }
 
 
@@ -647,12 +647,14 @@ export class Limitr {
         if (this.ws) {
             switch (this.ws.readyState) {
                 case WebSocket.OPEN: {
-                    if (!this.customer(customer) && !await this.addCloudCustomer(customer)) return false;
+                    const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', customer));
+                    if (!existing) return await this.addCloudCustomer(customer);
                     break;
                 }
                 case WebSocket.CONNECTING: {
                     await waitOnOpen(this.ws);
-                    if (!this.customer(customer) && !await this.addCloudCustomer(customer)) return false;
+                    const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', customer));
+                    if (!existing) return await this.addCloudCustomer(customer);
                     break;
                 }
                 case WebSocket.CLOSING:
@@ -684,6 +686,7 @@ export class Limitr {
      * Cloud message received.
      */
     private _deniedCloudCustomers: Set<string> = new Set();
+    private _dataSendQueue: string[] = [];
     //deno-lint-ignore no-explicit-any
     protected async cloudMessageReceived(message: MessageEvent<any>) {
         const data = message.data;
@@ -736,7 +739,24 @@ export class Limitr {
                     return result;
                 }, true);
                 this.doc.lib('CloudWS', 'send', (data: string) => {
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        if (this._dataSendQueue.length > 0) {
+                            for (const data of this._dataSendQueue) this.ws.send(data);
+                            this._dataSendQueue = [];
+                        }
+                        this.ws.send(data);
+                    } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+                        (async (ws: WebSocket) => {
+                            await waitOnOpen(ws);
+                            if (this._dataSendQueue.length > 0) {
+                                for (const data of this._dataSendQueue) ws.send(data);
+                                this._dataSendQueue = [];
+                            }
+                            ws.send(data);
+                        })(this.ws);
+                    } else {
+                        this._dataSendQueue.push(data);
+                    }
                 });
 
                 this.wsInit = true;
