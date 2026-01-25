@@ -97,6 +97,15 @@ export class Limitr {
     }
 
 
+    /**
+     * Call a specific Stof function in this doc by path/name through the gate.
+     * For complex use-cases, create your own StofDoc.
+     */
+    async docCall(path: string, ...args: unknown[]): Promise<unknown> {
+        return await this.gate.run(() => this.doc.call(path, ...args));
+    }
+
+
     /*****************************************************************************
      * Plans API.
      *****************************************************************************/

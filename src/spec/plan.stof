@@ -56,6 +56,9 @@ Plan: {
     /// Entitlements that this plan contains.
     obj! entitlements: {};
 
+    /// Hidden plan?
+    bool hidden: false;
+
 
     /**
      * Price label.

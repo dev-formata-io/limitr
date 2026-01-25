@@ -893,14 +893,28 @@ Limitr: {
      */
     fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
         const sub = self.customer(id);
+        const prev = self.plan_for(id);
         const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
-        if (pn != null && sub != null && sub.plan != plan) {
-            const prev = sub.plan;
+        if (pn != null && sub != null && prev != pn) {
             sub.plan = plan;
 
             // init all plan entitlement meters for this new plan
             // all plan meters are a synced starting point
-            const now = Time.now();
+            let now = Time.now();
+
+            // if not overwritting existing meters, try getting the first meter started on the current plan to set as "now" for new meters
+            // this will mean that the meters will be relatively synced, depending on the new entitlement resets (might be immediately expired which is okay)
+            if (!overwrite_meters && prev != null) {
+                for (const pair in sub.meters.fields()) {
+                    const entitlement = pair[0];
+                    const met: Meter = pair[1];
+                    // prev plan must include the entitlement to prevent ancient syncs
+                    if (prev.entitlements.get(entitlement) != null && met.started < now) {
+                        now = met.started;
+                    }
+                }
+            }
+
             for (const pair in pn.entitlements.fields()) {
                 const name = pair[0];
                 const ent = pair[1];
@@ -920,7 +934,6 @@ Limitr: {
             await <Event>.send_tmp('customer-plan-changed', new {
                 plans: self.plans,
                 customer: sub,
-                previous: prev,
             });
             return true;
         }

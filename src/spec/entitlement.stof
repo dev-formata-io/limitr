@@ -79,6 +79,9 @@ Entitlement: {
     /// Must match customer type for operations if defined, will look through customer refs for proper type match.
     str scope: null;
 
+    /// Hidden entitlement?
+    bool hidden: false;
+
 
     /**
      * Check this entitlement.
