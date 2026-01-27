@@ -27,7 +27,7 @@ Price: {
     str! prefix: '$';
 
     /// Suffix for label.
-    str! suffix: 'per/mo';
+    str! suffix: '/month';
 
     
     /**
@@ -47,6 +47,9 @@ Price: {
  * A Limitr plan.
  */
 Plan: {
+    /// Name for this plan (populated automatically).
+    str name: '';
+
     /// Human-facing label for this plan.
     str! label: '';
 
@@ -58,6 +61,10 @@ Plan: {
 
     /// Hidden plan?
     bool hidden: false;
+
+    /// Is this the default plan?
+    /// If no plan is provided on create customer, this one should be used.
+    bool default: false;
 
 
     /**

@@ -31,8 +31,11 @@ Credit: {
     str! label: 'Credit';
 
     /// Exchange rate (per credit).
-    /// Use however you'd like.
-    float exchange: 1;
+    /// Typically a raw cost/overhead for a single credit.
+    float exchange: 0;
+
+    /// Optional price for this credit (what you charge per credit).
+    Price price: null;
 
     /// Stof units for this credit (ex. 'GB', 'MiB', 'meters', 'kg', etc.).
     /// Anytime this credit is used in metering, these units will be kept for that meter.

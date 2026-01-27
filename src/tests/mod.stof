@@ -38,6 +38,7 @@ Limitr policy: {
     plans: {
         #[type('Free')]
         Plan free: {
+            default: true
             label: 'Free Plan'
             version: 0.1.0-test
             entitlements: {
@@ -109,7 +110,22 @@ Limitr policy: {
 
         self.create_customer('override_user_1', 'free', 'org', 'Overridden Org');
         self.create_customer_override('override_user_1', 'seats', value = 5);
+
+        self.create_customer('default_user', metadata = new { email: 'info@limitr.dev' });
     }
+}
+
+#[test]
+fn default_plans() {
+    const def = self.policy.plan('');
+    assert_eq(def.name, 'free');
+    assert_eq(def, self.policy.plans.free);
+
+    const pf = self.policy.plan_for('default_user');
+    assert_eq(pf, def);
+
+    const email = self.policy.customer_metadata('default_user').email;
+    assert_eq(email, 'info@limitr.dev');
 }
 
 #[test]
@@ -212,7 +228,7 @@ fn unlimited_spend() {
 
     const credit = self.policy.credit_for('cj', 'spend');
     assert_eq(credit.unit, 'token');
-    assert_eq(credit.exchange, 1);
+    assert_eq(credit.exchange, 0);
 }
 
 #[test]

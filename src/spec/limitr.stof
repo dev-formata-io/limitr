@@ -105,8 +105,13 @@ Limitr: {
          *****************************************************************************/
         
         /// Plan from ID (customer ID or plan ID).
-        fn plan(id: str!) -> Plan {
-            ?self.get().plan(id)
+        fn plan(id: str!, default: bool = true) -> Plan {
+            ?self.get().plan(id, default)
+        }
+
+        /// Get the default plan if any.
+        fn default_plan() -> Plan {
+            ?self.get().default_plan()
         }
 
         /// Get a plan price (if any).
@@ -244,8 +249,8 @@ Limitr: {
         }
 
         /// Create a new customer.
-        fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', refs?: list, alts?: list) -> Customer {
-            ?self.get().create_customer(id, plan, type, label, refs, alts)
+        fn create_customer(id: str!, plan: str! = '', type: str! = 'user', label: str! = 'User', refs?: list, alts?: list, metadata?: str | obj) -> Customer {
+            ?self.get().create_customer(id, plan, type, label, refs, alts, metadata)
         }
 
         /// Set/create a customer with an id & internal Stof.
@@ -287,25 +292,50 @@ Limitr: {
     /**
      * Get a plan by ID (either a plan ID or a customer ID).
      */
-    fn plan(id: str!) -> Plan {
-        self.plans.get(id) ?? self.plan_for(id)
+    fn plan(id: str!, default: bool = true) -> Plan {
+        let pn = self.plans.get(id);
+        if (pn != null) {
+            pn.name = id;
+            return pn;
+        }
+        pn = self.plan_for(id, false);
+        if (pn == null && default) pn = self.default_plan();
+        pn
     }
 
 
     /**
      * Get a plan by customer ID.
      */
-    fn plan_for(customer_id: str!) -> Plan {
+    fn plan_for(customer_id: str!, default: bool = true) -> Plan {
         const customer = self.customer(customer_id);
         if (customer != null) {
             let pn = self.plans.get(customer.plan);
+            if (pn != null) pn.name = customer.plan;
+
             if (pn == null && customer.refs.any()) {
                 for (const ref in customer.refs) {
-                    pn = self.plan_for(ref);
+                    pn = self.plan_for(ref, false);
                     if (pn != null) break;
                 }
             }
+            if (pn == null && default) pn = self.default_plan();
             return pn;
+        }
+        null
+    }
+
+
+    /**
+     * Get the (first) default plan in this policy.
+     */
+    fn default_plan() -> Plan {
+        for (const pair in self.plans.fields()) {
+            const plan: Plan = pair[1];
+            if (plan.default) {
+                plan.name = pair[0];
+                return plan;
+            }
         }
         null
     }
@@ -371,6 +401,7 @@ Limitr: {
             drop(plan);
             return null;
         }
+        plan.name = id;
         self.plans.insert(id, plan);
         await <Event>.send('plan-set', plan as Plan);
         plan
@@ -894,9 +925,10 @@ Limitr: {
     fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
         const sub = self.customer(id);
         const prev = self.plan_for(id);
-        const pn = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
+        const pn: Plan = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
         if (pn != null && sub != null && prev != pn) {
             sub.plan = plan;
+            pn.name = plan;
 
             // init all plan entitlement meters for this new plan
             // all plan meters are a synced starting point
@@ -932,7 +964,8 @@ Limitr: {
 
             await <Event>.send('customer-set', sub);
             await <Event>.send_tmp('customer-plan-changed', new {
-                plans: self.plans,
+                previous_plan: prev.id ?? 'default',
+                new_plan: plan,
                 customer: sub,
             });
             return true;
@@ -944,15 +977,29 @@ Limitr: {
     /**
      * Create a customer with an ID and plan ID.
      */
-    fn create_customer(id: str!, plan: str!, type: str! = 'user', label: str! = 'User', refs?: list, alts?: list) -> Customer {
-        let pn = self.plan(plan);
+    fn create_customer(id: str!, plan: str! = '', type: str! = 'user', label: str! = 'User', refs?: list, alts?: list, metadata?: str | obj) -> Customer {
+        let pn = self.plan(plan, default = false);
         if (pn == null && refs != null) {
             for (const ref in refs) {
-                pn = self.plan(ref);
+                pn = self.plan_for(ref, default = false);
                 if (pn != null) break;
             }
         }
+        if (pn == null) pn = self.default_plan();
         if (pn != null) {
+            let meta: obj = null;
+            if (metadata != null) {
+                if ((typeof metadata) == 'str') {
+                    meta = new {};
+                    try parse(metadata, meta, 'stof'); // stof or JSON
+                    catch {
+                        drop(meta);
+                        meta = null;
+                    }
+                } else {
+                    meta = metadata;
+                }
+            }
 
             // check for existing customer to update
             const existing: Customer = self.customers.get(id);
@@ -961,6 +1008,10 @@ Limitr: {
                 existing.label = label;
                 existing.plan = plan;
                 existing.refs = refs ?? [];
+                if (meta != null) {
+                    existing.metadata = meta;
+                    meta.move(existing);
+                }
                 await <Event>.send('customer-set', existing);
                 return existing;
             }
@@ -972,6 +1023,10 @@ Limitr: {
                 label,
                 refs: refs ?? [],
             } on self.customers;
+            if (meta != null) {
+                customer.metadata = meta;
+                meta.move(customer);
+            }
             self.customers.insert(id, customer);
 
             // init all plan entitlement meters for this new customer

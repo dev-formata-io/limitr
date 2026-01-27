@@ -113,8 +113,18 @@ export class Limitr {
     /**
      * Get a plan record by ID (plan ID or customer ID).
      */
-    async plan(id: string): Promise<Record<string, unknown> | undefined> {
-        const planNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan', id));
+    async plan(id: string, def: boolean = true): Promise<Record<string, unknown> | undefined> {
+        const planNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan', id, def));
+        if (typeof planNode === 'string') return this.doc.record(planNode);
+        return undefined;
+    }
+
+
+    /**
+     * Get the default plan if any.
+     */
+    async defaultPlan(): Promise<Record<string, unknown> | undefined> {
+        const planNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.default_plan'));
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
@@ -256,7 +266,7 @@ export class Limitr {
      * This takes the cloud into consideration as well.
      * Returns true if a new customer was created.
      */
-    async ensureCustomer(id: string, plan: string, type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null): Promise<boolean> {
+    async ensureCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (existing) return false;
         if (this.ws) {
@@ -277,7 +287,10 @@ export class Limitr {
                 }
             }
         }
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts));
+        let meta: string | null = null;
+        if (typeof metadata === 'string') meta = metadata;
+        else if (metadata) meta = JSON.stringify(metadata);
+        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta));
         return true;
     }
 
@@ -287,8 +300,11 @@ export class Limitr {
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      * Note: prefer ensureCustomer API in case this customer already exists.
      */
-    async createCustomer(id: string, plan: string, type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null) {
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts));
+    async createCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null) {
+        let meta: string | null = null;
+        if (typeof metadata === 'string') meta = metadata;
+        else if (metadata) meta = JSON.stringify(metadata);
+        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta));
     }
 
 
