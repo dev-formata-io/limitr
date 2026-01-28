@@ -69,6 +69,7 @@ Limitr: {
                 policy.customers.remove(id, shallow = false);
                 policy.customers.insert(id, c as Customer);
                 for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt, false);
+                await <Event>.send('internal-customer-updated', c);
             } catch {
                 drop(c);
             }
@@ -93,6 +94,7 @@ Limitr: {
                     policy.credits = p.policy.credits;
                     p.policy.credits.move(policy);
                 }
+                await <Event>.send('internal-policy-updated');
             } catch {
                 // Nada...
             }

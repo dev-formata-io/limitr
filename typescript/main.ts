@@ -48,14 +48,14 @@ export class Limitr {
     /** Gate. */
     protected gate: LimitrGate = new LimitrGate();
 
-    /** Deny on cloud.limitr.dev connection loss (recommended)? */
+    /** Deny allows if cloud connection interrupted (recommended)? */
     denyUnconnected: boolean = true;
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
     protected wsTimeout?: unknown;
 
-    /** Optional event handler for all Limitr events. */
-    protected eventHandlers: LimitrEventHandler[] = [];
+    /** Optional named event handlers for all Limitr events. */
+    protected eventHandlers: Map<string, LimitrEventHandler> = new Map();
 
 
     /**
@@ -70,13 +70,21 @@ export class Limitr {
 
 
     /**
-     * Add an event handler to this Limitr policy.
+     * Add an event handler by name to this Limitr policy.
      */
-    addHandler(handler: LimitrEventHandler) {
-        this.eventHandlers.push(handler);
+    addHandler(name: string, handler: LimitrEventHandler) {
+        this.eventHandlers.set(name, handler);
         this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
-            for (const handler of this.eventHandlers) handler(key, value);
+            for (const [_, handler] of this.eventHandlers) handler(key, value);
         });
+    }
+
+
+    /**
+     * Remove an event handler by name.
+     */
+    removeHandler(name: string): boolean {
+        return this.eventHandlers.delete(name);
     }
 
 
@@ -84,7 +92,7 @@ export class Limitr {
      * Clear event handlers.
      */
     clearHandlers() {
-        this.eventHandlers = [];
+        this.eventHandlers = new Map();
     }
 
 
