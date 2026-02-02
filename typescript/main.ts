@@ -431,6 +431,23 @@ export class Limitr {
     }
 
 
+    /**
+     * Create a customer credit grant (recommended use in top-ups & one-time purchases).
+     * Grants are applied when overage would occur (soft entitlement limits).
+     * Defaults to a one-time, fixed-value credit grant.
+     * More than one grant with the same "credit" can exist alongside one another.
+     * Do not sync grants up with plans - if a plan includes a credit grant, just set a soft limit value (same thing).
+     *
+     * Ex. a soft limit of 5k tokens + a grant of 2k tokens would result in the customer
+     * getting overage events (meter-overage) after 7k tokens spent.
+     *
+     * @returns true when the customer & credit exists, meaning the grant has been applied.
+     */
+    async create_customer_credit_grant(id: string, credit: string, value: number | string, resets: boolean = false, reset_inc?: number | string, expires_on?: number): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_credit_grant', id, credit, value, resets, reset_inc ?? null, expires_on ?? null)) as boolean;
+    }
+
+
     /*****************************************************************************
      * Entitlements API.
      *****************************************************************************/
@@ -716,10 +733,35 @@ export class Limitr {
 
 
     /**
+     * Send on the cloud WebSocket if enabled.
+     */
+    private _dataSendQueue: string[] = [];
+    wsSend(data: string) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            if (this._dataSendQueue.length > 0) {
+                for (const data of this._dataSendQueue) this.ws.send(data);
+                this._dataSendQueue = [];
+            }
+            this.ws.send(data);
+        } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+            (async (ws: WebSocket) => {
+                await waitOnOpen(ws);
+                if (this._dataSendQueue.length > 0) {
+                    for (const data of this._dataSendQueue) ws.send(data);
+                    this._dataSendQueue = [];
+                }
+                ws.send(data);
+            })(this.ws);
+        } else {
+            this._dataSendQueue.push(data);
+        }
+    }
+
+
+    /**
      * Cloud message received.
      */
     private _deniedCloudCustomers: Set<string> = new Set();
-    private _dataSendQueue: string[] = [];
     //deno-lint-ignore no-explicit-any
     protected async cloudMessageReceived(message: MessageEvent<any>) {
         const data = message.data;
@@ -733,6 +775,8 @@ export class Limitr {
                     }
                 } else if (!!record.policy && !!record.policy.plans) {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_policy_internals', data, 'json'));
+                } else if (record.type === 'customer-invoices' && !!record.data.invoices && !!record.id) {
+                    await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_customer_invoices', data, 'json'));
                 } else if (!!record.type && !!record.id) {
                     await this.gate.run(() => this.doc.sync_call('<Limitr>.api.update_customer_internals', data, 'json'));
                 }
@@ -772,24 +816,7 @@ export class Limitr {
                     return result;
                 }, true);
                 this.doc.lib('CloudWS', 'send', (data: string) => {
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                        if (this._dataSendQueue.length > 0) {
-                            for (const data of this._dataSendQueue) this.ws.send(data);
-                            this._dataSendQueue = [];
-                        }
-                        this.ws.send(data);
-                    } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
-                        (async (ws: WebSocket) => {
-                            await waitOnOpen(ws);
-                            if (this._dataSendQueue.length > 0) {
-                                for (const data of this._dataSendQueue) ws.send(data);
-                                this._dataSendQueue = [];
-                            }
-                            ws.send(data);
-                        })(this.ws);
-                    } else {
-                        this._dataSendQueue.push(data);
-                    }
+                    this.wsSend(data);
                 });
 
                 this.wsInit = true;

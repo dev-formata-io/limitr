@@ -22,7 +22,7 @@ if (!policy) throw new Error('Could not connect to Limitr Cloud');
 
 
 // Add a local Limitr event handler
-policy.addHandler(async (key: string, value: unknown) => {
+policy.addHandler('handler', async (key: string, value: unknown) => {
     switch (key) {
         case 'meter-reset':
         case 'meter-overage': {

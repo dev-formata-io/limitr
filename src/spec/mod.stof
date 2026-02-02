@@ -20,4 +20,5 @@ import './credit';
 import './customer';
 import './entitlement';
 import './meter';
+import './grant';
 import './limitr';

@@ -33,6 +33,11 @@ Limitr policy: {
             label: 'Megabytes'
             stof_units: 'MB'
         }
+
+        Credit overage_token: {
+            description: 'A token for overage'
+            stof_units: 'int'
+        }
     }
 
     plans: {
@@ -70,6 +75,14 @@ Limitr policy: {
                         reset_inc: 30days // 1GB per month, tracked in MB
                     }
                 }
+                Entitlement overage_spend: {
+                    description: 'A test entitlement for overage credit grants'
+                    Limit limit: {
+                        credit: 'overage_token'
+                        value: 0 // immediate overage
+                        mode: 'soft'
+                    }
+                }
             }
         }
 
@@ -100,6 +113,7 @@ Limitr policy: {
         }
     }
 
+
     #[init]
     fn init_test_customers() {
         self.create_customer('me', 'paid', alts=['cj']);
@@ -112,6 +126,29 @@ Limitr policy: {
         self.create_customer_override('override_user_1', 'seats', value = 5);
 
         self.create_customer('default_user', metadata = new { email: 'info@limitr.dev' });
+
+        self.create_customer('overage_user', label='Overage User');
+    }
+
+
+    #[meter-overage]
+    /// Simulate the overage counters for soft usage on 'overage_user'.
+    fn meter_overage_event_handler(event_value: obj) {
+        const customer = event_value.customer;
+        const entitlement = event_value.entitlement;
+        if (customer.id == 'overage_user' && entitlement == 'overage_spend') {
+            if (customer.metadata) {
+                if (customer.metadata.overage) {
+                    customer.metadata.overage += event_value.overage;
+                } else {
+                    customer.metadata.overage = event_value.overage;
+                }
+            } else {
+                customer.metadata = new {
+                    overage: event_value.overage;
+                } on customer;
+            }
+        }
     }
 }
 
@@ -126,6 +163,27 @@ fn default_plans() {
 
     const email = self.policy.customer_metadata('default_user').email;
     assert_eq(email, 'info@limitr.dev');
+}
+
+#[test]
+fn credit_grant_overage() {
+    const user = 'overage_user';
+    const ent = 'overage_spend';
+    const customer = self.policy.customer(user);
+    assert(customer);
+
+    assert(self.policy.allow(user, ent, 5));
+    assert_eq(customer.metadata.overage, 5); // soft limit of 0
+
+    // lets give our user a grant of credits
+    assert(self.policy.create_customer_credit_grant(user, 'overage_token', 300));
+    assert(self.policy.allow(user, ent, 200));
+    assert_eq(customer.metadata.overage, 5);
+    assert_eq(customer.grants[0][1].value, 100); // 100 remaining on the grant
+
+    assert(self.policy.allow(user, ent, 200));
+    assert_eq(customer.metadata.overage, 105); // all time overage of 105
+    assert_not(customer.grants[0]); // ont-time grant was used up completely!
 }
 
 #[test]

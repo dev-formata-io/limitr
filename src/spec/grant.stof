@@ -1,0 +1,47 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * A Limitr credit grant.
+ * These are placed on customers and used when 'meter-overage' would occur (soft limits).
+ */
+Grant: {
+    /// Grant ID (customer grants key).
+    str! id: '';
+
+    /// Credit ID.
+    str! credit: '';
+
+    /// Granted on timestamp.
+    ms! granted_on: 0;
+
+    /// Starting value of this grant (for reset).
+    float | str starting_value: 0;
+
+    /// Current value of this grant (in units of the credit).
+    float value: 0;
+
+    /// Does this grant reset after a period of time?
+    bool resets: false;
+
+    /// What is the increment to reset with (if resets).
+    ms reset_inc: 30days;
+
+    /// Does this grant expire?
+    ms expires_on: null;
+}

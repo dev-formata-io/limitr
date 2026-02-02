@@ -53,6 +53,9 @@ Customer: {
     /// Entitlement -> Limit.
     obj! overrides: {};
 
+    /// Credit grants for this customer.
+    obj! grants: {};
+
     /// Optional metadata object for this customer.
     obj metadata: null;
 
@@ -65,5 +68,60 @@ Customer: {
         self.overrides.remove(entitlement, shallow = false);
         self.overrides.insert(entitlement, limit);
         limit.move(self.overrides);
+    }
+
+
+    /**
+     * Try using a grant on this customer before sending meter-overage.
+     * Returns true if there is still overage to be applied to the customers account (grants were used up/not there).
+     */
+    fn apply_overage_grants(credit: str!, event_value: obj!, stof_units: str!) -> bool {
+        const fields = self.grants.fields();
+        if (fields.empty()) return true; // no grants present, send overage event
+
+        let overage = event_value.overage;
+        if (overage == null) return false; // no overage recorded, don't send event
+
+        if (overage > 0) {
+            let grant_value_applied = 0;
+            const ids_to_remove = [];
+            const now = Time.now();
+            for (const pair in fields) {
+                const id = pair[0];
+                const grant: Grant = pair[1];
+
+                // Is this grant expired?
+                if (grant.expires_on != null && grant.expires_on < now) {
+                    ids_to_remove.push_back(id);
+                } else {
+                    // Should this grant value be reset?
+                    if (grant.resets && (grant.granted_on + grant.reset_inc) <= now) {
+                        while ((now - grant.granted_on) > grant.reset_inc) grant.granted_on += grant.reset_inc;
+                        grant.value = (grant.starting_value as float).to_units(stof_units);
+                    }
+
+                    // Does this grant match this credit?
+                    if (overage > 0 && grant.credit == credit) {
+                        if (overage < grant.value) {
+                            grant.value -= overage;
+                            grant_value_applied += overage;
+                            overage = 0;
+                        } else {
+                            overage -= grant.value;
+                            grant_value_applied += grant.value;
+                            grant.value = 0;
+                        }
+                    }
+
+                    // If the grant has been completely used and doesn't reset, remove it
+                    if (grant.value <= 0 && !grant.resets) ids_to_remove.push_back(id);
+                }
+            }
+            for (const id in ids_to_remove) self.grants.remove(id, shallow = false);
+            event_value.grant_value_applied = grant_value_applied;
+        }
+
+        event_value.overage = max(0, overage);
+        overage > 0
     }
 }

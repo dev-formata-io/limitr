@@ -20,6 +20,9 @@
  * A Limitr object.
  */
 Limitr: {
+    /// Limitr version.
+    ver version: 0.5.9;
+
     /// Credits.
     obj credits: {};
 
@@ -34,6 +37,7 @@ Limitr: {
 
 
     #[no-export]
+    #[type_ignore]
     /**
      * Static API.
      * <Limitr>.api.get();
@@ -54,6 +58,26 @@ Limitr: {
                 }
             }
             null
+        }
+
+
+        /// Set customer invoices data within this policy.
+        fn update_customer_invoices(content: str!, format: str! = 'json') {
+            const policy = self.get();
+            if (policy == null) return;
+            const i = new {} on policy;
+            try {
+                parse(content, i, format);
+                const id = i.id ?? nanoid();
+                i.id = id;
+                if (policy.invoices == null) policy.invoices = new {} on policy;
+                policy.invoices.remove(id, shallow = false);
+                i.move(policy.invoices);
+                policy.invoices.insert(id, i);
+                await <Event>.send('internal-customer-invoices-updated', i);
+            } catch {
+                drop(i);
+            }
         }
 
 
@@ -283,6 +307,11 @@ Limitr: {
         /// Remove a customer override (limit).
         fn remove_customer_override(id: str!, entitlement: str!) -> bool {
             ?self.get().remove_customer_override(id, entitlement)
+        }
+        
+        /// Create a customer credit grant.
+        fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms) -> bool {
+            ?self.get().create_customer_credit_grant(customer_id, credit, value, resets, reset_inc, expires_on)
         }
     }
 
@@ -692,17 +721,24 @@ Limitr: {
                             const event_value = new {
                                 meter: new {
                                     old: old_value,
-                                    value: existing_meter.value,
+                                    value: new_value,
                                 },
                                 customer,
                                 entitlement,
                                 plan,
                                 credit,
-                                remaining: ((limit.value as float) - existing_meter.value).to_units(stof_units),
+                                remaining: (limit.value as float).to_units(stof_units) - new_value,
                             };
-                            await <Event>.send('meter-changed', event_value);
-                            if (!res) await <Event>.send('meter-overage', event_value);
+                            if (!res) {
+                                // contemplate credit grants for this customer before sending overage amount
+                                // grants will modify event_value.overage for appropriate aggregation in the correct units
+                                event_value.overage = new_value > old_value ? new_value - old_value : new_value - (event_value.remaining + new_value);
+                                if (customer.apply_overage_grants(limit.credit, event_value, stof_units)) {
+                                    await <Event>.send('meter-overage', event_value);
+                                }
+                            }
                             if (existing_meter_reset) await <Event>.send('meter-reset', event_value);
+                            await <Event>.send('meter-changed', event_value); // meter-changed at the end for saves
                             drop(event_value);
                         }
 
@@ -1122,7 +1158,7 @@ Limitr: {
 
 
     /**
-     * Create a customer override (limit).
+     * Create a customer limit override.
      * Overrides are specific to customers, and they override the default
      * entitlement limit for that customer.
      *
@@ -1177,5 +1213,33 @@ Limitr: {
             return removed;
         }
         false
+    }
+
+
+    /**
+     * Create a customer credit grant.
+     * Grants are applied when overage would occur (soft entitlement limits).
+     * Defaults to a one-time, fixed-value credit grant.
+     *
+     * Ex. a soft limit of 5k tokens + a grant of 2k tokens would result in the customer
+     * getting overage events (meter-overage) after 7k tokens spent.
+     */
+    fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms) -> bool {
+        const customer = self.customer(customer_id);
+        const cred = self.credit(credit);
+        if (customer == null || cred == null) return false;
+
+        const grant = new Grant {
+            id: 'lgt_' + nanoid(14),
+            credit,
+            granted_on: Time.now(),
+            starting_value: value,
+            value: (value as float).to_units(cred.stof_units ?? 'float'),
+            resets,
+            reset_inc: reset_inc ?? 30days,
+            expires_on,
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        true
     }
 }
