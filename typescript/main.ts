@@ -648,11 +648,19 @@ export class Limitr {
             if (!limitr.ws || limitr.ws.readyState === WebSocket.CLOSED || limitr.ws.readyState === WebSocket.CLOSING) {
                 await reconnect();
             } else if (limitr.ws.readyState === WebSocket.OPEN) {
+                if (limitr._dataSendQueue.length > 0) {
+                    for (const data of limitr._dataSendQueue) limitr.ws.send(data);
+                    limitr._dataSendQueue = [];
+                }
                 limitr.ws.send('ping');
             }
             limitr.wsTimeout = setTimeout(ping, 20000);
         };
         limitr.wsTimeout = setTimeout(ping, 20000);
+        if (limitr._dataSendQueue.length > 0 && limitr.ws.readyState === WebSocket.OPEN) {
+            for (const data of limitr._dataSendQueue) limitr.ws.send(data);
+            limitr._dataSendQueue = [];
+        }
         return limitr;
     }
 
@@ -736,7 +744,7 @@ export class Limitr {
      * Send on the cloud WebSocket if enabled.
      */
     private _dataSendQueue: string[] = [];
-    wsSend(data: string) {
+    async wsSend(data: string) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             if (this._dataSendQueue.length > 0) {
                 for (const data of this._dataSendQueue) this.ws.send(data);
@@ -744,14 +752,12 @@ export class Limitr {
             }
             this.ws.send(data);
         } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
-            (async (ws: WebSocket) => {
-                await waitOnOpen(ws);
-                if (this._dataSendQueue.length > 0) {
-                    for (const data of this._dataSendQueue) ws.send(data);
-                    this._dataSendQueue = [];
-                }
-                ws.send(data);
-            })(this.ws);
+            await waitOnOpen(this.ws);
+            if (this._dataSendQueue.length > 0) {
+                for (const data of this._dataSendQueue) this.ws.send(data);
+                this._dataSendQueue = [];
+            }
+            this.ws.send(data);
         } else {
             this._dataSendQueue.push(data);
         }
