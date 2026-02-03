@@ -321,7 +321,7 @@ export class Limitr {
      * This takes the cloud into consideration as well.
      * Returns true if a new customer was created.
      */
-    async ensureSetCustomer(customer: string | Record<string, unknown>): Promise<boolean> {
+    async ensureSetCustomer(customer: string | Record<string, unknown>, event: boolean = true): Promise<boolean> {
         const record = typeof customer === 'string' ? JSON.parse(customer) : customer;
         const id = record.id as string;
         if (!id) throw new Error('Ensure setting a customer expects a customer record with an ID');
@@ -346,7 +346,7 @@ export class Limitr {
                 }
             }
         }
-        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', JSON.stringify(record), true)) as string | null;
+        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', JSON.stringify(record), event)) as string | null;
         return !!res;
     }
 
@@ -355,9 +355,9 @@ export class Limitr {
      * Set a customer on this policy by ID.
      * Returns a node ID to the resulting Customer.
      */
-    async setCustomer(customer: string | Record<string, unknown>): Promise<string | null> {
+    async setCustomer(customer: string | Record<string, unknown>, event: boolean = true): Promise<string | null> {
         const customerStof = typeof customer === 'string' ? customer : JSON.stringify(customer);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', customerStof, true)) as string | null;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', customerStof, event)) as string | null;
     }
 
 
