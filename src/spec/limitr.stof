@@ -427,8 +427,9 @@ Limitr: {
     fn set_plan(id: str!, internal_stof: str!) -> Plan {
         self.delete_plan(id);
         const plan = new {} on self.plans;
-        try parse(internal_stof, plan, 'stof');
-        catch {
+        try {
+            parse(internal_stof, plan, 'stof');
+        } catch {
             drop(plan);
             return null;
         }
@@ -1029,8 +1030,9 @@ Limitr: {
             if (metadata != null) {
                 if ((typeof metadata) == 'str') {
                     meta = new {};
-                    try parse(metadata, meta, 'stof');
-                    catch {
+                    try {
+                        parse(metadata, meta, 'stof');
+                    } catch {
                         drop(meta);
                         meta = null;
                     }
@@ -1098,8 +1100,9 @@ Limitr: {
      */
     fn set_customer(stof: str!, event: bool = true) -> Customer {
         const sub = new {} on self.customers;
-        try parse(stof, sub, 'stof');
-        catch {
+        try {
+            parse(stof, sub, 'stof');
+        } catch {
             drop(sub);
             return null;
         }
@@ -1108,7 +1111,7 @@ Limitr: {
         self.customers.remove(id, shallow = false);
         self.customers.insert(id, sub as Customer);
         for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
-        if (event) await <Event>.send('customer-set', customer);
+        if (event) await <Event>.send('customer-set', sub);
         sub
     }
 
