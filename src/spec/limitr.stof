@@ -1029,7 +1029,7 @@ Limitr: {
             if (metadata != null) {
                 if ((typeof metadata) == 'str') {
                     meta = new {};
-                    try parse(metadata, meta, 'stof'); // stof or JSON
+                    try parse(metadata, meta, 'stof');
                     catch {
                         drop(meta);
                         meta = null;
