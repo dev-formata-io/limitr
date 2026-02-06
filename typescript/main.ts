@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { StofDoc } from "@formata/stof";
+import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
 
@@ -63,6 +63,9 @@ export class Limitr {
      * Make sure StofDoc.initialize() has been called for Stof first.
      */
     constructor(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof') {
+        if (!isStofInitialized()) {
+            console.warn('Warning: Limitr created before Stof initialization. Call await initStof() or use Limitr.new() instead.');
+        }
         this.doc = new StofDoc();
         this.doc.parse(limitrApi, 'bstf');
         this.doc.parse(policy, format);
@@ -100,7 +103,7 @@ export class Limitr {
      * Async constructor that ensures Stof wasm initialization.
      */
     static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
-        await StofDoc.initialize();
+        await initStof();
         return new Limitr(policy, format);
     }
 
