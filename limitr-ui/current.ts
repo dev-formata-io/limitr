@@ -17,7 +17,7 @@
 import { customElement, property, state } from "lit/decorators.js";
 import { LimitrElement } from './element.js';
 import { css, type CSSResult, html, nothing } from "lit";
-import './table.ts';
+import './table.js';
 
 
 /**
