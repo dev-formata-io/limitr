@@ -15,8 +15,8 @@
 //
 
 import { StofDoc } from "@formata/stof";
-import { limitrApi } from "./limitr.ts";
-import { LimitrGate, waitOnOpen } from "./gate.ts";
+import { limitrApi } from "./limitr.js";
+import { LimitrGate, waitOnOpen } from "./gate.js";
 
 
 /**
@@ -816,7 +816,9 @@ export class Limitr {
                     const result = new Map<string, unknown>();
                     result.set('status', response.status);
                     result.set('ok', response.ok);
-                    result.set('headers', new Map(response.headers));
+                    const headerMap = new Map();
+                    response.headers.forEach((value, key) => headerMap.set(key, value));
+                    result.set('headers', headerMap);
                     result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
                     result.set('bytes', await response.bytes());
                     return result;

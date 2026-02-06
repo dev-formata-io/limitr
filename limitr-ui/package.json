@@ -1,0 +1,42 @@
+{
+    "name": "@formata/limitr-ui",
+    "version": "0.1.0",
+    "type": "module",
+    "main": "./dist/mod.js",
+    "types": "./dist/mod.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/mod.d.ts",
+            "default": "./dist/mod.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "prepublishOnly": "npm run build",
+        "clean": "rimraf dist"
+    },
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dev-formata-io/limitr"
+    },
+    "homepage": "https://limitr.dev",
+    "dependencies": {
+        "@formata/limitr": "^0.5.13",
+        "lit": "^3.3.2",
+        "nanoid": "^5.1.6"
+    },
+    "devDependencies": {
+        "cpy-cli": "^7.0.0",
+        "rimraf": "^6.1.2",
+        "typescript": "^5.3.3"
+    },
+    "keywords": [
+        "limitr"
+    ]
+}

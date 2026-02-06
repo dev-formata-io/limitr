@@ -1,0 +1,40 @@
+{
+    "name": "@formata/limitr",
+    "version": "0.5.13",
+    "type": "module",
+    "main": "./dist/main.js",
+    "types": "./dist/main.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/main.d.ts",
+            "default": "./dist/main.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "prepublishOnly": "npm run build",
+        "clean": "rimraf dist"
+    },
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dev-formata-io/limitr"
+    },
+    "homepage": "https://limitr.dev",
+    "dependencies": {
+        "@formata/stof": "^0.9.6"
+    },
+    "devDependencies": {
+        "cpy-cli": "^7.0.0",
+        "rimraf": "^6.1.2",
+        "typescript": "^5.3.3"
+    },
+    "keywords": [
+        "limitr"
+    ]
+}
