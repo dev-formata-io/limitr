@@ -568,7 +568,6 @@ export class LimitrPricingTable extends LimitrElement {
             'GB', 'MB', 'KB', 'TB', 'MiB', 'GiB', 'KiB', 'TiB',
             'ms', 'seconds', 'minutes', 'hours', 'days'
         ];
-        
         if (nonPluralUnits.includes(unit)) {
             return unit;
         }
@@ -585,7 +584,6 @@ export class LimitrPricingTable extends LimitrElement {
             'member': 'members',
             'item': 'items'
         };
-        
         if (irregularPlurals[unit.toLowerCase()]) {
             return irregularPlurals[unit.toLowerCase()];
         }
@@ -604,14 +602,14 @@ export class LimitrPricingTable extends LimitrElement {
         if (!limit || limit.value === undefined) return 'Unlimited';
         
         const credit = this.getCredit(creditName);
-        const value = limit.value;
+        const value = this.stofHelpers ? this.stofHelpers.sync_call('get_number_limit', limit.value, credit.stof_units ?? 'float') : limit.value;
         
         if (credit && credit.stof_units && credit.stof_units !== 'float' && credit.stof_units !== 'int') {
             return `${value} ${credit.stof_units}`;
         }
         
-        if (credit && credit.unit) {
-            const pluralizedUnit = this.pluralizeUnit(credit.unit, value);
+        if (credit && credit.label) {
+            const pluralizedUnit = this.pluralizeUnit(credit.label, value);
             return `${value} ${pluralizedUnit}`;
         }
         

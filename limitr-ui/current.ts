@@ -17,7 +17,6 @@
 import { customElement, property, state } from "lit/decorators.js";
 import { LimitrElement } from './element.js';
 import { css, type CSSResult, html, nothing } from "lit";
-import { StofDoc, isStofInitialized, stof } from '@formata/stof';
 import './table.js';
 
 
@@ -81,8 +80,6 @@ export class LimitrCurrentPlan extends LimitrElement {
 
     @state()
     private showPricingTable: boolean = false;
-
-    private stofHelpers?: StofDoc;
 
 
     /**
@@ -575,20 +572,6 @@ export class LimitrCurrentPlan extends LimitrElement {
 
     override async updated(changedProperties: Map<string | number | symbol, unknown>) {
         await super.updated(changedProperties);
-
-        // Unit helpers for usage/limits
-        if (this.stofHelpers === undefined && isStofInitialized()) {
-            this.stofHelpers = stof`
-                fn eval_reset(elapsed: float, reset_inc: float | str) -> float {
-                    const inc = reset_inc as ms;
-                    inc - elapsed
-                }
-
-                fn get_number_limit(limit: float | str, units: str = 'float') -> float {
-                    (limit as float).to_units(units).round(2)
-                }
-            `;
-        }
 
         if (changedProperties.has('policy')) {
             // Re-register handler if policy changed (including first time it's set)

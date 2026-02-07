@@ -17,6 +17,7 @@
 import { LitElement, type PropertyValues } from "lit";
 import { property } from "lit/decorators.js";
 import type { Limitr } from '@formata/limitr';
+import { StofDoc, isStofInitialized, stof } from '@formata/stof';
 import { nanoid } from 'nanoid';
 
 
@@ -48,12 +49,29 @@ export class LimitrElement extends LitElement {
     /** Track if we've requested invoices */
     private invoicesRequested: boolean = false;
 
+    /** Stof helpers. */
+    protected stofHelpers?: StofDoc;
+
 
     /**
      * Updated.
      */
     override async updated(changedProperties: PropertyValues) {
         super.updated(changedProperties);
+
+        // Unit helpers for usage/limits
+        if (this.stofHelpers === undefined && isStofInitialized()) {
+            this.stofHelpers = stof`
+                fn eval_reset(elapsed: float, reset_inc: float | str) -> float {
+                    const inc = reset_inc as ms;
+                    inc - elapsed
+                }
+
+                fn get_number_limit(limit: float | str, units: str = 'float') -> float {
+                    (limit as float).to_units(units).round(2)
+                }
+            `;
+        }
 
         if (changedProperties.has('policy')) {
             const oldPolicy = changedProperties.get('policy');
@@ -122,6 +140,10 @@ export class LimitrElement extends LitElement {
         super.disconnectedCallback();
         if (this.policy) {
             this.policy.removeHandler(this.policyHandlerId);
+        }
+        if (this.stofHelpers) {
+            this.stofHelpers.dispose();
+            this.stofHelpers = undefined;
         }
     }
 
