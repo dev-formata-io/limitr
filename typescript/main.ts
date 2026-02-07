@@ -275,7 +275,7 @@ export class Limitr {
     /**
      * Ensure that a customer exists, creating one if necessary.
      * This takes the cloud into consideration as well.
-     * Returns true if a new customer was created.
+     * Returns true if a new customer was created (one will always exist after this).
      */
     async ensureCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
@@ -669,14 +669,20 @@ export class Limitr {
 
 
     /**
-     * Add a customer from the cloud.
-     * Default is to wait 3 seconds before moving on.
+     * Add a customer from Limitr Cloud if not already local.
+     *
+     * @param id The customer ID (or alternative ID) to add from Limitr Cloud.
+     * @param timeout The max amount of time to wait for the customer to arrive locally.
+     * @returns true if the customer exists and is ready to interact with.
      */
     async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
-        if (existing || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        if (existing) return true;
+
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         this._deniedCloudCustomers.delete(id);
         this.ws.send(JSON.stringify({ type: 'customer', id }));
+        
         return new Promise<boolean>((resolve) => {
             const intervalMs = 50;
             const start = Date.now();
@@ -730,7 +736,7 @@ export class Limitr {
 
 
     /**
-     * Close connection to cloud.limitr.dev.
+     * Close connection to Limitr Cloud.
      */
     close() {
         //@ts-ignore timeout
