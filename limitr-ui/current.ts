@@ -17,6 +17,7 @@
 import { customElement, property, state } from "lit/decorators.js";
 import { LimitrElement } from './element.js';
 import { css, type CSSResult, html, nothing } from "lit";
+import { StofDoc, isStofInitialized, stof } from '@formata/stof';
 import './table.js';
 
 
@@ -80,6 +81,8 @@ export class LimitrCurrentPlan extends LimitrElement {
 
     @state()
     private showPricingTable: boolean = false;
+
+    private stofHelpers?: StofDoc;
 
 
     /**
@@ -573,6 +576,20 @@ export class LimitrCurrentPlan extends LimitrElement {
     override async updated(changedProperties: Map<string | number | symbol, unknown>) {
         await super.updated(changedProperties);
 
+        // Unit helpers for usage/limits
+        if (this.stofHelpers === undefined && isStofInitialized()) {
+            this.stofHelpers = stof`
+                fn eval_reset(elapsed: float, reset_inc: float | str) -> float {
+                    const inc = reset_inc as ms;
+                    inc - elapsed
+                }
+
+                fn get_number_limit(limit: float | str, units: str = 'float') -> float {
+                    (limit as float).to_units(units)
+                }
+            `;
+        }
+
         if (changedProperties.has('policy')) {
             // Re-register handler if policy changed (including first time it's set)
             //deno-lint-ignore no-explicit-any
@@ -792,7 +809,7 @@ export class LimitrCurrentPlan extends LimitrElement {
         if (!limit || limit.value === undefined) return 'Unlimited';
         
         const credit = this.getCredit(creditName);
-        const value = limit.value;
+        const value = this.stofHelpers ? this.stofHelpers.sync_call('get_number_limit', limit.value, credit.stof_units ?? 'float') : limit.value;
         
         if (credit && credit.stof_units && credit.stof_units !== 'float' && credit.stof_units !== 'int') {
             return `${value} ${credit.stof_units}`;
@@ -826,7 +843,11 @@ export class LimitrCurrentPlan extends LimitrElement {
     //deno-lint-ignore no-explicit-any
     private getUsagePercentage(usage: number, limit: any): number {
         if (!limit || limit.value === undefined) return 0;
-        const limitValue = typeof limit.value === 'string' ? parseFloat(limit.value) : limit.value;
+
+        const credit = this.getCredit(limit.credit);
+        const value = this.stofHelpers ? this.stofHelpers.sync_call('get_number_limit', limit.value, credit.stof_units ?? 'float') : limit.value;
+
+        const limitValue = typeof value === 'string' ? parseFloat(value) : value;
         return Math.min(100, (usage / limitValue) * 100);
     }
 
@@ -916,8 +937,14 @@ export class LimitrCurrentPlan extends LimitrElement {
                     //deno-lint-ignore no-explicit-any
                     usageItems.map(([entName, entitlement]: [string, any]) => {
                     const limit = entitlement.limit;
-                    const usage = meters[entName]?.value || 0;
-                    const percentage = this.getUsagePercentage(usage, limit);
+                    let usage = meters[entName]?.value || 0;
+                    
+                    const started = meters[entName]?.started || Date.now();
+                    const elapsed = Date.now() - started;
+                    const resetTime = this.stofHelpers?.sync_call('eval_reset', elapsed, limit.reset_inc ?? '30days') as number ?? 0;
+                    if (resetTime < 0) usage = 0; // expired and will reset, but hasn't been yet
+
+                    const percentage = resetTime >= 0 ? this.getUsagePercentage(usage, limit) : 0;
                     const usageClass = this.getUsageClass(percentage);
 
                     return html`
