@@ -25,10 +25,33 @@ This breaks down with usage-based pricing, AI products, and self-hosted deployme
 
 **Limitr separates policy from code** so limits are explicit, testable, and easy to evolve.
 
-## Quick Start (Local)
-```typescript
+## Install
+```bash
 npm install @formata/limitr
 ```
+
+### Initialization
+Limitr uses [Stof](https://docs.stof.dev) for policy enforcement (@formata/stof). This is sandboxed WebAssembly, and needs to be initialized once before use.
+
+> This step is for font-end (browser) apps only. For Node.js, Deno, & Bun, this step is handled automatically by Limitr (you can skip this).
+
+```typescript
+// Vite
+import { initStof } from '@formata/stof';
+import stofWasm from '@formata/stof/wasm?url';
+await initStof(stofWasm);
+
+// Browser with bundler - Pass WASM explicitly (e.g. @rollup/plugin-wasm)
+import { initStof } from '@formata/stof';
+import stofWasm from '@formata/stof/wasm';
+await initStof(await stofWasm());
+
+// Node.js, Deno, & Bun - Auto-detects and loads WASM (you can skip this though, Limitr does it)
+import { initStof } from '@formata/stof';
+await initStof();
+```
+
+## Quick Start (Local)
 ```typescript
 import { Limitr } from '@formata/limitr';
 
