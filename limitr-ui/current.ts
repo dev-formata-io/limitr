@@ -585,7 +585,7 @@ export class LimitrCurrentPlan extends LimitrElement {
                 }
 
                 fn get_number_limit(limit: float | str, units: str = 'float') -> float {
-                    (limit as float).to_units(units)
+                    (limit as float).to_units(units).round(2)
                 }
             `;
         }
@@ -718,7 +718,6 @@ export class LimitrCurrentPlan extends LimitrElement {
             'ms', 'seconds', 'minutes', 'hours', 'days',
             'storage', 'data', 'bandwidth'
         ];
-        
         if (nonPluralUnits.includes(unit)) {
             return unit;
         }
@@ -734,7 +733,6 @@ export class LimitrCurrentPlan extends LimitrElement {
             'member': 'members',
             'item': 'items'
         };
-        
         if (irregularPlurals[unit.toLowerCase()]) {
             return irregularPlurals[unit.toLowerCase()];
         }
@@ -815,8 +813,8 @@ export class LimitrCurrentPlan extends LimitrElement {
             return `${value} ${credit.stof_units}`;
         }
         
-        if (credit && credit.unit) {
-            const pluralizedUnit = this.pluralizeUnit(credit.unit, value);
+        if (credit && credit.label) {
+            const pluralizedUnit = this.pluralizeUnit(credit.label, value);
             return `${value} ${pluralizedUnit}`;
         }
         
@@ -831,8 +829,8 @@ export class LimitrCurrentPlan extends LimitrElement {
             return `${usage} ${credit.stof_units}`;
         }
         
-        if (credit && credit.unit) {
-            const pluralizedUnit = this.pluralizeUnit(credit.unit, usage);
+        if (credit && credit.label) {
+            const pluralizedUnit = this.pluralizeUnit(credit.label, usage);
             return `${usage} ${pluralizedUnit}`;
         }
         
