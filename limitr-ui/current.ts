@@ -922,7 +922,7 @@ export class LimitrCurrentPlan extends LimitrElement {
                     
                     const started = meters[entName]?.started || Date.now();
                     const elapsed = Date.now() - started;
-                    const resetTime = this.stofHelpers?.sync_call('eval_reset', elapsed, limit.reset_inc ?? '30days') as number ?? 0;
+                    const resetTime = limit.resets ? this.stofHelpers?.sync_call('eval_reset', elapsed, limit.reset_inc ?? '30days') as number ?? 0 : 0;
                     if (resetTime < 0) usage = 0; // expired and will reset, but hasn't been yet
 
                     const percentage = resetTime >= 0 ? this.getUsagePercentage(usage, limit) : 0;
