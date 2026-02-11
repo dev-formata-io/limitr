@@ -207,8 +207,8 @@ Limitr: {
         }
 
         /// Change the vlaue of a metered entitlement by removing a standard increment.
-        fn deincrement(id: str!, entitlement: str!) -> bool {
-            ?self.get().deincrement(id, entitlement)
+        fn decrement(id: str!, entitlement: str!) -> bool {
+            ?self.get().decrement(id, entitlement)
         }
 
         /// Allow this entitlement to change by "value"?
@@ -224,8 +224,8 @@ Limitr: {
         }
 
         /// Check if changing the vlaue of a metered entitlement by removing a standard increment would be allowed.
-        fn check_deincrement(id: str!, entitlement: str!) -> bool {
-            ?self.get().check_deincrement(id, entitlement)
+        fn check_decrement(id: str!, entitlement: str!) -> bool {
+            ?self.get().check_decrement(id, entitlement)
         }
 
         /// Would "allow" be true if called with this "value"?
@@ -624,7 +624,7 @@ Limitr: {
     /**
      * Change the value of a metered entitlement by removing a standard increment (defined in the limit).
      */
-    fn deincrement(id: str!, enforcement: str!) -> bool {
+    fn decrement(id: str!, enforcement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
 
         // get the entitlement limit (potentially overridden for a customer)
@@ -794,7 +794,7 @@ Limitr: {
     /**
      * Check if changing the value of a metered entitlement by a negative standard increment would be allowed (defined in the Limit).
      */
-    fn check_deincrement(id: str!, entitlement: str!) -> bool {
+    fn check_decrement(id: str!, entitlement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
 
         // get the entitlement limit (potentially overridden for a customer)

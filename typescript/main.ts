@@ -520,9 +520,9 @@ export class Limitr {
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async deincrement(customer: string, entitlement: string): Promise<boolean> {
+    async decrement(customer: string, entitlement: string): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.deincrement', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement)) as boolean;
     }
 
 
@@ -549,12 +549,12 @@ export class Limitr {
 
 
     /**
-     * Would a "check" call work for this entitlement and deincrement value on this customer?
+     * Would a "check" call work for this entitlement and decrement value on this customer?
      * Does not change a meter (charge usage) for this customer, just checks if it would work.
      */
-    async checkDeincrement(customer: string, entitlement: string): Promise<boolean> {
+    async checkDecrement(customer: string, entitlement: string): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_deincrement', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_decrement', customer, entitlement)) as boolean;
     }
 
 

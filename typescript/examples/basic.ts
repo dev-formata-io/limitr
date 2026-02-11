@@ -71,7 +71,7 @@ assert(await limitr.increment(sid, 'seats'));
 assert(await limitr.increment('formata', 'seats'));
 assert(!(await limitr.increment(sid, 'seats'))); // hit max
 
-assert(await limitr.deincrement(sid, 'seats')); // remove one seat
+assert(await limitr.decrement(sid, 'seats')); // remove one seat
 assert(await limitr.increment(sid, 'seats')); // add another seat
 
 
