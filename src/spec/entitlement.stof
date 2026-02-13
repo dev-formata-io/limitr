@@ -20,13 +20,13 @@
  * A Limitr entitlement limit.
  */
 Limit: {
-    #[schema(LimitrValidation.valid_credit_id)]
+    #[schema(<LimitrValidation>.valid_credit_id)]
     /// Credit ID.
     str! credit: '';
 
     #[schema((target_val: str): bool => {
         set('hard', 'soft', 'observe').contains(target_val) ? true :
-        LimitrValidation.error(`Limits cannot have a "${target_val}" mode - only hard, soft, or observe`)
+        <LimitrValidation>.error(`Limits cannot have a "${target_val}" mode - only hard, soft, or observe`)
     })]
     /// Mode.
     /// "hard" - (default) Deny immediately.
@@ -34,12 +34,12 @@ Limit: {
     /// "observe" - Never deny, only record (unlimited value).
     str! mode: 'hard';
 
-    #[schema(LimitrValidation.valid_limit_number)]
+    #[schema(<LimitrValidation>.valid_limit_number)]
     /// Value of this limit.
     /// If a str, can use units, but must be a valid stof number.
     float | str value: 0;
 
-    #[schema(LimitrValidation.valid_limit_number)]
+    #[schema(<LimitrValidation>.valid_limit_number)]
     /// Optional increment for an operation with this limit.
     /// Used with <Limitr>.increment.
     /// If a str, can use units, but must be a valid stof number.
@@ -48,7 +48,7 @@ Limit: {
     /// Should the meter reset after a certain period?
     bool resets: false;
 
-    #[schema((target_val: float): bool => target_val > 0 ? true : LimitrValidation.error(`Limit reset increment value must be greater than zero`))]
+    #[schema((target_val: float): bool => target_val > 0 ? true : <LimitrValidation>.error(`Limit reset increment value must be greater than zero`))]
     /// Optional reset increment (default 30 days).
     ms reset_inc: 30days;
 

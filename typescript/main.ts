@@ -102,9 +102,14 @@ export class Limitr {
     /**
      * Async constructor that ensures Stof wasm initialization.
      */
-    static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof'): Promise<Limitr> {
+    static async new(policy: string | Record<string, unknown> | Uint8Array = 'Limitr policy: {}', format: string = 'stof', validate: boolean = true): Promise<Limitr> {
         await initStof();
-        return new Limitr(policy, format);
+        const limitr = new Limitr(policy, format);
+        if (validate) {
+            const [valid, error] = await limitr.valid();
+            if (!valid) throw new Error(error);
+        }
+        return limitr;
     }
 
 
@@ -114,6 +119,18 @@ export class Limitr {
      */
     async docCall(path: string, ...args: unknown[]): Promise<unknown> {
         return await this.gate.run(() => this.doc.call(path, ...args));
+    }
+
+
+    /**
+     * Is this policy valid?
+     * @returns Whether this policy is valid and if not, what the current error is as a string.
+     */
+    async valid(): Promise<[boolean, string]> {
+        const valid = await this.gate.run(() => this.doc.call('<Limitr>.api.valid')) as boolean;
+        if (valid) return [true, ''];
+        const error = this.doc.get('<LimitrValidation>.error_message') as string;
+        return [false, error];
     }
 
 

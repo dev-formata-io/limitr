@@ -61,6 +61,12 @@ Limitr: {
         }
 
 
+        /// Is the top-level policy valid?
+        fn valid() -> bool {
+            ?self.get().valid() ?? false
+        }
+
+
         /// Set customer invoices data within this policy.
         fn update_customer_invoices(content: str!, format: str! = 'json') {
             const policy = self.get();
@@ -320,7 +326,7 @@ Limitr: {
      * Is this a valid policy?
      */
     fn valid() -> bool {
-        ?LimitrValidation.error('');
+        ?<LimitrValidation>.error('');
         for (const pair in self.credits.fields()) {
             const credit: Credit = pair[1];
             if (!<Credit>.schemafy(credit)) return false;

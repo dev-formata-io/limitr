@@ -15,86 +15,93 @@
 //
 
 
-/*!
- * Root "LimitrValidation"
- * Validation helper functions.
- */
-
-/// Most recent validation error message.
-str! error_message: '';
-
-
+#[type]
 /**
- * Set LimitrValidation error message.
+ * LimitrValidation static helpers & output.
  */
-fn error(message: str!) -> bool {
-    self.error_message = message;
-    false
-}
+LimitrValidation: {
+    /// Most recent validation error message.
+    str! error_message: '';
 
 
-/**
- * Get the policy from a child node.
- */
-fn get_policy(child: obj) -> Limitr {
-    if (child.instance_of('Limitr')) return child;
-    let parent = child.parent();
-    loop {
-        if (parent == null) break;
-        if (parent.instance_of('Limitr')) return parent;
-        parent = parent.parent();
+    #[static]
+    /**
+     * Set LimitrValidation error message.
+     */
+    fn error(message: str!) -> bool {
+        self.error_message = message;
+        false
     }
-    null
-}
 
 
-/**
- * Is valid stof units?
- */
-fn valid_units(units: str!) -> bool {
-    let res = false;
-    try {
-        const v = (42).to_units(units);
-        res = (typename v) == units;
-    } catch {
-        // nada..
+    #[static]
+    /**
+     * Get the policy from a child node.
+     */
+    fn get_policy(child: obj) -> Limitr {
+        if (child.instance_of('Limitr')) return child;
+        let parent = child.parent();
+        loop {
+            if (parent == null) break;
+            if (parent.instance_of('Limitr')) return parent;
+            parent = parent.parent();
+        }
+        null
     }
-    res
-}
 
 
-/**
- * Validate plan entitlements.
- */
-fn valid_plan_entitlements(target_val: obj) -> bool {
-    for (const pair in target_val.fields()) {
-        const ent: Entitlement = pair[1];
-        if (!<Entitlement>.schemafy(ent)) return false;
+    #[static]
+    /**
+     * Is valid stof units?
+     */
+    fn valid_units(units: str!) -> bool {
+        let res = false;
+        try {
+            const v = (42).to_units(units);
+            res = (typename v) == units;
+        } catch {
+            // nada..
+        }
+        res
     }
-    true
-}
 
 
-/**
- * Valid credit ID.
- */
-fn valid_credit_id(target: obj, target_val: str) -> bool {
-    const policy = self.get_policy(target);
-    if (policy == null) return false;
-    policy.credit(target_val) != null ? true :
-    self.error(`A credit named "${target_val}" does not exist in this policy`)
-}
-
-
-/**
- * Valid limit value.
- */
-fn valid_limit_number(target_val: float | str) -> bool {
-    let res = true;
-    try {
-        target_val as float;
-    } catch {
-        res = self.error(`Cannot use "${target_val}" as a limit value - not a valid number/units`);
+    #[static]
+    /**
+     * Validate plan entitlements.
+     */
+    fn valid_plan_entitlements(target_val: obj) -> bool {
+        for (const pair in target_val.fields()) {
+            const ent: Entitlement = pair[1];
+            if (!<Entitlement>.schemafy(ent)) return false;
+        }
+        true
     }
-    res
+
+
+    #[static]
+    /**
+     * Valid credit ID.
+     */
+    fn valid_credit_id(target: obj, target_val: str) -> bool {
+        const policy = self.get_policy(target);
+        if (policy == null) return false;
+        policy.credit(target_val) != null ? true :
+        self.error(`A credit named "${target_val}" does not exist in this policy`)
+    }
+
+
+    #[static]
+    /**
+     * Valid limit value.
+     */
+    fn valid_limit_number(target_val: float | str) -> bool {
+        let res = true;
+        try {
+            target_val as float;
+        } catch {
+            res = self.error(`Cannot use "${target_val}" as a limit value - not a valid number/units`);
+        }
+        res
+    }
 }

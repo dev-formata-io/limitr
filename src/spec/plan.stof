@@ -20,7 +20,7 @@ Price: {
     /// Optional ID of this price (to be interpreted by you).
     str id: null;
 
-    #[schema((target: obj, target_val:float): bool => target_val >= 0 ? true : LimitrValidation.error(`Price cannot have a negative amount: ${target.label()}`))]
+    #[schema((target: obj, target_val:float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Price cannot have a negative amount: ${target.label()}`))]
     /// An amount to display with this price.
     float! amount: 0;
 
@@ -61,7 +61,7 @@ Plan: {
     /// Optional price for this plan.
     Price price: null;
 
-    #[schema(LimitrValidation.valid_plan_entitlements)]
+    #[schema(<LimitrValidation>.valid_plan_entitlements)]
     /// Entitlements that this plan contains.
     obj! entitlements: {};
 

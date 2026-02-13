@@ -32,7 +32,7 @@ Credit: {
 
 
     #[schema((target: obj, target_val: float): bool => {
-        target_val >= 0 ? true : LimitrValidation.error(`Credit "${target.label}" has a negative exchange/overhead cost`)
+        target_val >= 0 ? true : <LimitrValidation>.error(`Credit "${target.label}" has a negative exchange/overhead cost`)
     })]
     /// Exchange rate (per credit).
     /// Typically a raw cost/overhead for a single credit.
@@ -46,7 +46,7 @@ Credit: {
 
 
     #[schema((target: obj, target_val: str): bool => {
-        LimitrValidation.valid_units(target_val) ? true : LimitrValidation.error(`Credit "${target.label}" has invalid stof_units "${target_val}"`)
+        <LimitrValidation>.valid_units(target_val) ? true : <LimitrValidation>.error(`Credit "${target.label}" has invalid units "${target_val}"`)
     })]
     /// Stof units for this credit (ex. 'GB', 'MiB', 'meters', 'kg', etc.).
     /// Anytime this credit is used in metering, these units will be kept for that meter.
