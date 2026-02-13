@@ -45,7 +45,6 @@ Limitr policy: {
         Plan free: {
             default: true
             label: 'Free Plan'
-            version: 0.1.0-test
             entitlements: {
                 Entitlement seats: {
                     description: 'How many seats does this org get?'
@@ -88,7 +87,6 @@ Limitr policy: {
 
         Plan paid: {
             label: 'Paid Plan'
-            version: 0.1.2-test
             entitlements: {
                 Entitlement prep: <Free>.entitlements.prep
                 Entitlement spend: <Free>.entitlements.spend
@@ -150,6 +148,13 @@ Limitr policy: {
             }
         }
     }
+}
+
+#[test]
+fn valid_policy() {
+    const v = self.policy.valid();
+    if (LimitrValidation.error_message) pln('Error: ', LimitrValidation.error_message);
+    assert(v);
 }
 
 #[test]

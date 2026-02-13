@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.9;
+    ver version: 0.5.20;
 
     /// Credits.
     obj credits: {};
@@ -313,6 +313,24 @@ Limitr: {
         fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms) -> bool {
             ?self.get().create_customer_credit_grant(customer_id, credit, value, resets, reset_inc, expires_on)
         }
+    }
+
+
+    /**
+     * Is this a valid policy?
+     */
+    fn valid() -> bool {
+        ?LimitrValidation.error('');
+        for (const pair in self.credits.fields()) {
+            const credit: Credit = pair[1];
+            if (!<Credit>.schemafy(credit)) return false;
+        }
+        for (const pair in self.plans.fields()) {
+            const plan: Plan = pair[1];
+            plan.name = pair[0];
+            if (!<Plan>.schemafy(plan)) return false;
+        }
+        true
     }
 
 
