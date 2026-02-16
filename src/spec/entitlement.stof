@@ -45,6 +45,11 @@ Limit: {
     /// If a str, can use units, but must be a valid stof number.
     float | str increment: 0;
 
+    #[schema(<LimitrValidation>.valid_limit_number)]
+    #[schema_optional]
+    /// Optional minimum value.
+    float | str minimum: null;
+
     /// Should the meter reset after a certain period?
     bool resets: false;
 

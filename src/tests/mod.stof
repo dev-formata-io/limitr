@@ -53,6 +53,7 @@ Limitr policy: {
                         credit: 'seat'
                         value: 3
                         increment: 1
+                        minimum: 0
                     }
                 }
                 Entitlement prep: {
@@ -325,6 +326,9 @@ fn usage_units() {
 
 #[test]
 fn org_scope_entitlements() {
+    assert(self.policy.decrement('free_org', 'seats')); // min of 0, so no change
+    assert(self.policy.decrement('free_org', 'seats'));
+
     assert(self.policy.increment('free_user_1', 'seats'));
     assert(self.policy.increment('free_org', 'seats'));
 

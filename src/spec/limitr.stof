@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.22;
+    ver version: 0.5.23;
 
     /// Credits.
     obj credits: {};
@@ -648,7 +648,7 @@ Limitr: {
     /**
      * Change the value of a metered entitlement by removing a standard increment (defined in the limit).
      */
-    fn decrement(id: str!, enforcement: str!) -> bool {
+    fn decrement(id: str!, entitlement: str!) -> bool {
         const ent = self.entitlement(id, entitlement);
 
         // get the entitlement limit (potentially overridden for a customer)
@@ -729,6 +729,14 @@ Limitr: {
                     const credit = limit != null ? self.credit(limit.credit) : null;
                     const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
                     new_value = ?new_value.to_units(stof_units) ?? new_value;
+
+                    // is the new value below a defined minimum?
+                    if (limit != null && limit.minimum != null) {
+                        const min_val = (limit.minimum as float).to_units(stof_units);
+                        if (new_value < min_val) {
+                            new_value = min_val;
+                        }
+                    }
 
                     let res = ent.check(new_value, override);
 
@@ -895,6 +903,14 @@ Limitr: {
                     const credit = limit != null ? self.credit(limit.credit) : null;
                     const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
                     new_value = ?new_value.to_units(stof_units) ?? new_value;
+
+                    // is the new value below a defined minimum?
+                    if (limit != null && limit.minimum != null) {
+                        const min_val = (limit.minimum as float).to_units(stof_units);
+                        if (new_value < min_val) {
+                            new_value = min_val;
+                        }
+                    }
 
                     let res = ent.check(new_value, override);
                     if (!res && limit != null && limit.mode == 'soft') res = true;
