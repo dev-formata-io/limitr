@@ -1,39 +1,82 @@
 # Limitr
-**Open-source policy engine for plans, limits, and usage enforcement.**
 
-Limitr embeds monetization logic directly in your app. No hard-coded pricing, no redeploys to change limits.
+**Stop hardcoding your pricing. Treat it like config.**
 
-## What It Does
-Define pricing in a policy document, not application code:
-- **Plans & entitlements** - seat limits, usage caps, feature gates
-- **Offline enforcement** - runs locally, no API calls required
-- **Event-driven** - react to limit hits, overages, denials
-- **Portable** - works anywhere JavaScript runs
-- **Inspectable** - customers and auditors can read your limits
-
-## Why Limitr?
-Billing systems (Stripe, etc.) handle payments. **Limitr handles enforcement.**
-
-Most apps hardcode limits in `pricing.ts`:
 ```typescript
+// Before: Pricing logic scattered everywhere
 if (user.plan === 'free' && user.seats >= 1) {
   throw new Error('Upgrade to add more seats');
 }
+
+// After: One source of truth
+if (await policy.increment('user_123', 'seats')) {
+  // Add the seat
+}
 ```
 
-This breaks down with usage-based pricing, AI products, and self-hosted deployments.
+Limitr is an open-source pricing engine that moves your limits, quotas, and feature gates out of application code and into a declarative policy document.
 
-**Limitr separates policy from code** so limits are explicit, testable, and easy to evolve.
+Powered by WebAssembly for deterministic, portable enforcement across Node.js, browsers, Deno, and Bun.
+
+## The Problem
+
+Your pricing logic is everywhere:
+- Hardcoded in route handlers
+- Duplicated across services
+- Impossible to change without deploying
+- Breaks when product changes the free tier
+
+**Changing "free tier gets 1 seat → 3 seats" shouldn't require a code change.**
+
+## How It Works
+
+**1. Define your pricing once**
+```yaml
+policy:
+  credits:
+    seat:
+      label: Seat
+  plans:
+    free:
+      entitlements:
+        seats:
+          limit:
+            credit: seat
+            value: 1
+    pro:
+      entitlements:
+        seats:
+          limit:
+            credit: seat
+            value: 10
+```
+
+**2. Enforce everywhere**
+```typescript
+const policy = await Limitr.new(policyDoc);
+
+// Seat limits
+await policy.allow('user_123', 'seats', 1);
+
+// Usage limits
+await policy.allow('user_456', 'ai_tokens', 4200);
+
+// Feature gates
+await policy.allow('user_789', 'advanced_analytics');
+```
+
+**3. Change pricing without redeploying**
+Update the policy document. That's it.
 
 ## Install
+
 ```bash
 npm install @formata/limitr
 ```
 
-### Initialization
-Limitr uses [Stof](https://docs.stof.dev) for policy enforcement (@formata/stof). This is sandboxed WebAssembly, and needs to be initialized once before use.
+### Initialization (Browser Only)
 
-> This step is for font-end (browser) apps only. For Node.js, Deno, & Bun, this step is handled automatically by Limitr (you can skip this).
+Limitr uses [Stof](https://docs.stof.dev) for policy enforcement, which compiles to WebAssembly. Browser apps need to initialize WASM once before use. **Node.js, Deno, and Bun handle this automatically—skip this step.**
 
 ```typescript
 // Vite
@@ -41,26 +84,22 @@ import { initStof } from '@formata/stof';
 import stofWasm from '@formata/stof/wasm?url';
 await initStof(stofWasm);
 
-// Browser with bundler - Pass WASM explicitly (e.g. @rollup/plugin-wasm)
+// Other bundlers (with WASM plugin)
 import { initStof } from '@formata/stof';
 import stofWasm from '@formata/stof/wasm';
 await initStof(await stofWasm());
-
-// Node.js, Deno, & Bun - Auto-detects and loads WASM (you can skip this though, Limitr does it)
-import { initStof } from '@formata/stof';
-await initStof();
 ```
 
-## Quick Start (Local)
+## Quick Start
+
 ```typescript
 import { Limitr } from '@formata/limitr';
 
-// Define policy (YAML, JSON, TOML, STOF) (load from DB, API, file, etc.)
 const policy = await Limitr.new(`
 policy:
   credits:
     seat:
-      description: A single seat in our app.
+      label: Seat
   plans:
     free:
       entitlements:
@@ -78,90 +117,124 @@ policy:
             increment: 1
 `, 'yaml');
 
-// Create/load customers
 await policy.createCustomer('user_123', 'free');
-await policy.createCustomer('user_456', 'pro');
 
-// Enforce limits
-await policy.increment('user_123', 'seats'); // true - succeeds (1/1 used)
-await policy.increment('user_123', 'seats'); // false - fails (limit hit)
-
-await policy.increment('user_456', 'seats'); // true - succeeds (1/10 used)
-await policy.allow('user_456', 'seats', 5);  // true - succeeds (6/10 used)
+await policy.increment('user_123', 'seats'); // true (increment -> shorthand for allow(..) with limit's "increment" value)
+await policy.increment('user_123', 'seats'); // false (limit hit)
 ```
 
-## Common Use Cases
+## When To Use This
 
-**Seat-based plans:**
-```typescript
-if (await policy.increment('org_123', 'seats')) {
-  // Add user to org
-}
-```
-
-**Usage-based limits:**
-```typescript
-if (await policy.allow('user_456', 'chat_ai_tokens', 4200)) {
-  // allowed: process LLM request
-  // usage recorded and synced in the background (*Limitr Cloud)
-} else {
-  // denied: limit exceeded
-}
-```
-
-**Feature gates:**
-```typescript
-const hasAdvancedFeatures = await policy.allow('user_789', 'advanced_analytics');
-```
+- ✅ You have seat-based, usage-based, or hybrid pricing
+- ✅ Your pricing changes more than once a quarter
+- ✅ You support self-hosted deployments
+- ✅ You're building an AI product with token limits
+- ✅ You're tired of pricing logic in 47 different files
+- ✅ Easy to adopt incrementally, wrap existing checks with `policy.allow()` one at a time
 
 ## Local vs Cloud
 
 ### Local (Open Source)
-```typescript
-const policy = await Limitr.new(policyDocument);
-```
-- Runs entirely in your app
-- No external dependencies
-- Perfect for self-hosted deployments
+Runs entirely in your app. No external calls. Perfect for self-hosted.
 
-### Cloud (Fully Managed w/Stripe + UI)
+```typescript
+const policy = await Limitr.new(policyDoc);
+```
+
+### Cloud (Managed + Stripe)
+Hosted version with Stripe integration, customer management, dashboard, and analytics.
+
 ```typescript
 const policy = await Limitr.cloud({
   token: 'limitr_...'
 });
 ```
-- Syncs policy and customer data automatically
-- Stripe integration built-in (no Stripe dependencies in your app)
-- UI included (pricing tables, plan selection, invoices, cancel/resume, etc)
-- Dashboard for managing plans and customers
-- Analytics & events (payments, revenue, margins)
-- Create/change pricing in a couple of minutes without redeploys
+
+- Change pricing in minutes without redeploys
+- Built-in UI for pricing tables, plan selection, invoices
+- Automatic sync with Stripe
+- Analytics dashboards
 
 [Learn more about Limitr Cloud →](https://limitr.dev)
 
+## How It's Different
+
+> **Stripe knows:** "User paid for Pro plan"<br/>
+> **Limitr enforces:** "User can create 10 seats, use 1M tokens, and export PDFs"
+
+Most apps:
+1. Check limits in code → `if (user.plan === 'free')`
+2. Take action
+3. Send usage to billing system
+
+With Limitr:
+1. Check policy → `await policy.allow('user', 'action')`
+2. Take action
+3. Usage tracked automatically (Cloud) or synced on your schedule (Local)
+
+## Real-World Examples
+
+**Seat-based SaaS:**
+```typescript
+if (await policy.increment('org_123', 'seats')) {
+  await db.addUserToOrg(userId, orgId);
+}
+```
+
+**AI product with token limits:**
+```typescript
+if (await policy.allow('user_456', 'tokens', estimatedTokens)) {
+  const response = await callLLM(prompt);
+  // Usage recorded, synced in background
+}
+```
+
+**Feature gating:**
+```typescript
+const canExport = await policy.allow('user_789', 'pdf_export');
+if (!canExport) {
+  return { error: 'Upgrade to export PDFs' };
+}
+```
+
+## Why Policies Are Better Than Code
+
+Update your free tier limit at 3pm on Friday. All users see the new limit and it's enforced instantly. No deploy, no invalidation, no coordination.
+
+**Code:**
+- Scattered across files
+- Requires deploys to change
+- Hard to audit
+- Breaks with typos
+
+**Policy:**
+- Single source of truth
+- Change without deploying
+- Human-readable by customers and auditors
+- Type-safe (compiled to WebAssembly)
+
+## Tech Details
+
+- Written in [Stof](https://docs.stof.dev) (compiles to WebAssembly)
+- Microsecond enforcement (no network calls)
+- Runs in Node.js, browsers, Deno, Bun
+- Deterministic (same input = same output)
+- No external dependencies for local mode
+- Offline-first (no API calls required)
+
 ## Documentation
-- 📖 [Full Documentation](https://formata.gitbook.io/limitr)
+
+- 📖 [Full Docs](https://formata.gitbook.io/limitr)
 - 🚀 [Local Quick Start](https://formata.gitbook.io/limitr/local/quick-start)
 - ☁️ [Cloud Quick Start](https://formata.gitbook.io/limitr/cloud/quick-start)
-- 💬 [Discord Community](https://discord.gg/Up5kxdeXZt)
-
-## Who It's For
-- AI products with usage-based pricing
-- Developer tools with seat or API limits
-- SaaS apps that need flexible pricing
-- Open-source projects offering paid tiers
-- Anyone tired of hardcoding pricing logic
-
-## Built With [Stof](https://docs.stof.dev)
-Limitr policies are written in Stof, a data + logic language that compiles to WebAssembly. This makes policies:
-- **Deterministic** - same input always produces same output
-- **Portable** - runs in Node.js, browsers, Deno, Bun
-- **Auditable** - human-readable policy documents
-
-## License
-Apache 2.0 - See [LICENSE](LICENSE)
+- 💬 [Discord](https://discord.gg/Up5kxdeXZt)
 
 ## Contributing
-- Issues & PRs: [GitHub](https://github.com/dev-formata-io/limitr)
-- Questions: [Discord](https://discord.gg/Up5kxdeXZt)
-- Contact: info@limitr.dev
+
+Issues & PRs: [GitHub](https://github.com/dev-formata-io/limitr)  
+Questions: [Discord](https://discord.gg/Up5kxdeXZt)  
+Contact: info@limitr.dev
+
+## License
+
+Apache 2.0
