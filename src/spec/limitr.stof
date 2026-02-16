@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.20;
+    ver version: 0.5.22;
 
     /// Credits.
     obj credits: {};
@@ -1045,10 +1045,16 @@ Limitr: {
         if (pn == null && refs != null) {
             for (const ref in refs) {
                 pn = self.plan_for(ref, default = false);
-                if (pn != null) break;
+                if (pn != null) {
+                    plan = '';
+                    break;
+                }
             }
         }
-        if (pn == null) pn = self.default_plan();
+        if (pn == null) {
+            pn = self.default_plan();
+            if (pn != null) plan = pn.name;
+        }
         if (pn != null) {
             let meta: obj = null;
             if (metadata != null) {
