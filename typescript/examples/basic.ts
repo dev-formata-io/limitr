@@ -55,7 +55,7 @@ policy: {
     }
 }
 `);
-console.log(limitr.plan('paid'));
+console.log(await limitr.plan('paid'));
 
 // Create a test customer to play with
 const sid = 'cus_example_id';

@@ -65,6 +65,10 @@ Plan: {
     /// Entitlements that this plan contains.
     obj! entitlements: {};
 
+    #[schema(<LimitrValidation>.valid_plan_topups)]
+    /// Top-ups offered on this plan.
+    obj! topups: {};
+
     /// Hidden plan?
     bool hidden: false;
 

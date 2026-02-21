@@ -452,6 +452,15 @@ export class Limitr {
 
 
     /**
+     * Apply a plan topup to a customer.
+     * Creates a credit grant with a topup/one-time-purchase if found on this customer's current plan.
+     */
+    async applyCustomerTopup(id: string, topup: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.apply_customer_topup', id, topup)) as boolean;
+    }
+
+
+    /**
      * Create a customer credit grant (recommended use in top-ups & one-time purchases).
      * Grants are applied when overage would occur (soft entitlement limits).
      * Defaults to a one-time, fixed-value credit grant.
@@ -463,8 +472,8 @@ export class Limitr {
      *
      * @returns true when the customer & credit exists, meaning the grant has been applied.
      */
-    async create_customer_credit_grant(id: string, credit: string, value: number | string, resets: boolean = false, reset_inc?: number | string, expires_on?: number): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_credit_grant', id, credit, value, resets, reset_inc ?? null, expires_on ?? null)) as boolean;
+    async createCustomerCreditGrant(id: string, credit: string, value: number | string, resets: boolean = false, reset_inc?: number | string, expires_on?: number, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_credit_grant', id, credit, value, resets, reset_inc ?? null, expires_on ?? null, event)) as boolean;
     }
 
 
@@ -767,6 +776,25 @@ export class Limitr {
 
 
     /**
+     * Debounce send on cloud WebSocket.
+     */
+    private _debouncedSendMap: Map<string, { timeoutHandle: ReturnType<typeof setTimeout>, data: string }> = new Map();
+    wsSendDebounced(id: string, data: string, debounceMs: number = 500) {
+        const existing = this._debouncedSendMap.get(id);
+        if (existing) {
+            clearTimeout(existing.timeoutHandle);
+        }
+
+        const timeoutHandle = setTimeout(() => {
+            this._debouncedSendMap.delete(id);
+            this.wsSend(data);
+        }, debounceMs);
+
+        this._debouncedSendMap.set(id, { timeoutHandle, data });
+    }
+
+
+    /**
      * Send on the cloud WebSocket if enabled.
      */
     private _dataSendQueue: string[] = [];
@@ -851,6 +879,9 @@ export class Limitr {
                 }, true);
                 this.doc.lib('CloudWS', 'send', (data: string) => {
                     this.wsSend(data);
+                });
+                this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
+                    this.wsSendDebounced(id, data, debounceMs);
                 });
 
                 this.wsInit = true;

@@ -81,6 +81,19 @@ LimitrValidation: {
 
     #[static]
     /**
+     * Validate plan topups.
+     */
+    fn valid_plan_topups(target_val: obj) -> bool {
+        for (const pair in target_val.fields()) {
+            const top: Topup = pair[1];
+            if (!<Topup>.schemafy(top)) return false;
+        }
+        true
+    }
+
+
+    #[static]
+    /**
      * Valid credit ID.
      */
     fn valid_credit_id(target: obj, target_val: str) -> bool {
@@ -101,6 +114,23 @@ LimitrValidation: {
             target_val as float;
         } catch {
             res = self.error(`Cannot use "${target_val}" as a limit value - not a valid number/units`);
+        }
+        res
+    }
+
+
+    #[static]
+    /**
+     * Valid topup value.
+     */
+    fn valid_topup_number(target_val: float | str) -> bool {
+        let res = true;
+        try {
+            const val = target_val as float;
+            res = val >= 0;
+            if (!res) self.error(`Top-up value must be positive - cannot allocate a negative credit grant`);
+        } catch {
+            res = self.error(`Cannot use "${target_val}" as a top-up value - not a valid number/units`);
         }
         res
     }

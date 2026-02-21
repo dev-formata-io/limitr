@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.23;
+    ver version: 0.5.24;
 
     /// Credits.
     obj credits: {};
@@ -314,10 +314,15 @@ Limitr: {
         fn remove_customer_override(id: str!, entitlement: str!) -> bool {
             ?self.get().remove_customer_override(id, entitlement)
         }
-        
+
+        /// Apply a plan topup to a customer.
+        fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
+            ?self.get().apply_customer_topup(customer_id, topup)
+        }
+
         /// Create a customer credit grant.
-        fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms) -> bool {
-            ?self.get().create_customer_credit_grant(customer_id, credit, value, resets, reset_inc, expires_on)
+        fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms, event: bool = true) -> bool {
+            ?self.get().create_customer_credit_grant(customer_id, credit, value, resets, reset_inc, expires_on, event)
         }
     }
 
@@ -1266,6 +1271,34 @@ Limitr: {
 
 
     /**
+     * Apply a plan topup to a customer.
+     * Creates a credit grant with a topup/one-time-purchase if found.
+     */
+    fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
+        const customer = self.customer(customer_id);
+        const plan = self.plan_for(customer_id);
+        if (plan != null && customer != null) {
+            const top: Topup = plan.topups.get(topup);
+            if (top != null) {
+                const expires_on = top.expires_after != null ? Time.now() + top.expires_after : null;
+                const granted = self.create_customer_credit_grant(customer_id, top.credit, top.value, top.resets, top.reset_inc, expires_on, false);
+                if (granted) {
+                    await <Event>.send_tmp('customer-topup-granted', new {
+                        customer,
+                        topup_name: topup,
+                        plan_name: plan.name,
+                        topup: top,
+                    });
+                    await <Event>.send('customer-set', customer);
+                }
+                return granted;
+            }
+        }
+        false
+    }
+
+
+    /**
      * Create a customer credit grant.
      * Grants are applied when overage would occur (soft entitlement limits).
      * Defaults to a one-time, fixed-value credit grant.
@@ -1273,7 +1306,7 @@ Limitr: {
      * Ex. a soft limit of 5k tokens + a grant of 2k tokens would result in the customer
      * getting overage events (meter-overage) after 7k tokens spent.
      */
-    fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms) -> bool {
+    fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms, event: bool = true) -> bool {
         const customer = self.customer(customer_id);
         const cred = self.credit(credit);
         if (customer == null || cred == null) return false;
@@ -1289,6 +1322,7 @@ Limitr: {
             expires_on,
         } on customer.grants;
         customer.grants.insert(grant.id, grant);
+        if (event) await <Event>.send('customer-set', customer);
         true
     }
 }

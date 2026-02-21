@@ -84,6 +84,18 @@ Limitr policy: {
                     }
                 }
             }
+            topups: {
+                overage_tokens: {
+                    credit: 'overage_token'
+                    value: 300
+                }
+                invalid_topup: {
+                    credit: 'overage_token'
+                    //value: -10
+                    //reset_inc: -10days
+                    //expires_after: -10min
+                }
+            }
         }
 
         Plan paid: {
@@ -182,7 +194,8 @@ fn credit_grant_overage() {
     assert_eq(customer.metadata.overage, 5); // soft limit of 0
 
     // lets give our user a grant of credits
-    assert(self.policy.create_customer_credit_grant(user, 'overage_token', 300));
+    assert(self.policy.apply_customer_topup(user, 'overage_tokens')); // add a grant of 300 overage tokens
+    //assert(self.policy.create_customer_credit_grant(user, 'overage_token', 300));
     assert(self.policy.allow(user, ent, 200));
     assert_eq(customer.metadata.overage, 5);
     assert_eq(customer.grants[0][1].value, 100); // 100 remaining on the grant
