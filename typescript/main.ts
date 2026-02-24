@@ -134,6 +134,17 @@ export class Limitr {
     }
 
 
+    /**
+     * Difference between this policy and another.
+     * This policy is treated as the schema for the diff operation.
+     */
+    async difference(other: Limitr): Promise<Record<string, unknown>> {
+        const bstf = await other.docCall('<Limitr>.api.policy_bstf') as Uint8Array;
+        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.difference_bstf', bstf)) as string;
+        return JSON.parse(json);
+    }
+
+
     /*****************************************************************************
      * Plans API.
      *****************************************************************************/
