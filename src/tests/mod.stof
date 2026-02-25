@@ -38,6 +38,19 @@ Limitr policy: {
             description: 'A token for overage'
             stof_units: 'int'
         }
+
+        Credit tiered_token: {
+            description: 'A tiered token credit'
+            pricing_model: 'tiered'
+            tiers: [
+                // these will get sorted and validated on valid()
+                { up_to: 12000, price: { amount: 0.0003 } },
+                { up_to: 4000, price: { amount: 0.0001 } },
+                { price: { amount: 0.0004 } },
+                { up_to: 8000, price: { amount: 0.0002 } },
+                { price: { amount: 0.0005 } },
+            ]
+        }
     }
 
     plans: {
@@ -168,6 +181,12 @@ fn valid_policy() {
     const v = self.policy.valid();
     if (<LimitrValidation>.error_message) pln('Error: ', LimitrValidation.error_message);
     assert(v);
+
+    assert_eq(self.policy.credits.tiered_token.tiers.len(), 4);
+    assert_eq(self.policy.credits.tiered_token.tiers.front().up_to, 4000);
+    assert_eq(self.policy.credits.tiered_token.tiers.back().up_to, null);
+    assert_eq(self.policy.credits.tiered_token.tiers.back().price.amount, 0.0004);
+    //pln(stringify('yaml', self.policy.credits.tiered_token));
 }
 
 #[test]

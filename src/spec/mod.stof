@@ -16,6 +16,7 @@
 
 import './validation';
 import './events';
+import './price';
 import './plan';
 import './credit';
 import './customer';

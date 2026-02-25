@@ -39,8 +39,27 @@ Credit: {
     float exchange: 0;
 
 
-    #[schema((target_val: obj): bool => <Price>.schemafy(target_val))]
-    #[schema_optional]
+    #[schema((target_val: str!): bool => {
+        ['flat', 'tiered', 'volume', 'stairstep'].contains(target_val) ? true : <LimitrValidation>.error(`'${target_val}' is not a valid credit pricing model - must be 'flat', 'tiered', 'volume', or 'stairstep'`)
+    })]
+    /// Pricing model: 'flat', 'tiered', 'volume', or 'stairstep'.
+    /// Flat - a single price per unit, applied uniformly regardless of how much is consumed.
+    /// Tiered - like tax brackets, each band of consumption has its own per-unit price, and you pay each band's rate only for the units consumed within that band.
+    /// Volume - your total consumption determines a single per-unit rate, applied retroactively to all units consumed.
+    /// Stairstep - a flat fee per band, where your total consumption determines which band you're in and you pay that band's fixed price regardless of where within the band you land.
+    str! pricing_model: 'flat';
+
+
+    #[schema(<LimitrValidation>.valid_tiers)]
+    /// Tiers for tiered, volume, or stairstep pricing models.
+    list tiers: null;
+
+
+    #[schema((target: obj, target_val: obj): bool => {
+        const model = target.pricing_model ?? 'flat';
+        if (model != 'flat') return target_val == null ? true : <LimitrValidation>.error(`A '${model}' credit pricing model requires 'price' to be null and a 'tiers' list of prices`);
+        target_val == null ? true : <Price>.schemafy(target_val)
+    })]
     /// Optional price for this credit (what you charge per credit).
     Price price: null;
 

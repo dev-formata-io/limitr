@@ -16,34 +16,6 @@
 
 
 #[type]
-Price: {
-    /// Optional ID of this price (to be interpreted by you).
-    str id: null;
-
-    #[schema((target: obj, target_val:float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Price cannot have a negative amount: ${target.label()}`))]
-    /// An amount to display with this price.
-    float! amount: 0;
-
-    /// Prefix for label.
-    str! prefix: '$';
-
-    /// Suffix for label.
-    str! suffix: '/month';
-
-    
-    /**
-     * Label for this price.
-     */
-    fn label() -> str {
-        const pref = self.prefix;
-        const amount = self.amount.round(2);
-        const suf = self.suffix.len() > 0 ? ' ' + self.suffix : '';
-        `${pref}${amount}${suf}`
-    }
-}
-
-
-#[type]
 /**
  * A Limitr plan.
  */

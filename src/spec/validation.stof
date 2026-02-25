@@ -134,4 +134,60 @@ LimitrValidation: {
         }
         res
     }
+
+
+    #[static]
+    /**
+     * Validate credit tiers.
+     */
+    fn valid_tiers(target: obj, field: str, target_val: list) -> bool {
+        const model = target.pricing_model ?? 'flat';
+        if (model == 'flat') return true; // tiers can be null here
+
+        if (target_val == null || target_val.empty()) return <LimitrValidation>.error(`A '${model}' credit pricing model requires a list of pricing tiers ('tiers' field)`);
+        for (const val in target_val) if ((typeof val) != 'obj') return <LimitrValidation>.error("Each value within a credit's 'tiers' list must be a PriceTier object");
+
+        const sorted = self.quicksort_tiers(target_val);
+        while (sorted.back().up_to == null && sorted.len() - 2 >= 0 && sorted[sorted.len() - 2].up_to == null) {
+            const p = sorted.pop_back();
+            if ((typeof p) == 'obj') drop(p);
+        }
+        target.insert(field, sorted);
+        if (sorted.back().up_to != null) return <LimitrValidation>.error(`A '${model}' credit pricing model requires the last tier in 'tiers' to be up_to null (infinity)`);
+        for (const tier: PriceTier in sorted) if (!<PriceTier>.schemafy(tier)) return false;
+        true
+    }
+
+
+    #[static]
+    /**
+     * Sort tiers.
+     */
+    fn quicksort_tiers(tiers: list) -> list {
+        if (tiers.len() <= 1) return tiers;
+        
+        const pivot = tiers[tiers.len() / 2];
+        const left = [];
+        const mid = [];
+        const right = [];
+        
+        for (const tier in tiers) {
+            const tier_up_to = tier.up_to;
+            const pivot_up_to = pivot.up_to;
+            if (tier_up_to == pivot_up_to) {
+                mid.push_back(tier);
+            } else if (tier_up_to == null) {
+                right.push_back(tier); // null = infinity, always last
+            } else if (pivot_up_to == null || tier_up_to < pivot_up_to) {
+                left.push_back(tier);
+            } else {
+                right.push_back(tier);
+            }
+        }
+        
+        const sorted = self.quicksort_tiers(left);
+        for (const t in mid) sorted.push_back(t);
+        for (const t in self.quicksort_tiers(right)) sorted.push_back(t);
+        sorted
+    }
 }

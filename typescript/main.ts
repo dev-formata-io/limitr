@@ -23,12 +23,26 @@ import { LimitrGate, waitOnOpen } from "./gate.js";
  * Cloud init options.
  */
 export interface LimitrCloudInit {
+    /** Limitr Cloud API token. */
     token: string;
+
+    /** Policy ID - leave undefined (or "active") for continuous updates to active workspace policy. */
     policy?: string;
+
+    /** Alternate WebSocket address. */
     wsAddress?: string;
+
+    /** Alternate auth ticket address. */
     ticketAddress?: string;
+
+    /** Connect timeout (waits 5s by default). */
     connectTimeout?: number;
+
+    /** When disconnected/failure mode, deny "allow" checks to preserve distributed state? */
     denyUnconnected?: boolean;
+
+    /** Validate the cloud policy once loaded (recommended and on by default)? */
+    validate?: boolean;
 }
 
 
@@ -627,6 +641,7 @@ export class Limitr {
         const ticketAddress = typeof options === 'string' ? 'https://api.limitr.dev' : options.ticketAddress ?? 'https://api.limitr.dev';
         const timeout = typeof options === 'string' ? 5000 : options.connectTimeout ?? 5000;
         const denyUnconnected = typeof options === 'string' ? true : options.denyUnconnected ?? true;
+        const validate = typeof options === 'string' ? true : options.validate ?? true;
 
         const response = await fetch(ticketAddress + '/wss/ticket', {
             method: 'POST',
@@ -683,6 +698,10 @@ export class Limitr {
 
         limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
         await awaitInit();
+        if (validate) {
+            const [valid, error] = await limitr.valid();
+            if (!valid) throw new Error(error);
+        }
 
         const ping = async () => {
             if (!limitr.ws || limitr.ws.readyState === WebSocket.CLOSED || limitr.ws.readyState === WebSocket.CLOSING) {
