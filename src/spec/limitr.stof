@@ -223,7 +223,7 @@ Limitr: {
             ?self.get().remaining(id, entitlement)
         }
 
-        /// Get the current value of a mtered entitlement for a customer ID.
+        /// Get the current value of a metered entitlement for a customer ID.
         fn value(id: str!, entitlement: str!) -> float {
             ?self.get().value(id, entitlement)
         }
@@ -233,12 +233,12 @@ Limitr: {
             ?self.get().cost(id, entitlement)
         }
 
-        /// Change the value of a metered entitlement by a stardard increment.
+        /// Change the value of a metered entitlement by a standard increment.
         fn increment(id: str!, entitlement: str!) -> bool {
             ?self.get().increment(id, entitlement)
         }
 
-        /// Change the vlaue of a metered entitlement by removing a standard increment.
+        /// Change the value of a metered entitlement by removing a standard increment.
         fn decrement(id: str!, entitlement: str!) -> bool {
             ?self.get().decrement(id, entitlement)
         }
@@ -250,12 +250,12 @@ Limitr: {
             ?self.get().allow(id, entitlement, value)
         }
 
-        /// Check if changing the value of a metered entitlement by a stardard increment would be allowed.
+        /// Check if changing the value of a metered entitlement by a standard increment would be allowed.
         fn check_increment(id: str!, entitlement: str!) -> bool {
             ?self.get().check_increment(id, entitlement)
         }
 
-        /// Check if changing the vlaue of a metered entitlement by removing a standard increment would be allowed.
+        /// Check if changing the value of a metered entitlement by removing a standard increment would be allowed.
         fn check_decrement(id: str!, entitlement: str!) -> bool {
             ?self.get().check_decrement(id, entitlement)
         }

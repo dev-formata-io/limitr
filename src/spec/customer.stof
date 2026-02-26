@@ -21,47 +21,39 @@
  * Could be a user, organization, etc.
  */
 Customer: {
-    /// How to identify this customer.
-    /// For a user, this could be an email, etc.
-    /// This Id is used for metering, etc.
+    /// Primary ID.
     str! id: '';
 
-    /// Plan ID for this customer.
+    /// Plan ID.
     str! plan: '';
 
-    /// Alternate IDs for this customer.
-    /// Use Limitr API.
+    /// Alternate IDs.
     list! alt_ids: [];
 
-    /// Optional references to other customers.
-    /// Used for getting plan info, etc. if not present on this customer.
+    /// Optional references to other customers by IDs.
     list! refs: [];
 
-    /// An optional type of this customer.
-    /// Ex. user, org, seat, etc.
+    /// Type of customer (e.g. user, org, seat, etc).
     str! type: 'user';
 
-    /// Human-facing label for this customer.
+    /// Human-facing label.
     str! label: 'User';
 
-    /// Meters for this customer.
-    /// These map to entitlements by name for a plan.
-    /// Lazily populated.
+    /// Meters (lazy - map to entitlements by name).
     obj! meters: {};
 
-    /// Override limits for this customer.
-    /// Entitlement -> Limit.
+    /// Override limits (entitlement -> Limit).
     obj! overrides: {};
 
-    /// Credit grants for this customer.
+    /// Credit grants.
     obj! grants: {};
 
-    /// Optional metadata object for this customer.
+    /// Optional metadata object.
     obj metadata: null;
 
 
     /**
-     * Set an override for this customer.
+     * Set an override.
      * Moves the limit and removes old override if any.
      */
     fn set_override(entitlement: str!, limit: Limit!) {

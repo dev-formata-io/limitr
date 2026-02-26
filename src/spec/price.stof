@@ -48,10 +48,7 @@ PriceTier: {
     /// Upper bound for this tier, exclusive (null = infinity, must be last tier).
     float up_to: null;
 
-    #[schema((target_val: obj): bool => {
-        if (target_val == null) return <LimitrValidation>.error("A price tier must contain a 'price' object with a positive 'amount'");
-        <Price>.schemafy(target_val)
-    })]
+    #[schema((target_val: obj): bool => <Price>.schemafy(target_val))]
     /// Price for this tier.
-    Price price: null;
+    Price! price: {};
 }
