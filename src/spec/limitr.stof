@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.25;
+    ver version: 0.5.26;
 
     /// Credits.
     obj credits: {};
@@ -1309,13 +1309,13 @@ Limitr: {
                 const expires_on = top.expires_after != null ? Time.now() + top.expires_after : null;
                 const granted = self.create_customer_credit_grant(customer_id, top.credit, top.value, top.resets, top.reset_inc, expires_on, false);
                 if (granted) {
+                    // Just the customer-topup-granted event, no customer-set here
                     await <Event>.send_tmp('customer-topup-granted', new {
                         customer,
                         topup_name: topup,
                         plan_name: plan.name,
                         topup: top,
                     });
-                    await <Event>.send('customer-set', customer);
                 }
                 return granted;
             }

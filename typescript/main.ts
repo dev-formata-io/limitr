@@ -859,7 +859,9 @@ export class Limitr {
             if (data === 'pong' || data === 'ping') return;
             try {
                 const record = JSON.parse(data);
-                if (!!record.error && !!record.id) {
+                if (record.type === 'topup-purchase-failed') {
+                    for (const [_, handler] of this.eventHandlers) handler('topup-purchase-failed', record);
+                } else if (!!record.error && !!record.id) {
                     if (record.type === 'customer') {
                         this._deniedCloudCustomers.add(record.id);
                     }
