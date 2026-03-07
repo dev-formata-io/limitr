@@ -333,7 +333,7 @@ fn unlimited_spend() {
 
     const credit = self.policy.credit_for('cj', 'spend');
     assert_eq(credit.unit, 'token');
-    assert_eq(credit.exchange, 0);
+    assert_eq(credit.overhead_cost, 0);
 }
 
 #[test]

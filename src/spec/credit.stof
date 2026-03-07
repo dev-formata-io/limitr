@@ -32,11 +32,10 @@ Credit: {
 
 
     #[schema((target: obj, target_val: float): bool => {
-        target_val >= 0 ? true : <LimitrValidation>.error(`Credit "${target.label}" has a negative exchange/overhead cost`)
+        target_val >= 0 ? true : <LimitrValidation>.error(`Credit "${target.label}" cannot have a negative overhead cost`)
     })]
-    /// Exchange rate (per credit).
-    /// Typically a raw cost/overhead for a single credit.
-    float exchange: 0;
+    /// Single credit cost as provider overhead when redeemed (in runes, see Limitr.exchange).
+    float overhead_cost: 0;
 
 
     #[schema((target_val: str!): bool => {
