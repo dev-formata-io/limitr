@@ -24,4 +24,5 @@ import './entitlement';
 import './meter';
 import './grant';
 import './topup';
+import './exchange';
 import './limitr';

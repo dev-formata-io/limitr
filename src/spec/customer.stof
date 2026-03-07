@@ -64,6 +64,83 @@ Customer: {
 
 
     /**
+     * Find the best grant on this customer for a given credit.
+     * Removes expired & resets values.
+     */
+    fn best_grant(credit: str!, exchange: Exchange, stof_units: str!) -> Grant {
+        const now = Time.now();
+        let best = null;
+        let best_exact = null;
+        let best_exact_bench = null;
+        const bench = exchange == null ? null : exchange.to_runes(1, credit); // does this credit take part in exchange?
+        let best_bench = null;
+        for (const pair in self.grants.fields()) {
+            const id = pair[0];
+            const grant: Grant = pair[1];
+            
+            // Is this grant expired?
+            if (grant.expires_on != null && grant.expires_on < now) {
+                self.grants.remove(id, shallow = false);
+            } else {
+                // Should this grant value be reset?
+                if (grant.resets && (grant.granted_on + grant.reset_inc) <= now) {
+                    while ((now - grant.granted_on) > grant.reset_inc) grant.granted_on += grant.reset_inc;
+                    grant.value = (grant.starting_value as float).to_units(stof_units);
+                }
+
+                // Does this grant match this credit exactly?
+                if (grant.credit == credit) {
+                    if (exchange != null && bench != null) {
+                        const strat = exchange.grant_strategy ?? 'expires_first';
+                        if (strat == 'expires_first') {
+                            const lbench = grant.expires_on;
+                            if (best_exact_bench == null || (lbench != null && lbench < best_exact_bench)) {
+                                best_exact = grant;
+                                best_exact_bench = lbench;
+                            }
+                        } else if (strat == 'valuable_first') {
+                            if (best_exact_bench == null || bench > best_exact_bench) {
+                                best_exact = grant;
+                                best_exact_bench = bench;
+                            }
+                        } else if (best_exact_bench == null || bench < best_exact_bench) {
+                            // cheapest first
+                            best_exact = grant;
+                            best_exact_bench = bench;
+                        }
+                    } else {
+                        return grant;
+                    }
+                } else if (bench != null && exchange != null) {
+                    // What does the exchange look like?
+                    const strat = exchange.grant_strategy ?? 'expires_first';
+                    if (strat == 'expires_first') {
+                        const lbench = grant.expires_on;
+                        if (best_bench == null || (lbench != null && lbench < best_bench)) {
+                            best = grant;
+                            best_bench = lbench;
+                        }
+                    } else if (strat == 'valuable_first') {
+                        const lbench = exchange.to_runes(1, grant.credit);
+                        if (lbench != null && (best_bench == null || lbench > best_bench)) {
+                            best = grant;
+                            best_bench = lbench;
+                        }
+                    } else {
+                        const lbench = exchange.to_runes(1, grant.credit);
+                        if (lbench != null && (best_bench == null || lbench < best_bench)) {
+                            best = grant;
+                            best_bench = lbench;
+                        }
+                    }
+                }
+            }
+        }
+        best_exact ?? best
+    }
+
+
+    /**
      * Try using a grant on this customer before sending meter-overage.
      * Returns true if there is still overage to be applied to the customers account (grants were used up/not there).
      */
@@ -74,45 +151,39 @@ Customer: {
         let overage = event_value.overage;
         if (overage == null) return false; // no overage recorded, don't send event
 
-        if (overage > 0) {
-            let grant_value_applied = 0;
-            const ids_to_remove = [];
-            const now = Time.now();
-            for (const pair in fields) {
-                const id = pair[0];
-                const grant: Grant = pair[1];
-
-                // Is this grant expired?
-                if (grant.expires_on != null && grant.expires_on < now) {
-                    ids_to_remove.push_back(id);
-                } else {
-                    // Should this grant value be reset?
-                    if (grant.resets && (grant.granted_on + grant.reset_inc) <= now) {
-                        while ((now - grant.granted_on) > grant.reset_inc) grant.granted_on += grant.reset_inc;
-                        grant.value = (grant.starting_value as float).to_units(stof_units);
-                    }
-
-                    // Does this grant match this credit?
-                    if (overage > 0 && grant.credit == credit) {
-                        if (overage < grant.value) {
-                            grant.value -= overage;
-                            grant_value_applied += overage;
-                            overage = 0;
-                        } else {
-                            overage -= grant.value;
-                            grant_value_applied += grant.value;
-                            grant.value = 0;
-                        }
-                    }
-
-                    // If the grant has been completely used and doesn't reset, remove it
-                    if (grant.value <= 0 && !grant.resets) ids_to_remove.push_back(id);
-                }
-            }
-            for (const id in ids_to_remove) self.grants.remove(id, shallow = false);
-            event_value.grant_value_applied = grant_value_applied;
+        // get defined exchange rates
+        let policy = self.parent();
+        loop {
+            if (policy == null || policy.instance_of('Limitr')) break;
+            policy = policy.parent();
         }
+        let exchange = policy != null && policy.instance_of('Limitr') ? policy.exchange : null;
 
+        // while overage, take from grants
+        let grant_value_applied = 0;
+        while (overage > 0) {
+            const grant: Grant = self.best_grant(credit, exchange, stof_units);
+            if (grant != null) {
+                // get overage in terms of the grant itself
+                let grant_overage = exchange != null ? exchange.exchange(overage, credit, grant.credit) ?? overage : overage;
+                if (grant_overage < grant.value) {
+                    grant.value -= grant_overage;
+                    grant_value_applied += overage; // in "credit"
+                    overage = 0;
+                } else {
+                    let credit_grant_value = exchange != null ? exchange.exchange(grant.value, grant.credit, credit) ?? grant.value : grant.value;
+                    overage -= credit_grant_value;
+                    grant_value_applied += credit_grant_value;
+                    grant.value = 0;
+
+                    // if grant doesn't reset, then remove completely
+                    if (!grant.resets) self.grants.remove(grant.id, shallow = false);
+                }
+            } else {
+                break;
+            }
+        }
+        event_value.grant_value_applied = grant_value_applied;
         event_value.overage = max(0, overage);
         overage > 0
     }

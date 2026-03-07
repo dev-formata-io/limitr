@@ -15,6 +15,11 @@
 //
 
 Limitr policy: {
+    exchange: {
+        customer_facing_overage_token: { value: 1, currency: 'rune' }
+        overage_token: { value: 0.5, currency: 'customer_facing_overage_token' }
+    }
+
     credits: {
         Credit seat: {
             unit: 'seat'
@@ -32,6 +37,10 @@ Limitr policy: {
             description: 'A single megabyte of usage in our platform.'
             label: 'Megabytes'
             stof_units: 'MB'
+        }
+
+        Credit customer_facing_overage_token: {
+            description: 'Customer facing token for overage'
         }
 
         Credit overage_token: {
@@ -99,7 +108,7 @@ Limitr policy: {
             }
             topups: {
                 overage_tokens: {
-                    credit: 'overage_token'
+                    credit: 'customer_facing_overage_token'
                     value: 300
                 }
                 invalid_topup: {
@@ -212,14 +221,14 @@ fn credit_grant_overage() {
     assert(self.policy.allow(user, ent, 5));
     assert_eq(customer.metadata.overage, 5); // soft limit of 0
 
-    // lets give our user a grant of credits
-    assert(self.policy.apply_customer_topup(user, 'overage_tokens')); // add a grant of 300 overage tokens
-    //assert(self.policy.create_customer_credit_grant(user, 'overage_token', 300));
+    // lets give our user a grant of customer facing credits (300 = 600 overage_tokens because 1cf = 0.5ot)
+    assert(self.policy.apply_customer_topup(user, 'overage_tokens')); // add a grant of 300 customer facing overage tokens
+    //assert(self.policy.create_customer_credit_grant(user, 'customer_facing_overage_token', 300));
     assert(self.policy.allow(user, ent, 200));
     assert_eq(customer.metadata.overage, 5);
-    assert_eq(customer.grants[0][1].value, 100); // 100 remaining on the grant
+    assert_eq(customer.grants[0][1].value, 200); // 200 remaining on the grant
 
-    assert(self.policy.allow(user, ent, 200));
+    assert(self.policy.allow(user, ent, 500));
     assert_eq(customer.metadata.overage, 105); // all time overage of 105
     assert_not(customer.grants[0]); // ont-time grant was used up completely!
 }

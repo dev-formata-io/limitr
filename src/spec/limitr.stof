@@ -21,7 +21,10 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.26;
+    ver version: 0.5.27;
+
+    /// Exchange rates.
+    Exchange exchange: {};
 
     /// Credits.
     obj credits: {};
