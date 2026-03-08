@@ -21,13 +21,10 @@ Price: {
     str id: null;
 
     #[schema((target: obj, target_val:float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Price cannot have a negative amount: ${target.label()}`))]
-    /// An amount to display with this price.
+    /// The amount to charge, using Limitr runes (in runes, default 1 rune = 1 usd).
     float! amount: 0;
 
-    /// Prefix for label.
-    str! prefix: '$';
-
-    /// Suffix for label.
+    /// Suffix for label & intervals.
     str! suffix: '/month';
 
     
@@ -35,10 +32,9 @@ Price: {
      * Label for this price.
      */
     fn label() -> str {
-        const pref = self.prefix;
         const amount = self.amount.round(2);
         const suf = self.suffix.len() > 0 ? ' ' + self.suffix : '';
-        `${pref}${amount}${suf}`
+        `${amount} runes ${suf}`
     }
 }
 

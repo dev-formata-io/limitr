@@ -17,9 +17,13 @@
 
 #[type]
 ExchangePair: {
+    #[schema((target_val: float): bool => target_val >= 0 ? true : <LimitrValidation>.error('Credit exchange mapping cannot have a negative value'))]
+    /// Value/multiplier for this exchange pair.
     float! value: 1
+
+    #[schema((target_val: str): bool => target_val.len() > 0 ? true : <LimitrValidation>.error('Credit exchange mapping must contain a valid currency'))]
+    /// Currency of this exchange pair.
     str! currency: 'usd'
-    fn pair() -> (float, str) { (self.value, self.currency) }
 }
 
 
@@ -29,6 +33,10 @@ ExchangePair: {
  * Applied when overage occurs to draw from credit grants instead of charging.
  */
 Exchange: {
+    #[schema((target_val: str): bool => {
+        set('expires_first', 'cheapest_first', 'valuable_first').contains(target_val) ? true :
+        <LimitrValidation>.error(`Exchange grant strategy cannot be "${target_val}" - only 'expires_first', 'cheapest_first', or 'valuable_first'`)
+    })]
     /// Grant selection strategy.
     /// 'expires_first' - Choose the grant that expires first
     /// 'cheapest_first' - Choose the lowest rune value per unit
