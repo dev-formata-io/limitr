@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.28;
+    ver version: 0.5.29;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -144,14 +144,14 @@ Limitr: {
 
         /// Generate a diff JSON string with a different policy BSTF.
         /// This policy is treated as the "schema" for this operation, and will not be modified.
-        fn difference_bstf(bstf: blob) -> str {
+        fn difference_bstf(bstf: blob, symmetric: bool = false) -> str {
             const policy = self.get();
             if (policy == null) return '{ "error": "no policy found" }';
             let out = '{}';
             try {
                 let other = new {};
                 parse(bstf, other, 'bstf');
-                policy.diff(other, symmetric = false);
+                policy.diff(other, symmetric);
                 out = stringify('json', other);
                 drop(other);
             } catch {
