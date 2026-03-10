@@ -473,8 +473,7 @@ export class LimitrPricingTable extends LimitrElement {
         if (couponCode && this.policy) {
             customer.metadata = {
                 ...customer.metadata,
-                stripe_coupon_code: couponCode,
-                stripe_coupon_status: 'pending',
+                coupon_code: couponCode,
             };
             // Send customer update with coupon to server
             await this.policy.setCustomer(customer);

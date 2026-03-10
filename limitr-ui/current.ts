@@ -37,14 +37,13 @@ import './table.js';
  * - stripe_payment_method_brand: string - Card brand (visa, mastercard, etc.)
  *
  * Coupon metadata fields (populated by Limitr when coupon is applied):
- * - stripe_coupon_code: string - The coupon/promo code
- * - stripe_coupon_status: string - 'pending' | 'applied' | 'invalid' | 'expired'
- * - stripe_coupon_name: string - Display name for the coupon
- * - stripe_coupon_percent_off: string - Percentage off (if percent-based)
- * - stripe_coupon_amount_off: string - Amount off in cents (if amount-based)
- * - stripe_coupon_currency: string - Currency for amount_off coupons
- * - stripe_coupon_duration: string - 'once' | 'repeating' | 'forever'
- * - stripe_coupon_duration_in_months: string - Number of months (if repeating)
+ * - coupon_code: string - The coupon/promo code
+ * - plan_discount_status: string - 'pending' | 'applied' | 'invalid' | 'expired'
+ * - plan_discount_name: string - Display name for the coupon
+ * - plan_discount_percent_off: string - Percentage off (if percent-based)
+ * - plan_discount_amount_off: string - Amount off in cents (if amount-based)
+ * - plan_discount_currency: string - Currency for amount_off coupons
+ * - plan_discount_expires_at: number - Optional timestamp for when the discount expires
  */
 @customElement('limitr-current-plan')
 export class LimitrCurrentPlan extends LimitrElement {
@@ -730,7 +729,7 @@ export class LimitrCurrentPlan extends LimitrElement {
 
     //deno-lint-ignore no-explicit-any
     private getCouponDetails(metadata: any): { hasDiscount: boolean; discountedAmount: number; originalAmount: number; label: string; durationLabel: string } | null {
-        if (!metadata?.stripe_coupon_status || metadata.stripe_coupon_status !== 'applied') {
+        if (!metadata?.plan_discount_status || metadata.plan_discount_status !== 'applied') {
             return null;
         }
 
@@ -741,25 +740,22 @@ export class LimitrCurrentPlan extends LimitrElement {
         let discountedAmount = originalAmount;
         let label = '';
 
-        if (metadata.stripe_coupon_percent_off) {
-            const percentOff = parseFloat(metadata.stripe_coupon_percent_off);
+        if (metadata.plan_discount_percent_off) {
+            const percentOff = parseFloat(metadata.plan_discount_percent_off);
             discountedAmount = originalAmount * (1 - percentOff / 100);
             label = `${percentOff}% off`;
-        } else if (metadata.stripe_coupon_amount_off) {
-            const amountOff = parseFloat(metadata.stripe_coupon_amount_off) / 100; // cents -> dollars
+        } else if (metadata.plan_discount_amount_off) {
+            const amountOff = parseFloat(metadata.plan_discount_amount_off) / 100; // cents -> dollars
             discountedAmount = Math.max(0, originalAmount - amountOff);
             label = `$${amountOff.toFixed(2)} off`;
         }
 
         // Duration label
         let durationLabel = '';
-        const duration = metadata.stripe_coupon_duration;
-        if (duration === 'once') {
-            durationLabel = 'First period only';
-        } else if (duration === 'repeating' && metadata.stripe_coupon_duration_in_months) {
-            durationLabel = `First ${metadata.stripe_coupon_duration_in_months} months`;
+        if (metadata.plan_discount_expires_at) {
+            const date = new Date(metadata.plan_discount_expires_at);
+            durationLabel = `Expires on ${date.toDateString()}`;
         }
-        // 'forever' = no duration label, it's just the price now
 
         return {
             hasDiscount: discountedAmount < originalAmount,
@@ -1049,7 +1045,7 @@ export class LimitrCurrentPlan extends LimitrElement {
                                 ${coupon?.hasDiscount ? html`
                                     <div class="coupon-badge">
                                         <span class="coupon-tag-icon">🏷️</span>
-                                        ${metadata.stripe_coupon_name || metadata.stripe_coupon_code} — ${coupon.label}
+                                        ${metadata.plan_discount_name || metadata.coupon_code} — ${coupon.label}
                                     </div>
                                     ${coupon.durationLabel ? html`
                                         <div class="coupon-duration">${coupon.durationLabel}</div>
