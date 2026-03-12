@@ -187,4 +187,21 @@ Customer: {
         event_value.overage = max(0, overage);
         overage > 0
     }
+
+
+    /**
+     * Ensure voucher max spend (for local allow only - max spend hard enforced remotely for customers).
+     * If self.metadata.limitr_voucher_runes < overage, prevent the allow to protect provider (your) costs!
+     */
+    fn ensure_voucher(event_value: obj!) -> bool {
+        if (self.metadata.limitr_voucher != null && self.metadata.limitr_voucher_expires != null) {
+            const overage = event_value.overage ?? 0;
+            if (self.metadata.limitr_voucher_runes != null) {
+                return Time.now() < self.metadata.limitr_voucher_expires && self.metadata.limitr_voucher_runes >= overage;
+            } else {
+                return Time.now() < self.metadata.limitr_voucher_expires;
+            }
+        }
+        true
+    }
 }

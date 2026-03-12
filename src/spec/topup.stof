@@ -21,6 +21,9 @@
  * Purchasable credit package.
  */
 Topup: {
+    /// Description for this entitlement.
+    str description: '';
+    
     #[schema(<LimitrValidation>.valid_credit_id)]
     /// Credit ID.
     str! credit: '';

@@ -26,7 +26,7 @@ export interface LimitrCloudInit {
     /** Limitr Cloud API token. */
     token: string;
 
-    /** Policy ID - leave undefined (or "active") for continuous updates to active workspace policy. */
+    /** Policy ID - leave undefined (or "active") for continuous updates. */
     policy?: string;
 
     /** Alternate WebSocket address. */
@@ -729,15 +729,20 @@ export class Limitr {
      *
      * @param id The customer ID (or alternative ID) to add from Limitr Cloud.
      * @param timeout The max amount of time to wait for the customer to arrive locally.
+     * @param voucher Creates a proxy customer on this product on the voucher issuer's behalf.
      * @returns true if the customer exists and is ready to interact with.
      */
-    async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
+    async addCloudCustomer(id: string, timeout: number = 3000, voucher?: string): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
         if (existing) return true;
 
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         this._deniedCloudCustomers.delete(id);
-        this.ws.send(JSON.stringify({ type: 'customer', id }));
+        if (voucher) {
+            this.ws.send(JSON.stringify({ type: 'ensure-voucher-customer', id, code: voucher }));
+        } else {
+            this.ws.send(JSON.stringify({ type: 'customer', id }));
+        }
         
         return new Promise<boolean>((resolve) => {
             const intervalMs = 50;

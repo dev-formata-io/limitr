@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.29;
+    ver version: 0.5.30;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -813,6 +813,15 @@ Limitr: {
                                 // grants will modify event_value.overage for appropriate aggregation in the correct units
                                 event_value.overage = new_value > old_value ? new_value - old_value : new_value - (event_value.remaining + new_value);
                                 if (customer.apply_overage_grants(limit.credit, event_value, stof_units)) {
+
+                                    // intercept here with voucher mode to protect your costs if using a voucher with max spend
+                                    // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
+                                    if (!customer.ensure_voucher(event_value)) {
+                                        existing_meter.value = old_value;
+                                        drop(event_value);
+                                        return false;
+                                    }
+
                                     await <Event>.send('meter-overage', event_value);
                                 }
                             }
