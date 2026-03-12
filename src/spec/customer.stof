@@ -144,20 +144,12 @@ Customer: {
      * Try using a grant on this customer before sending meter-overage.
      * Returns true if there is still overage to be applied to the customers account (grants were used up/not there).
      */
-    fn apply_overage_grants(credit: str!, event_value: obj!, stof_units: str!) -> bool {
+    fn apply_overage_grants(credit: str!, event_value: obj!, stof_units: str!, exchange: Exchange) -> bool {
         const fields = self.grants.fields();
         if (fields.empty()) return true; // no grants present, send overage event
 
         let overage = event_value.overage;
         if (overage == null) return false; // no overage recorded, don't send event
-
-        // get defined exchange rates
-        let policy = self.parent();
-        loop {
-            if (policy == null || policy.instance_of('Limitr')) break;
-            policy = policy.parent();
-        }
-        let exchange = policy != null && policy.instance_of('Limitr') ? policy.exchange : null;
 
         // while overage, take from grants
         let grant_value_applied = 0;
@@ -193,11 +185,18 @@ Customer: {
      * Ensure voucher max spend (for local allow only - max spend hard enforced remotely for customers).
      * If self.metadata.limitr_voucher_runes < overage, prevent the allow to protect provider (your) costs!
      */
-    fn ensure_voucher(event_value: obj!) -> bool {
+    fn ensure_voucher(credit: str!, event_value: obj!, exchange: Exchange) -> bool {
         if (self.metadata.limitr_voucher != null && self.metadata.limitr_voucher_expires != null) {
-            const overage = event_value.overage ?? 0;
             if (self.metadata.limitr_voucher_runes != null) {
-                return Time.now() < self.metadata.limitr_voucher_expires && self.metadata.limitr_voucher_runes >= overage;
+                if (exchange == null) return false;
+
+                const overage = event_value.overage ?? 0;
+                const overage_runes = exchange.to_runes(overage, credit);
+                if (overage_runes == null) return false;
+
+                const res = Time.now() < self.metadata.limitr_voucher_expires && self.metadata.limitr_voucher_runes >= overage_runes;
+                if (res) self.metadata.limitr_voucher_runes -= overage_runes;
+                return res;
             } else {
                 return Time.now() < self.metadata.limitr_voucher_expires;
             }

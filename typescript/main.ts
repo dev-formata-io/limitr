@@ -727,6 +727,15 @@ export class Limitr {
     /**
      * Add a customer from Limitr Cloud if not already local.
      *
+     * This is also the API for vouchers, which enable inter-product transactions between
+     * any services that use Limitr. Ex. Limitr user A creates a voucher that allows Limitr
+     * products B, C, & D to charge user A a max of $0.5 of usage in total amongst all of them
+     * only for the next 15 minutes. User A never pays B, C, or D, just sends a voucher and pays Limitr
+     * for overage. Then Limitr shares revenue with B, C, & D accordingly with no additional Cloud setup.
+     * All Limitr features work across services (discounts, markups, promotions, etc.) just like normal.
+     * No API key management, single line of code to implement, always transparent & traceable.
+     * Requires an appropriate Limitr plan - reach out if interested!
+     *
      * @param id The customer ID (or alternative ID) to add from Limitr Cloud.
      * @param timeout The max amount of time to wait for the customer to arrive locally.
      * @param voucher Creates a proxy customer on this product on the voucher issuer's behalf.

@@ -30,6 +30,7 @@ Limitr policy: {
         Credit token: {
             unit: 'token'
             label: 'Token'
+            price: { amount: 6e-6 }
         }
 
         Credit mb: {
@@ -196,6 +197,13 @@ fn valid_policy() {
     assert_eq(self.policy.credits.tiered_token.tiers.back().up_to, null);
     assert_eq(self.policy.credits.tiered_token.tiers.back().price.amount, 0.0004);
     //pln(stringify('yaml', self.policy.credits.tiered_token));
+}
+
+#[test]
+fn default_exchange_rates() {
+    // credits with a price can be exchanged for runes!
+    const runes = self.policy.exchange.to_runes(2, 'token');
+    assert_eq(runes, 12e-6);
 }
 
 #[test]

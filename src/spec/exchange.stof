@@ -52,14 +52,41 @@ Exchange: {
      */
     fn to_runes(v: float!, c: str!) -> float {
         const visited = set();
+        
+        let policy = self.parent();
+        if (policy != null && ((typeof policy) != 'obj' || !policy.instance_of('Limitr'))) {
+            policy = null;
+        }
+
         while (c != 'rune') {
             if (visited.contains(c)) return null; // cycle detected
             visited.insert(c);
 
             const def: ExchangePair = self.get(c);
-            if (def == null) return null; // no-can-do
-            v *= def.value;
-            c = def.currency;
+            let credit_defined = false;
+            if (def == null) {
+                if (policy != null) {
+                    // try auto pricing in runes for this credit
+                    const credit = ?policy.credit(c);
+                    if (credit != null) {
+                        if (credit.pricing_model == 'flat' && credit.price != null) {
+                            v *= credit.price.amount; // already defined in runes
+                            c = 'rune';
+                            credit_defined = true;
+                        } else if (credit.tiers != null && credit.tiers.any()) {
+                            const first = credit.tiers.front();
+                            v *= first.price.amount; // already defined in runes
+                            c = 'rune';
+                            credit_defined = v != null;
+                        }
+                    }
+                }
+                if (!credit_defined) return null; // no-can-do
+            }
+            if (!credit_defined) {
+                v *= def.value;
+                c = def.currency;
+            }
         }
         v
     }
