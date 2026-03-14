@@ -67,7 +67,7 @@ export class LimitrCurrentPlan extends LimitrElement {
     denyPolicyChanges: boolean = false;
 
     @property({ type: Boolean })
-    interactive: boolean = true;
+    tableInteractive: boolean = true;
 
     @state()
     //deno-lint-ignore no-explicit-any
@@ -1058,7 +1058,7 @@ export class LimitrCurrentPlan extends LimitrElement {
                         </div>
                         <div class="plan-actions">
                             <button class="change-plan-btn" @click=${this.handleChangePlan}>
-                                Change Plan
+                                ${this.tableInteractive ? 'Change Plan' : 'View Plans'}
                             </button>
                             ${this.stripePortalUrl ? html`
                                 <button class="change-plan-btn" @click=${() => globalThis.location.href = this.stripePortalUrl}>
@@ -1096,12 +1096,12 @@ export class LimitrCurrentPlan extends LimitrElement {
                             .policy=${this.policy as any}
                             .customerId=${this.customerId}
                             .stripePortalUrl=${this.stripePortalUrl}
-                            ?denyPolicyChanges=${this.denyPolicyChanges}
+                            .denyPolicyChanges=${this.denyPolicyChanges}
                             theme=${this.theme}
                             @plan-select=${this.handlePlanSelected}
-                            ?requestStripeInvoices=${false}
-                            ?requestStripePortalUrl=${false}
-                            ?interactive=${this.interactive}
+                            .requestStripeInvoices=${false}
+                            .requestStripePortalUrl=${false}
+                            .interactive=${this.tableInteractive}
                         ></limitr-pricing-table>
                     </div>
                 </div>
