@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Limitr UI Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Limitr UI Test Page</h1>
+    <div class="test-section">
+        <h2>Testing Limitr UI Components</h2>
+        <div id="pricing"></div>
+    </div>
+
+    <!-- Import Map for dependencies -->
+    <script type="importmap">
+    {
+        "imports": {
+            "lit": "https://unpkg.com/lit@3/index.js",
+            "lit/": "https://unpkg.com/lit@3/",
+            "@lit/reactive-element": "https://unpkg.com/@lit/reactive-element@2/reactive-element.js",
+            "@lit/reactive-element/": "https://unpkg.com/@lit/reactive-element@2/",
+            "lit-html": "https://unpkg.com/lit-html@3/lit-html.js",
+            "lit-html/": "https://unpkg.com/lit-html@3/",
+            "lit-element/": "https://unpkg.com/lit-element@4/",
+            "nanoid": "https://unpkg.com/nanoid@latest/nanoid.js",
+            "@formata/limitr": "https://unpkg.com/@formata/limitr@latest",
+            "@formata/limitr-ui": "https://unpkg.com/@formata/limitr-ui@latest",
+            "@formata/limitr-ui/helpers": "https://unpkg.com/@formata/limitr-ui@latest/helpers",
+            "@formata/stof": "https://unpkg.com/@formata/stof@latest",
+            "@formata/stof/": "https://unpkg.com/@formata/stof@latest/"
+        }
+    }
+    </script>
+    <script type="module">
+        import { createPricingTable } from '@formata/limitr-ui/helpers';
+        await createPricingTable({container: '#pricing', token: 'API TOKEN'});
+    </script>
+</body>
+</html>

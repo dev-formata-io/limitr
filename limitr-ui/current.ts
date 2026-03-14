@@ -66,6 +66,9 @@ export class LimitrCurrentPlan extends LimitrElement {
     /** When true, emit plan select events only, without setting customer plan on policy. */
     denyPolicyChanges: boolean = false;
 
+    @property({ type: Boolean })
+    interactive: boolean = true;
+
     @state()
     //deno-lint-ignore no-explicit-any
     private currentPlan: any = null;
@@ -1098,7 +1101,7 @@ export class LimitrCurrentPlan extends LimitrElement {
                             @plan-select=${this.handlePlanSelected}
                             ?requestStripeInvoices=${false}
                             ?requestStripePortalUrl=${false}
-                            ?interactive=${true}
+                            ?interactive=${this.interactive}
                         ></limitr-pricing-table>
                     </div>
                 </div>

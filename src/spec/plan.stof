@@ -44,6 +44,9 @@ Plan: {
     /// Hidden plan?
     bool hidden: false;
 
+    /// Selectable plan?
+    bool selectable: true;
+
     /// Is this the default plan?
     /// If no plan is provided on create customer, this one should be used.
     bool default: false;

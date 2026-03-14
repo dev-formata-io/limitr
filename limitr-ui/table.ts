@@ -435,6 +435,7 @@ export class LimitrPricingTable extends LimitrElement {
         
         // Get the selected plan details
         const selectedPlan = this.getPlan(planName);
+        if (!selectedPlan?.selectable) return;
         const hasPaidPrice = selectedPlan?.price && selectedPlan.price.amount > 0;
         
         // Check if plan allows coupons and show coupon modal if so
@@ -660,7 +661,7 @@ export class LimitrPricingTable extends LimitrElement {
                     })}
                 </ul>
 
-                ${this.interactive ? html`
+                ${this.interactive && !!plan.selectable ? html`
                     <button 
                         class="select-button ${isCurrent ? 'current' : ''}"
                         ?disabled=${isCurrent}

@@ -620,6 +620,28 @@ export class Limitr {
     }
 
 
+    /**
+     * Set a customer's meter value for an entitlement using allow(value - current).
+     */
+    async set(customer: string, entitlement: string, value: number): Promise<boolean> {
+        const current = await this.value(customer, entitlement);
+        if (current !== null) return await this.allow(customer, entitlement, value - current);
+        return false;
+    }
+
+
+    /**
+     * Increment modify helper.
+     * @param meter Should we change customer meter values or just check if they could be changed (if false)?
+     * @param up Are we incrementing or decrementing the value (if false)?
+     */
+    async incrementModify(customer: string, entitlement: string, meter: boolean, up: boolean): Promise<boolean> {
+        return meter
+            ? (up ? await this.increment(customer, entitlement) : await this.decrement(customer, entitlement))
+            : (up ? await this.checkIncrement(customer, entitlement) : await this.checkDecrement(customer, entitlement));
+    }
+
+
     /*****************************************************************************
      * Limitr Cloud.
      *****************************************************************************/
