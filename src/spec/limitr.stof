@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.32;
+    ver version: 0.5.33;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -808,6 +808,7 @@ Limitr: {
                                 credit,
                                 remaining: (limit.value as float).to_units(stof_units) - new_value,
                             };
+                            let sent_overage = false;
                             if (!res) {
                                 // contemplate credit grants for this customer before sending overage amount
                                 // grants will modify event_value.overage for appropriate aggregation in the correct units
@@ -822,11 +823,12 @@ Limitr: {
                                         return false;
                                     }
 
+                                    sent_overage = true;
                                     await <Event>.send('meter-overage', event_value);
                                 }
                             }
                             if (existing_meter_reset) await <Event>.send('meter-reset', event_value);
-                            await <Event>.send('meter-changed', event_value); // meter-changed at the end for saves
+                            if (!sent_overage) await <Event>.send('meter-changed', event_value);
                             drop(event_value);
                         }
 

@@ -952,6 +952,12 @@ export class Limitr {
                     this.wsSendDebounced(id, data, debounceMs);
                 });
 
+                if (this.eventHandlers.size > 0) {
+                    this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
+                        for (const [_, handler] of this.eventHandlers) handler(key, value);
+                    });
+                }
+
                 this.wsInit = true;
             } catch (e) {
                 console.error('Error initializing Limitr Policy from BSTF: ', e);
