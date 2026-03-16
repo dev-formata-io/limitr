@@ -502,10 +502,16 @@ export class LimitrPricingTable extends LimitrElement {
             this.couponError = 'Please enter a coupon code';
             return;
         }
+        const customer = await this.customer();
+        if (!customer || !customer.cloud_workspace) {
+            console.warn('Not a valid Limitr Cloud customer object');
+            return;
+        }
+        const workspaceId = customer.cloud_workspace as string;
 
         // Make sure the coupon is valid before applying it
         const coupon = this.couponCode.trim();
-        const response = await fetch(`https://api.limitr.dev/v1/stripe-ui/coupon-check?coupon=${coupon}&customerId=${this.customerId}`);
+        const response = await fetch(`https://api.limitr.dev/v1/stripe-ui/coupon-check?coupon=${coupon}&workspaceId=${workspaceId}&customerId=${this.customerId}`);
         if (response.ok) {
             const json = await response.json();
             if (json.valid) {
