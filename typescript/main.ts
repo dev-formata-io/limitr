@@ -66,7 +66,7 @@ export class Limitr {
     denyUnconnected: boolean = true;
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
-    protected wsTimeout?: unknown;
+    protected wsTimeout?: ReturnType<typeof setTimeout>;
 
     /** Optional named event handlers for all Limitr events. */
     protected eventHandlers: Map<string, LimitrEventHandler> = new Map();
@@ -317,7 +317,7 @@ export class Limitr {
     /**
      * Ensure that a customer exists, creating one if necessary.
      * This takes the cloud into consideration as well.
-     * Returns true if a new customer was created (one will always exist after this).
+     * NOTE: Returns true if a new customer was created (one will always exist after this).
      */
     async ensureCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
@@ -621,7 +621,8 @@ export class Limitr {
 
 
     /**
-     * Set a customer's meter value for an entitlement using allow(value - current).
+     * Set a customer's meter value for an entitlement using 'allow(value - current)'.
+     * For accumulating usage, use 'allow' or 'increment'.
      */
     async set(customer: string, entitlement: string, value: number): Promise<boolean> {
         const current = await this.value(customer, entitlement);
@@ -764,8 +765,13 @@ export class Limitr {
      * @returns true if the customer exists and is ready to interact with.
      */
     async addCloudCustomer(id: string, timeout: number = 3000, voucher?: string): Promise<boolean> {
-        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
-        if (existing) return true;
+        if (voucher) {
+            // remove local customer for re-auth via voucher every time
+            await this.gate.run(() => this.doc.call('<Limitr>.api.delete_customer', id));
+        } else {
+            const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+            if (existing) return true;
+        }
 
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         this._deniedCloudCustomers.delete(id);
@@ -830,8 +836,18 @@ export class Limitr {
     /**
      * Close connection to Limitr Cloud.
      */
-    close() {
-        //@ts-ignore timeout
+    async close() {
+        const unsent = [];
+        for (const [_, { timeoutHandle, data }] of this._debouncedSendMap) {
+            clearTimeout(timeoutHandle);
+            unsent.push(data);
+        }
+        this._debouncedSendMap = new Map();
+        
+        const handles = [];
+        for (const data of unsent) handles.push(this.wsSend(data));
+        await Promise.allSettled(handles);
+
         if (this.wsTimeout) clearTimeout(this.wsTimeout);
         this.wsInit = false;
         if (this.ws && this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
