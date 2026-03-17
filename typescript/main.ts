@@ -748,38 +748,36 @@ export class Limitr {
 
 
     /**
-     * Add a customer from Limitr Cloud if not already local.
+     * Convenience method to authenticate a voucher via addCloudCustomer.
+     * Typically used in auth/user signup workflows in conjunction with ensureCustomer, etc.
+     */
+    async addVoucher(voucher: string, handler?: ()=>Promise<boolean> | boolean): Promise<boolean> {
+        if (voucher.startsWith('limitr_v1_')) return await this.addCloudCustomer(voucher);
+        return handler ? handler() : false;
+    }
+
+
+    /**
+     * Add a customer from Limitr Cloud.
+     * Does not create a new customer if needed - see ensureCustomer for that.
+     * Will (re)validate vouchers when used as customer ID.
      *
-     * This is also the API for vouchers, which enable inter-product transactions between
-     * any services that use Limitr. Ex. Limitr user A creates a voucher that allows Limitr
-     * products B, C, & D to charge user A a max of $0.5 of usage in total amongst all of them
-     * only for the next 15 minutes. User A never pays B, C, or D, just sends a voucher and pays Limitr
-     * for overage. Then Limitr shares revenue with B, C, & D accordingly with no additional Cloud setup.
-     * All Limitr features work across services (discounts, markups, promotions, etc.) just like normal.
-     * No API key management, single line of code to implement, always transparent & traceable.
-     * Requires an appropriate Limitr plan - reach out if interested!
-     *
-     * @param id The customer ID (or alternative ID) to add from Limitr Cloud.
+     * @param id The customer or voucher ID to add from Limitr Cloud ("limitr_" prefixes are reserved).
      * @param timeout The max amount of time to wait for the customer to arrive locally.
-     * @param voucher Creates a proxy customer on this product on the voucher issuer's behalf.
      * @returns true if the customer exists and is ready to interact with.
      */
-    async addCloudCustomer(id: string, timeout: number = 3000, voucher?: string): Promise<boolean> {
-        if (voucher) {
-            // remove local customer for re-auth via voucher every time
-            await this.gate.run(() => this.doc.call('<Limitr>.api.delete_customer', id));
-        } else {
+    async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
+        const voucher = id.startsWith('limitr_v1_');
+        if (voucher) await this.gate.run(() => this.doc.call('<Limitr>.api.delete_customer', id));
+        if (!voucher) {
             const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
             if (existing) return true;
         }
 
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         this._deniedCloudCustomers.delete(id);
-        if (voucher) {
-            this.ws.send(JSON.stringify({ type: 'ensure-voucher-customer', id, code: voucher }));
-        } else {
-            this.ws.send(JSON.stringify({ type: 'customer', id }));
-        }
+        if (voucher) { this.ws.send(JSON.stringify({ type: 'ensure-voucher-customer', id })); }
+        else { this.ws.send(JSON.stringify({ type: 'customer', id })); }
         
         return new Promise<boolean>((resolve) => {
             const intervalMs = 50;

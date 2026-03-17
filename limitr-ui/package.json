@@ -31,7 +31,7 @@
     },
     "homepage": "https://limitr.dev",
     "dependencies": {
-        "@formata/limitr": "^0.5.35",
+        "@formata/limitr": "^0.5.36",
         "lit": "^3.3.2",
         "nanoid": "^5.1.6"
     },
