@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.37;
+    ver version: 0.5.38;
 
     /// Exchange rates.
     Exchange exchange: {};

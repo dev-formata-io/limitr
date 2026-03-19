@@ -963,9 +963,7 @@ export class Limitr {
             if (data === 'pong' || data === 'ping') return;
             try {
                 const record = JSON.parse(data);
-                if (record.type === 'set-capabilities' && !!record.stof) {
-                    await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_capabilities', record.stof, 'stof'));
-                } else if (record.type === 'topup-purchase-failed') {
+                if (record.type === 'topup-purchase-failed') {
                     for (const [_, handler] of this.eventHandlers) handler('topup-purchase-failed', record);
                 } else if (!!record.error && !!record.id) {
                     if (record.type === 'customer') {
@@ -991,48 +989,52 @@ export class Limitr {
                 } else {
                     return; // unknown binary type
                 }
-
-                await this.gate.run(() => {
-                    this.doc = new StofDoc();
-                    this.doc.parse(buffer, 'bstf');
-                    
-                    this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
-                    this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
-                    this.doc.lib('Http', 'fetch', async (
-                        url: string,
-                        method: string = 'GET',
-                        body: BodyInit | undefined | null = null,
-                        headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
-                        const response = await fetch(url, {
-                            method,
-                            body: body ?? undefined,
-                            headers: Object.fromEntries(headers.entries()),
+                const doc = new StofDoc();
+                doc.parse(buffer, 'bstf');
+                const lv = await doc.get('root.Limitr.version');
+                if (!!lv) {
+                    await this.gate.run(() => {
+                        this.doc = doc;
+                        this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
+                        this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
+                        this.doc.lib('Http', 'fetch', async (
+                            url: string,
+                            method: string = 'GET',
+                            body: BodyInit | undefined | null = null,
+                            headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
+                            const response = await fetch(url, {
+                                method,
+                                body: body ?? undefined,
+                                headers: Object.fromEntries(headers.entries()),
+                            });
+                            const result = new Map<string, unknown>();
+                            result.set('status', response.status);
+                            result.set('ok', response.ok);
+                            const headerMap = new Map();
+                            response.headers.forEach((value, key) => headerMap.set(key, value));
+                            result.set('headers', headerMap);
+                            result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
+                            result.set('bytes', await response.bytes());
+                            return result;
+                        }, true);
+                        this.doc.lib('CloudWS', 'send', (data: string) => {
+                            this.wsSend(data);
                         });
-                        const result = new Map<string, unknown>();
-                        result.set('status', response.status);
-                        result.set('ok', response.ok);
-                        const headerMap = new Map();
-                        response.headers.forEach((value, key) => headerMap.set(key, value));
-                        result.set('headers', headerMap);
-                        result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
-                        result.set('bytes', await response.bytes());
-                        return result;
-                    }, true);
-                    this.doc.lib('CloudWS', 'send', (data: string) => {
-                        this.wsSend(data);
-                    });
-                    this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
-                        this.wsSendDebounced(id, data, debounceMs);
-                    });
-                    if (this.eventHandlers.size > 0) {
-                        this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
-                            for (const [_, handler] of this.eventHandlers) handler(key, value);
+                        this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
+                            this.wsSendDebounced(id, data, debounceMs);
                         });
-                    }
-                    this.wsInit = true;
-                });
+                        if (this.eventHandlers.size > 0) {
+                            this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
+                                for (const [_, handler] of this.eventHandlers) handler(key, value);
+                            });
+                        }
+                        this.wsInit = true;
+                    });
+                } else {
+                    await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_capabilities', buffer, 'bstf'));
+                }
             } catch (e) {
-                console.error('Error initializing Limitr Policy from BSTF: ', e);
+                console.error('Error initializing Limitr Policy from BSTF:', e);
             }
         }
     }
