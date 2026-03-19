@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.36;
+    ver version: 0.5.37;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -37,6 +37,9 @@ Limitr: {
 
     /// Alternative customer ID mappings.
     obj alt_customer_ids: {};
+
+    /// Capabilities.
+    obj capabilities: {};
 
 
     #[no-export]
@@ -158,6 +161,68 @@ Limitr: {
                 out = '{ "error": "could not process BSTF for policy diff" }';
             }
             out
+        }
+
+
+        /*****************************************************************************
+         * Capabilities.
+         *****************************************************************************/
+        
+        /// Capability by name.
+        fn capability(name: str!) -> Capability {
+            ?self.get().capability(name)
+        }
+
+        /// Set many imported capabilities at once.
+        /// Goes through fields and sets all objects as capabilities in this policy.
+        fn set_capabilities(contents: unknown, format: str = 'stof') {
+            const tmp = new {};
+            const policy = ?self.get();
+            if (policy == null) return;
+            try {
+                parse(contents, tmp, format);
+                for (const field in tmp.fields()) {
+                    const cap = field[1];
+                    if ((typeof cap) == 'obj') {
+                        // name, cast, & move to the correct location in doc
+                        if (cap.name == null || cap.name.len() < 1) cap.name = field[0];
+                        policy.set_capability(cap as Capability);
+                    }
+                }
+            } catch {
+                // Nada..
+            }
+            drop(tmp);
+        }
+
+        /// Run a capability.
+        fn run_capability(name: str!, args: map = map(), customer_id?: str) -> unknown {
+            ?self.get().run_capability(name, args, customer_id)
+        }
+
+        /// Claude tools JSON.
+        /// Array is placed in "tools" field.
+        fn claude_tools(customer_id?: str) -> str {
+            const policy = self.get();
+            if (policy == null) return null;
+            const arena = new {};
+            arena.tools = policy.claude_tools(arena, customer_id);
+            const res = stringify('json', arena);
+            drop(arena);
+            res
+        }
+
+        /// Claude tool use.
+        /// Runs the appropriate capability if found and returns a tool result JSON.
+        fn claude_tool_use(tool_use_json: str!, customer_id?: str) -> str {
+            const policy = self.get();
+            if (policy == null) return null;
+            const arena = new {};
+            parse(tool_use_json, arena, 'json');
+            let res = policy.claude_tool_use(arena, arena, customer_id);
+            if (res != null) res = stringify('json', res);
+            drop(arena);
+            res
         }
 
         
@@ -507,6 +572,106 @@ Limitr: {
         self.plans.insert(id, plan);
         await <Event>.send('plan-set', plan as Plan);
         plan
+    }
+
+
+    /*****************************************************************************
+     * Capabilities.
+     *****************************************************************************/
+    
+    /**
+     * Get a policy capability by name.
+     */
+    fn capability(name: str!) -> Capability {
+        let cp = self.capabilities.get(name);
+        if (cp != null) {
+            cp.name = name;
+            return cp;
+        }
+        null
+    }
+
+
+    /**
+     * Set a policy capability (overwrites existing if any).
+     */
+    fn set_capability(cap: Capability!) {
+        const old = self.capability(cap.name);
+        if (old != null) drop(old);
+        cap.move(self.capabilities);
+        self.capabilities.insert(cap.name, cap);
+    }
+
+
+    /**
+     * Run capability.
+     * Args is map<string, unknown>.
+     */
+    fn run_capability(name: str!, args: map = map(), customer_id?: str) -> unknown {
+        const cp = self.capability(name);
+        if (cp != null) {
+            if (customer_id != null) {
+                const pn = self.plan_for(customer_id);
+                const plan = pn == null ? null : pn.name;
+                if (!cp.access(plan, customer_id)) return null;
+            }
+
+            drop(cp.input);
+            cp.input = new {} on cp;
+            for (const pair in args) {
+                cp.input.insert(pair[0], copy(pair[1]));
+            }
+            drop(cp.output);
+            cp.output = new {} on cp;
+            cp.run();
+            return cp.get_result();
+        }
+        null
+    }
+
+
+    /**
+     * Claude tools for capabilities.
+     * Forced arena pattern for good stof practice.
+     */
+    fn claude_tools(arena: obj!, customer_id?: str) -> list {
+        const tools = [];
+        const pn = customer_id == null ? null : self.plan_for(customer_id);
+        const plan = pn == null ? null : pn.name;
+        for (const pair in self.capabilities.fields()) {
+            const cp: Capability = pair[1];
+            if (customer_id != null) {
+                if (cp.access(plan, customer_id)) {
+                    tools.push_back(cp.claude_tool(arena));
+                }
+            } else {
+                tools.push_back(cp.claude_tool(arena));
+            }
+        }
+        tools
+    }
+
+
+    /**
+     * Claude tool use.
+     * Runs the appropriate capability if found and returns a tool result or null.
+     */
+    fn claude_tool_use(tool_use: obj!, arena: obj!, customer_id?: str) -> obj {
+        const name = tool_use.name;
+        if (name == null) return null;
+        const cp = self.capability(name);
+        if (cp != null) {
+            if (customer_id != null) {
+                const pn = self.plan_for(customer_id);
+                const plan = pn == null ? null : pn.name;
+                if (!cp.access(plan, customer_id)) return null;
+            }
+            if (cp.claude_tool_use(tool_use)) {
+                cp.run();
+                return cp.claude_tool_result(tool_use, arena);
+            }
+        }
+        null
     }
 
 

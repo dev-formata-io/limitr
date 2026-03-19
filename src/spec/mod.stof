@@ -25,4 +25,5 @@ import './meter';
 import './grant';
 import './topup';
 import './exchange';
+import './capability';
 import './limitr';

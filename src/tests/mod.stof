@@ -147,6 +147,20 @@ Limitr policy: {
         }
     }
 
+    capabilities: {
+        say-hi: {
+            version: 0.0.1-test
+            description: 'Say hi!'
+            parameters: [{ name: 'name' }]
+
+            #[run]
+            fn say_hi() {
+                const name = self.input.name ?? 'World';
+                ?self.set_result(`Hello, ${name}!`);
+            }
+        }
+    }
+
 
     #[init]
     fn init_test_customers() {
@@ -184,6 +198,15 @@ Limitr policy: {
             }
         }
     }
+}
+
+#[test]
+fn say_hi_capability() {
+    let msg = self.policy.run_capability('say-hi');
+    assert_eq(msg, 'Hello, World!');
+
+    msg = self.policy.run_capability('say-hi', { 'name': 'CJ' });
+    assert_eq(msg, 'Hello, CJ!');
 }
 
 #[test]

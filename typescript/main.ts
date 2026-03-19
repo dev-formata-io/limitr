@@ -503,6 +503,60 @@ export class Limitr {
 
 
     /*****************************************************************************
+     * Capabilities.
+     *****************************************************************************/
+    
+    /**
+     * Capability by name.
+     */
+    async capability(name: string): Promise<Record<string, unknown> | undefined> {
+        const capNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.capability', name));
+        if (typeof capNode === 'string') return this.doc.record(capNode);
+        return undefined;
+    }
+
+
+    /**
+     * Set capabilities.
+     */
+    async setCapabilities(contents: string | Uint8Array, format: string = 'stof') {
+        await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_capabilities', contents, format));
+    }
+
+
+    /**
+     * Run a capability.
+     */
+    async runCapability(name: string, args: Record<string, unknown> = {}, customerId?: string): Promise<unknown> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.run_capability', name, new Map(Object.entries(args)), customerId ?? null));
+    }
+
+
+    /**
+     * Claude tools from capabilities, optionally for a specific customer.
+     */
+    async claudeTools(customerId?: string): Promise<Record<string, unknown>[]> {
+        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.claude_tools', customerId ?? null)) as string | null;
+        if (json) {
+            const obj = JSON.parse(json);
+            return obj.tools ?? [];
+        }
+        return [];
+    }
+
+
+    /**
+     * Claude tool use.
+     * Takes a tool_use object and returns a tool_result object if matching capability found.
+     */
+    async claudeToolUse(toolUse: any, customerId?: string): Promise<Record<string, unknown> | null> {
+        const toolUseJson = typeof toolUse === 'string' ? toolUse : JSON.stringify(toolUse);
+        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.claude_tool_use', toolUseJson, customerId ?? null)) as string | null;
+        return json ? JSON.parse(json) : null;
+    }
+
+
+    /*****************************************************************************
      * Entitlements API.
      *****************************************************************************/
 
@@ -940,6 +994,8 @@ export class Limitr {
                     this.doc = new StofDoc();
                     this.doc.parse(buffer, 'bstf');
                     
+                    this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
+                    this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
                     this.doc.lib('Http', 'fetch', async (
                         url: string,
                         method: string = 'GET',

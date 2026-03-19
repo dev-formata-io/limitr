@@ -1,0 +1,161 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * Capability parameter.
+ */
+CapabilityParam: {
+    str! name: '';
+    str! description: '';
+    
+    /// Property schema information
+    str! schema_type: 'string';
+    bool! required: true;
+}
+
+
+#[type]
+/**
+ * Limitr capability.
+ */
+Capability: {
+    /// Version.
+    ver! version: 0.1.0;
+
+    /// Name of this capability.
+    str! name: '';
+
+    /// What does this capability do?
+    str! description: '';
+
+    /// Input parameters.
+    list! parameters: [];
+
+    /// Input execution context.
+    obj! input: {};
+
+    /// Output execution context.
+    obj! output: {};
+
+    /// Output field name (single value results).
+    CapabilityParam | str result: 'result';
+
+    /// Optional plan filter for capability access.
+    list plans: null;
+
+    /// Optional customer ID filter for access.
+    list customers: null;
+
+
+    /**
+     * Customer has access to this capability?
+     */
+    fn access(plan: str, customer_id: str) -> bool {
+        const cplan = plan == null || self.plans == null || self.plans.empty() || self.plans.contains(plan);
+        const cid = customer_id == null || self.customers == null || self.customers.empty() || self.customers.contains(customer_id);
+        cplan && cid
+    }
+
+
+    /**
+     * Set the result value.
+     */
+    fn set_result(v: unknown) {
+        if (self.result == null) return;
+        if ((typeof self.result) == 'str') {
+            self.output.remove(self.result, shallow = false);
+            self.output.insert(self.result, v);
+        } else {
+            self.output.remove(self.result.name, shallow = false);
+            self.output.insert(self.result.name, v);
+        }
+        if ((typeof v) == 'obj') v.move(self.output);
+    }
+
+
+    /**
+     * Get capability result after execution (return value(s)).
+     */
+    fn get_result() -> unknown {
+        self.result != null ? ((typeof self.result) == 'str' ? self.output.get(self.result) : self.output.get(self.result.name)) : self.output
+    }
+
+
+    /**
+     * Claude tool definition for this capability.
+     */
+    fn claude_tool(arena?: obj) -> obj {
+        const tool = new {
+            name: self.name,
+            description: self.description,
+            input_schema: new {
+                type: 'object',
+                properties: new {},
+                required: [],
+            },
+        } on arena;
+        const properties = tool.input_schema.properties;
+        for (const param: CapabilityParam in self.parameters) {
+            properties.insert(param.name, new {
+                type: param.schema_type,
+                description: param.description,
+            } on properties);
+            if (param.required) tool.input_schema.required.push_back(param.name);
+        }
+        tool
+    }
+
+
+    /**
+     * Claude tool use hook (inject inputs/args for run with claude tool use).
+     * Pass the tool_use object right from Claude, will return true if it matches.
+     */
+    fn claude_tool_use(tool_use: obj!) -> bool {
+        if (tool_use.id == null || tool_use.type != 'tool_use' || tool_use.name != self.name) return false;
+        if (tool_use.input != null && (typeof tool_use.input) == 'obj') {
+            drop(self.input);
+            self.input = copy(tool_use.input); // deep copy inputs
+            self.input.move(self); // make sure parent is self
+        } else {
+            drop(self.input);
+            self.input = new {}; // just clear it anyway
+        }
+        drop(self.output);
+        self.output = new {};
+        true
+    }
+
+
+    /**
+     * Claude tool result (use the same object as in claude_tool_use after run).
+     */
+    fn claude_tool_result(tool_use: obj!, arena?: obj) -> obj {
+        let content = self.get_result() ?? '';
+        content = switch (typeof content) {
+            case 'obj': stringify('json', content)
+            case 'float': (content.remove_units() as str)
+            case 'str': content
+            default: str(content)
+        };
+        new {
+            type: 'tool_result',
+            tool_use_id: tool_use.id ?? 'unknown',
+            content
+        } on arena
+    }
+}
