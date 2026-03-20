@@ -105,6 +105,19 @@ Limitr: {
                 policy.customers.remove(id, shallow = false);
                 policy.customers.insert(id, c as Customer);
                 for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt, false);
+                if (c.metadata != null && c.metadata.limitr_voucher != null && c.metadata.limitr_voucher_expires != null) {
+                    if (c.metadata.limitr_voucher_expires <= Time.now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
+                        const vchr = c.metadata.limitr_voucher;
+                        for (const pair in policy.capabilities.fields()) {
+                            const cap: Capability = pair[1];
+                            if (cap.voucher == vchr || (cap.customers != null && cap.customers.len() == 1 && cap.customers.contains(vchr))) {
+                                policy.capabilities.remove(pair[0], shallow = false);
+                            } else if (cap.customers != null) {
+                                cap.customers.remove_all(vchr);
+                            }
+                        }
+                    }
+                }
                 await <Event>.send('internal-customer-updated', c);
             } catch {
                 drop(c);
