@@ -21,10 +21,13 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.41;
+    ver version: 0.5.42;
 
     /// Exchange rates.
     Exchange exchange: {};
+
+    /// Notification contracts.
+    Notifications notifications: {};
 
     /// Credits.
     obj credits: {};
@@ -127,7 +130,7 @@ Limitr: {
 
         /// Replace the current active policy internals in this document with a new one.
         /// Used to refresh this Limitr policies plans & credits (not customers).
-        fn update_policy_internals(updated: str!, format: str! = 'json') {
+        fn update_policy_internals(updated: unknown!, format: str! = 'json') {
             const policy = self.get();
             if (policy == null) return;
             const p = new {};
@@ -143,6 +146,37 @@ Limitr: {
                     policy.credits = p.policy.credits;
                     p.policy.credits.move(policy);
                 }
+                if ((typeof p.policy.notifications) == 'obj') {
+                    for (const pair in p.policy.notifications.fields()) {
+                        policy.set_notification(pair[0], pair[1]);
+                    }
+                }
+                if ((typeof p.policy.exchange) == 'obj') {
+                    policy.exchange.grant_strategy = p.policy.exchange.grant_strategy ?? 'expires_first';
+                    for (const pair in p.policy.exchange.fields()) {
+                        const name = pair[0];
+                        const val = pair[1];
+                        if ((typeof val) == 'obj') {
+                            policy.exchange.remove(name, shallow = false);
+                            policy.exchange.insert(name, val);
+                            val.move(policy.exchange);
+                        }
+                    }
+                }
+                if ((typeof p.limitr_cloud) == 'obj') {
+                    root.remove('limitr_cloud', shallow = false);
+                    root.limitr_cloud = p.limitr_cloud;
+                    p.limitr_cloud.move(root);
+                }
+                if ((typeof p.policy.capabilities) == 'obj') {
+                    for (const pair in p.policy.capabilities.fields()) {
+                        const name = pair[0];
+                        const cap: Capability = pair[1];
+                        if (cap.name == null || cap.name.len() < 1) cap.name = name;
+                        policy.set_capability(cap);
+                    }
+                }
+
                 await <Event>.send('internal-policy-updated');
             } catch {
                 // Nada...
@@ -174,6 +208,31 @@ Limitr: {
                 out = '{ "error": "could not process BSTF for policy diff" }';
             }
             out
+        }
+
+
+        /*****************************************************************************
+         * Notifications.
+         *****************************************************************************/
+        
+        /// Set many imported notifications at once.
+        /// Goes through fields and sets all objects as notification observers in this policy.
+        fn set_notifications(contents: unknown, format: str = 'stof') {
+            const tmp = new {};
+            const policy = ?self.get();
+            if (policy == null) return;
+            try {
+                parse(contents, tmp, format);
+                for (const field in tmp.fields()) {
+                    const note = field[1];
+                    if ((typeof note) == 'obj') {
+                        policy.set_notification(field[0], note as Notification);
+                    }
+                }
+            } catch {
+                // Nada..
+            }
+            drop(tmp);
         }
 
 
@@ -604,6 +663,21 @@ Limitr: {
 
 
     /*****************************************************************************
+     * Notifications.
+     *****************************************************************************/
+    
+    /**
+     * Set a policy notification observer (overwrites existing if any).
+     */
+    fn set_notification(name: str!, note: Notification!) {
+        const old = self.notifications.get(name);
+        if (old != null) drop(old);
+        note.move(self.notifications);
+        self.notifications.insert(name, note);
+    }
+
+
+    /*****************************************************************************
      * Capabilities.
      *****************************************************************************/
     
@@ -989,17 +1063,19 @@ Limitr: {
                         existing_meter.value = new_value;
                         customer.meters.insert(entitlement, existing_meter);
                         
+                        const limit_value = (limit.value as float).to_units(stof_units);
                         if (changed) {
                             const event_value = new {
                                 meter: new {
                                     old: old_value,
                                     value: new_value,
+                                    limit: limit_value,
                                 },
                                 customer,
                                 entitlement,
                                 plan,
                                 credit,
-                                remaining: (limit.value as float).to_units(stof_units) - new_value,
+                                remaining: limit_value - new_value,
                             };
                             let sent_overage = false;
                             if (!res) {
@@ -1017,23 +1093,44 @@ Limitr: {
                                     }
 
                                     sent_overage = true;
+
+                                    // Internal notifications first for any matching
+                                    const notes: Notifications = self.notifications;
+                                    await notes.handle_event('meter-overage', event_value);
                                     await <Event>.send('meter-overage', event_value);
                                 }
                             }
                             if (existing_meter_reset) await <Event>.send('meter-reset', event_value);
-                            if (!sent_overage) await <Event>.send('meter-changed', event_value);
+                            if (!sent_overage) {
+                                // Internal notifications first for any matching
+                                const notes: Notifications = self.notifications;
+                                await notes.handle_event('meter-changed', event_value);
+                                await <Event>.send('meter-changed', event_value);
+                            }
                             drop(event_value);
                         }
 
                         res = true; // meter was changed!
                     } else if (limit != null && !res) {
+                        const limit_value = (limit.value as float).to_units(stof_units);
                         const event_value = new {
+                            meter: new {
+                                value: existing_meter ? existing_meter.value : 0,
+                                limit: limit_value,
+                                invalid: new_value,
+                            },
                             customer,
                             entitlement,
                             plan,
                             credit,
                             invalid_value: new_value,
                         };
+
+                        // Internal notifications first for any matching
+                        const notes: Notifications = self.notifications;
+                        await notes.handle_event('meter-limit', event_value);
+
+                        // Global meter limit event
                         await <Event>.send('meter-limit', event_value);
                         drop(event_value);
                     }

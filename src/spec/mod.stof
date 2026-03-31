@@ -26,4 +26,5 @@ import './grant';
 import './topup';
 import './exchange';
 import './capability';
+import './notification';
 import './limitr';

@@ -66,6 +66,24 @@ Limitr policy: {
         }
     }
 
+    notifications: {
+        half-seats: {
+            count: 0;
+
+            fn fire(event: obj) {
+                //pln('send email for half-seats, remaining seats: ', event.remaining);
+                self.count += 1;
+            }
+
+            fn matches(type: str, event: obj) -> bool {
+                if (event.entitlement == 'seats' && event.remaining != null) {
+                    return event.remaining < (event.meter.limit / 2);
+                }
+                false
+            }
+        }
+    }
+
     plans: {
         #[type('Free')]
         Plan free: {
@@ -277,6 +295,9 @@ fn customer_seat_override() {
     assert(self.policy.allow(user, 'seats', 3));
     assert(self.policy.allow(user, 'seats', 1)); // 5
     assert_not(self.policy.increment(user, 'seats')); // blocked by override
+
+    // Make sure the half-seats notifications are firing (3 happen in this func)
+    assert(self.policy.notifications.half-seats.count > 2);
 }
 
 #[test]
