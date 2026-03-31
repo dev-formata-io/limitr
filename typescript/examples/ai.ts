@@ -37,6 +37,24 @@ policy:
             value: 10000
 `, 'yaml');
 
+// add a notification for when we've used half of all pro tokens
+// note: you probably want to use the addHandler outright instead of embedding these rules
+//       this is primarily for remotely controlled notifications
+await policy.setNotifications(`
+half-pro-tokens: {
+    fn matches(type: str, event: obj) -> bool {
+        if (type == 'meter-changed' && event.entitlement == 'tokens') {
+            return event.remaining < (event.meter.limit / 2);
+        }
+        false
+    }
+}`);
+policy.addHandler('handler', (key: string, value: unknown) => {
+    if (key === 'half-pro-tokens') {
+        console.log(key, value);
+    }
+});
+
 // create test customers
 await policy.createCustomer('free_user', 'free');
 await policy.createCustomer('pro_user', 'pro');
@@ -54,3 +72,6 @@ policy.doc.parse(`
 // determin allowed or not while metering usage
 const allowed = await policy.allow('free_user', 'tokens', 1400);
 if (!allowed) console.log('Free user is not allowed');
+
+// use at least half of the pro user tokens
+await policy.allow('pro_user', 'tokens', 6000);
