@@ -17,11 +17,11 @@
 
 #[type]
 /**
- * A Limitr object.
+ * A Limitr policy.
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.40;
+    ver version: 0.5.41;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -430,6 +430,21 @@ Limitr: {
         /// Create a customer credit grant.
         fn create_customer_credit_grant(customer_id: str!, credit: str!, value: float | str, resets: bool = false, reset_inc?: ms, expires_on?: ms, event: bool = true) -> bool {
             ?self.get().create_customer_credit_grant(customer_id, credit, value, resets, reset_inc, expires_on, event)
+        }
+
+
+        /*****************************************************************************
+         * Margin snapshots.
+         *****************************************************************************/
+        
+        /// Customer local margin snapshot (quick and rough).
+        fn customer_local_margin_breakdown(customer_id: str!) -> map {
+            ?self.get().customer_local_margin_breakdown(customer_id)
+        }
+
+        /// Local margin snapshot breakdown.
+        fn local_margin_breakdown(plan_name: str!, entitlements: map!) -> map {
+            ?self.get().local_margin_breakdown(plan_name, entitlements)
         }
     }
 
@@ -1554,5 +1569,231 @@ Limitr: {
         customer.grants.insert(grant.id, grant);
         if (event) await <Event>.send('customer-set', customer);
         true
+    }
+
+
+    /*****************************************************************************
+     * Margin snapshots.
+     *****************************************************************************/
+    
+    /**
+     * Get a customer's local & current snapshot margin (((revenue - cost)/revenue) * 100).
+     * Meant to be a quick & rough "are we making money on this customer right now?" check.
+     * Does not take time (resets) nor grants/topups into consideration.
+     */
+    fn customer_local_margin_breakdown(customer_id: str!) -> map {
+        const customer = self.customer(customer_id);
+        const plan = self.plan_for(customer_id);
+        if (customer == null || plan == null) return null;
+
+        let cost: float = 0;
+        let plan_revenue: float = 0;
+        let usage_revenue: float = 0;
+        if (plan.price != null) {
+            plan_revenue = plan.price.amount;
+        }
+
+        const entitlements_map: map = map();
+        for (const pair in plan.entitlements.fields()) {
+            const name = pair[0];
+            const ent: Entitlement = pair[1];
+            const meter: Meter = customer.meters.get(name);
+            if (ent.enabled && ent.limit != null && meter != null) {
+                const credit = self.credit(ent.limit.credit);
+                if (credit != null) {
+                    const current = meter.value;
+                    const limit_value = (ent.limit.value as float).to_units(credit.stof_units);
+
+                    const ent_cost = (current * credit.overhead_cost).remove_units();
+                    cost += ent_cost;
+                    let ent_rev = 0;
+                    if (current > limit_value) {
+                        const overage = (current - limit_value).remove_units();
+                        if (credit.pricing_model == 'flat' && credit.price != null) {
+                            ent_rev = overage * credit.price.amount;
+                        } else if (credit.tiers != null && credit.tiers.any()) {
+                            if (credit.pricing_model == 'tiered') {
+                                // Graduated: each tier prices its own slice
+                                let remaining = overage;
+                                let prev_up_to = 0;
+                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (remaining <= 0) break ^tiers_loop;
+                                    if (tier.up_to != null) {
+                                        const band = tier.up_to - prev_up_to;
+                                        prev_up_to = tier.up_to;
+                                        const slice = remaining >= band ? band : remaining;
+                                        ent_rev += slice * tier.price.amount;
+                                        remaining -= slice;
+                                    } else {
+                                        ent_rev += remaining * tier.price.amount;
+                                        remaining = 0;
+                                    }
+                                }
+                            } else if (credit.pricing_model == 'volume') {
+                                // Volume: find the tier overage falls into, price ALL units at that rate
+                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && overage > tier.up_to) {
+                                        continue ^vol_loop;
+                                    }
+                                    ent_rev += overage * tier.price.amount;
+                                    break ^vol_loop;
+                                }
+                            } else if (credit.pricing_model == 'stairstep') {
+                                // Stairstep: find the tier overage falls into, pay that tier's flat fee
+                                ^step_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && overage > tier.up_to) {
+                                        continue ^step_loop;
+                                    }
+                                    ent_rev += tier.price.amount;
+                                    break ^step_loop;
+                                }
+                            }
+                        }
+                    }
+                    
+                    usage_revenue += ent_rev;
+                    entitlements_map.insert(name, map(
+                        ('cost', ent_cost),
+                        ('revenue', ent_rev),
+                        ('margin', ent_rev > 0 ? (((ent_rev - ent_cost)/ent_rev) * 100).round(2) : null)
+                    ));
+                }
+            }
+        }
+
+        const revenue = plan_revenue + usage_revenue;
+        if (revenue <= 0) return null;
+        return {
+            'revenue': revenue,
+            'cost': cost,
+            'margin': (((revenue - cost)/revenue) * 100).round(2),
+            'plan_revenue': plan_revenue,
+            'usage_revenue': usage_revenue,
+            'entitlements': entitlements_map,
+        };
+    }
+
+
+    /**
+     * Get a local & current snapshot margin (((revenue - cost)/revenue) * 100) given a plan and entitlements.
+     * Meant to be a quick & rough "are we making money with this setup?" check.
+     * Does not take time (resets) nor grants/topups into consideration.
+     */
+    fn local_margin_breakdown(plan_id: str!, entitlements: map!) -> map {
+        const plan = self.plan(plan_id);
+        if (plan == null) return null;
+
+        let cost: float = 0;
+        let plan_revenue: float = 0;
+        let usage_revenue: float = 0;
+        if (plan.price != null) {
+            plan_revenue = plan.price.amount;
+        }
+
+        const entitlements_map: map = map();
+        ^entitlement_loop for (const pair in entitlements) {
+            const name = pair[0];
+            const ent = pair[1];
+            let meter_value: float = 0;
+            let credit_name: str = null;
+            let limit_value: float = 0;
+
+            let set_ent_limit_val = false;
+            let ent_type = typeof ent;
+            if (ent_type == 'map') {
+                meter_value = ent.get('meter');
+                credit_name = ent.get('credit');
+                limit_value = ent.get('limit');
+                set_ent_limit_val = limit_value == null;
+                limit_value = limit_value ?? 0;
+            } else if (ent_type == 'float' || ent_type == 'int' || ent_type == 'str') {
+                meter_value = ent;
+                set_ent_limit_val = true;
+            } else {
+                // Not a valid entitlement value
+                continue ^entitlement_loop;
+            }
+            
+            if (credit_name == null) {
+                const e: Entitlement = plan.entitlements.get(name);
+                if (e != null && e.limit != null) {
+                    credit_name = e.limit.credit;
+                    if (set_ent_limit_val) {
+                        limit_value = e.limit.value as float;
+                    }
+                }
+            }
+
+            if (meter_value != null && credit_name != null) {
+                const credit = self.credit(credit_name);
+                if (credit != null) {
+                    const current = (meter_value as float).to_units(credit.stof_units);
+                    const ent_cost = (current * credit.overhead_cost).remove_units();
+                    cost += ent_cost;
+                    let ent_rev = 0;
+                    if (current > limit_value) {
+                        const overage = (current - limit_value).remove_units();
+                        if (credit.pricing_model == 'flat' && credit.price != null) {
+                            ent_rev = overage * credit.price.amount;
+                        } else if (credit.tiers != null && credit.tiers.any()) {
+                            if (credit.pricing_model == 'tiered') {
+                                // Graduated: each tier prices its own slice
+                                let remaining = overage;
+                                let prev_up_to = 0;
+                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (remaining <= 0) break ^tiers_loop;
+                                    if (tier.up_to != null) {
+                                        const band = tier.up_to - prev_up_to;
+                                        prev_up_to = tier.up_to;
+                                        const slice = remaining >= band ? band : remaining;
+                                        ent_rev += slice * tier.price.amount;
+                                        remaining -= slice;
+                                    } else {
+                                        ent_rev += remaining * tier.price.amount;
+                                        remaining = 0;
+                                    }
+                                }
+                            } else if (credit.pricing_model == 'volume') {
+                                // Volume: find the tier overage falls into, price ALL units at that rate
+                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && overage > tier.up_to) {
+                                        continue ^vol_loop;
+                                    }
+                                    ent_rev += overage * tier.price.amount;
+                                    break ^vol_loop;
+                                }
+                            } else if (credit.pricing_model == 'stairstep') {
+                                // Stairstep: find the tier overage falls into, pay that tier's flat fee
+                                ^step_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && overage > tier.up_to) {
+                                        continue ^step_loop;
+                                    }
+                                    ent_rev += tier.price.amount;
+                                    break ^step_loop;
+                                }
+                            }
+                        }
+                    }
+                    
+                    usage_revenue += ent_rev;
+                    entitlements_map.insert(name, map(
+                        ('cost', ent_cost),
+                        ('revenue', ent_rev),
+                        ('margin', ent_rev > 0 ? (((ent_rev - ent_cost)/ent_rev) * 100).round(2) : null)
+                    ));
+                }
+            }
+        }
+
+        const revenue = plan_revenue + usage_revenue;
+        if (revenue <= 0) return null;
+        return {
+            'revenue': revenue,
+            'cost': cost,
+            'margin': (((revenue - cost)/revenue) * 100).round(2),
+            'plan_revenue': plan_revenue,
+            'usage_revenue': usage_revenue,
+            'entitlements': entitlements_map,
+        };
     }
 }

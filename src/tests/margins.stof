@@ -1,0 +1,113 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+Limitr mp: {
+    credits: {
+        ai_token: {
+            description: 'AI token'
+            overhead_cost: 0.000004
+            stof_units: 'int'
+            price: { amount: 0.000006 }
+        }
+
+        mb_storage: {
+            description: 'MB of storage'
+            overhead_cost: 0.6
+            stof_units: 'MB'
+
+            pricing_model: 'tiered'
+            tiers: [
+                { up_to: 5, price: { amount: 0.8 } },
+                { up_to: 10, price: { amount: 0.7 } },
+                { up_to: 50, price: { amount: 0.6 } },
+                { price: { amount: 0.55 } },
+            ]
+        }
+    }
+
+    plans: {
+        basic: {
+            label: 'Basic'
+            price: { amount: 10 }
+            entitlements: {
+                file_storage: {
+                    description: 'File storage'
+                    limit: {
+                        credit: 'mb_storage'
+                        mode: 'soft'
+                        value: 2MB
+                    }
+                }
+            }
+        }
+        pro: {
+            label: 'Pro'
+            price: { amount: 50 }
+            entitlements: {
+                file_storage: {
+                    description: 'File storage'
+                    limit: {
+                        credit: 'mb_storage'
+                        mode: 'soft'
+                        value: 10MB
+                    }
+                }
+
+                tokens: {
+                    description: 'AI tokens'
+                    limit: {
+                        credit: 'ai_token'
+                        mode: 'soft'
+                        value: 100_000
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+#[test]
+fn test_storage_margins() {
+    const id = 'local_margin_customer';
+    self.mp.create_customer(id, 'pro');
+
+    self.mp.allow(id, 'file_storage', 70MB);
+    self.mp.allow(id, 'tokens', 2_300_000);
+
+    const breakdown = Obj.from_map(self.mp.customer_local_margin_breakdown(id));
+    //pln(stringify('yaml', breakdown));
+    assert_eq(breakdown.usage_revenue, 50.2);
+    assert_eq(breakdown.margin, 48.9);
+    drop(breakdown);
+}
+
+
+#[test]
+fn test_local_breakdown() {
+    const breakdown = Obj.from_map(self.mp.local_margin_breakdown('pro', {
+        'file_storage': 70MB,
+        'tokens': {
+            'meter': 2_300_000,
+            'limit': 100_000
+        }
+    }));
+    //pln(stringify('toml', breakdown));
+    assert_eq(breakdown.usage_revenue, 50.2);
+    assert_eq(breakdown.margin, 48.9);
+    drop(breakdown);
+}

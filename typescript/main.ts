@@ -503,6 +503,26 @@ export class Limitr {
 
 
     /*****************************************************************************
+     * Margin snapshots.
+     *****************************************************************************/
+    
+    /**
+     * Customer local margin snapshot.
+     */
+    async customerMarginSnapshot(customerId: string): Promise<Map<string, unknown> | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.customer_local_margin_breakdown', customerId)) as Map<string, unknown> | null;
+    }
+
+
+    /**
+     * Local margin snapshot.
+     */
+    async marginSnapshot(plan: string, entitlements: Map<string, unknown>): Promise<Map<string, unknown> | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.local_margin_breakdown', plan, entitlements)) as Map<string, unknown> | null;
+    }
+
+
+    /*****************************************************************************
      * Capabilities.
      *****************************************************************************/
     
