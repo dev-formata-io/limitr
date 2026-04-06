@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.43;
+    ver version: 0.5.44;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1081,9 +1081,8 @@ Limitr: {
                             if (!res) {
                                 // contemplate credit grants for this customer before sending overage amount
                                 // grants will modify event_value.overage for appropriate aggregation in the correct units
-                                event_value.overage = new_value > old_value ? new_value - old_value : new_value - limit_value;
+                                event_value.overage = new_value > old_value ? new_value - max(old_value, limit_value) : new_value - limit_value;
                                 if (customer.apply_overage_grants(limit.credit, event_value, stof_units, self.exchange)) {
-
                                     // intercept here with voucher mode to protect your costs if using a voucher with max spend
                                     // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
                                     if (!customer.ensure_voucher(limit.credit, event_value, self.exchange)) {
