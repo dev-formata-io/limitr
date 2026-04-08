@@ -36,6 +36,18 @@ Price: {
         const suf = self.suffix.len() > 0 ? ' ' + self.suffix : '';
         `${amount} runes ${suf}`
     }
+
+
+    /**
+     * Price period.
+     */
+    fn period() -> ms {
+        const suffix = self.suffix.lower();
+        if (suffix.contains('day')) return 1day;
+        if (suffix.contains('week')) return 7days;
+        if (suffix.contains('year')) return 365days;
+        30days
+    }
 }
 
 

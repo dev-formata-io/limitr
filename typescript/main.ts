@@ -17,6 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
+import { LimitrCustomer } from "./types.js";
 
 
 /**
@@ -49,7 +50,7 @@ export interface LimitrCloudInit {
 /**
  * Internal event handler type.
  */
-export type LimitrEventHandler = (key: string, value: unknown)=>void;
+export type LimitrEventHandler = (key: string, value: unknown) => void | Promise<void>;
 
 
 /**
@@ -265,10 +266,14 @@ export class Limitr {
 
     /**
      * Get a customer record by ID (or alternative IDs).
+     * Modify plan, ids, refs, type, label, metadata, then call setCustomer.
+     *
+     * Note: use API below for meters (allow), overrides, and grants for eventing.
+     * You can use this object for customer state UI also.
      */
-    async customer(id: string): Promise<Record<string, unknown> | undefined> {
+    async customer(id: string): Promise<LimitrCustomer | undefined> {
         const subNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
-        if (typeof subNode === 'string') return this.doc.record(subNode);
+        if (typeof subNode === 'string') return this.doc.record(subNode) as unknown as LimitrCustomer;
         return undefined;
     }
 
@@ -349,15 +354,17 @@ export class Limitr {
 
     
     /**
-     * Create a new customer and add to this Limitr.
+     * Create a new customer and add to this policy.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
      * Note: prefer ensureCustomer API in case this customer already exists.
      */
-    async createCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null) {
+    async createCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<LimitrCustomer | undefined> {
         let meta: string | null = null;
         if (typeof metadata === 'string') meta = metadata;
         else if (metadata) meta = JSON.stringify(metadata);
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta));
+        const node = await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta)) as string;
+        if (typeof node === 'string') return this.doc.record(node) as unknown as LimitrCustomer;
+        return undefined;
     }
 
 
@@ -366,7 +373,7 @@ export class Limitr {
      * This takes the cloud into consideration as well.
      * Returns true if a new customer was created.
      */
-    async ensureSetCustomer(customer: string | Record<string, unknown>, event: boolean = true): Promise<boolean> {
+    async ensureSetCustomer(customer: string | Record<string, unknown> | LimitrCustomer, event: boolean = true): Promise<boolean> {
         const record = typeof customer === 'string' ? JSON.parse(customer) : customer;
         const id = record.id as string;
         if (!id) throw new Error('Ensure setting a customer expects a customer record with an ID');
@@ -400,7 +407,7 @@ export class Limitr {
      * Set a customer on this policy by ID.
      * Returns a node ID to the resulting Customer.
      */
-    async setCustomer(customer: string | Record<string, unknown>, event: boolean = true): Promise<string | null> {
+    async setCustomer(customer: string | Record<string, unknown> | LimitrCustomer, event: boolean = true): Promise<string | null> {
         const customerStof = typeof customer === 'string' ? customer : JSON.stringify(customer);
         return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', customerStof, event)) as string | null;
     }
@@ -410,12 +417,12 @@ export class Limitr {
      * Load many customers as records.
      * This is all that is required for save/load since customers contain all state information.
      */
-    async loadCustomers(customers: Record<string, unknown> | Record<string, unknown>[]) {
-        let subs: Record<string, unknown>[] = [];
+    async loadCustomers(customers: Record<string, unknown> | LimitrCustomer[]) {
+        let subs: LimitrCustomer[] = [];
         if (!Array.isArray(customers)) {
             for (const [k, v] of Object.entries(customers)) {
-                const val = v as Record<string, unknown>;
-                val.id = k; // make sure it has the correct ID
+                const val = v as LimitrCustomer;
+                val.id = k;
                 subs.push(val);
             }
         } else {

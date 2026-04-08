@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.5.44;
+    ver version: 0.5.45;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -439,6 +439,11 @@ Limitr: {
         /// Get the customer refs for the customer ID.
         fn customer_refs(id: str!) -> list {
             ?self.get().customer_refs(id)
+        }
+
+        /// Set customer refs.
+        fn set_customer_refs(id: str!, refs: list!) -> bool {
+            ?self.get().set_customer_refs(id, refs)
         }
 
         /// Change a customer's plan ID.
@@ -1349,6 +1354,16 @@ Limitr: {
 
 
     /**
+     * Set customer refs for this customer ID.
+     */
+    fn set_customer_refs(id: str!, refs: list!) -> bool {
+        const sub = self.customer(id);
+        if (sub != null) sub.refs = refs;
+        sub != null
+    }
+
+
+    /**
      * Change a customer's plan ID.
      * Will initialize any meters for the new plan, optionally overwritting previous usage.
      */
@@ -1439,7 +1454,7 @@ Limitr: {
             }
 
             // check for existing customer to update
-            const existing: Customer = self.customers.get(id);
+            const existing: Customer = self.customer(id);
             if (existing != null) {
                 existing.type = type;
                 existing.label = label;
@@ -1779,16 +1794,19 @@ Limitr: {
      * Get a local & current snapshot margin (((revenue - cost)/revenue) * 100) given a plan and entitlements.
      * Meant to be a quick & rough "are we making money with this setup?" check.
      * Does not take time (resets) nor grants/topups into consideration.
+     * If scaled, will put meter values and limits in terms of the plan period.
      */
-    fn local_margin_breakdown(plan_id: str!, entitlements: map!) -> map {
+    fn local_margin_breakdown(plan_id: str!, entitlements: map!, scaled: bool = true) -> map {
         const plan = self.plan(plan_id);
         if (plan == null) return null;
 
         let cost: float = 0;
         let plan_revenue: float = 0;
         let usage_revenue: float = 0;
+        let plan_period: ms = 30days;
         if (plan.price != null) {
             plan_revenue = plan.price.amount;
+            plan_period = plan.price.period();
         }
 
         const entitlements_map: map = map();
@@ -1815,12 +1833,18 @@ Limitr: {
                 continue ^entitlement_loop;
             }
             
-            if (credit_name == null) {
+            let adjusted_meter_period = null;
+            if (credit_name == null || scaled) {
                 const e: Entitlement = plan.entitlements.get(name);
                 if (e != null && e.limit != null) {
-                    credit_name = e.limit.credit;
+                    if (credit_name == null) credit_name = e.limit.credit;
                     if (set_ent_limit_val) {
                         limit_value = e.limit.value as float;
+                    }
+                    // Scale the limit_value to the plan period, not the individual meter period
+                    if (scaled && e.limit.resets && e.limit.reset_inc != plan_period && e.limit.reset_inc > 0) {
+                        limit_value *= (plan_period/e.limit.reset_inc).remove_units();
+                        adjusted_meter_period = e.limit.reset_inc;
                     }
                 }
             }
@@ -1828,7 +1852,11 @@ Limitr: {
             if (meter_value != null && credit_name != null) {
                 const credit = self.credit(credit_name);
                 if (credit != null) {
-                    const current = (meter_value as float).to_units(credit.stof_units);
+                    let current = (meter_value as float).to_units(credit.stof_units);
+                    if (adjusted_meter_period != null) {
+                        current *= (plan_period/adjusted_meter_period).remove_units();
+                    }
+
                     const ent_cost = (current * credit.overhead_cost).remove_units();
                     cost += ent_cost;
                     let ent_rev = 0;

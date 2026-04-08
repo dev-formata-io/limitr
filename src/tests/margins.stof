@@ -73,6 +73,8 @@ Limitr mp: {
                         credit: 'ai_token'
                         mode: 'soft'
                         value: 100_000
+                        resets: true
+                        reset_inc: 1day
                     }
                 }
             }
@@ -102,12 +104,12 @@ fn test_local_breakdown() {
     const breakdown = Obj.from_map(self.mp.local_margin_breakdown('pro', {
         'file_storage': 70MB,
         'tokens': {
-            'meter': 2_300_000,
+            'meter': 100_000,
             'limit': 100_000
         }
     }));
     //pln(stringify('toml', breakdown));
-    assert_eq(breakdown.usage_revenue, 50.2);
-    assert_eq(breakdown.margin, 48.9);
+    assert_eq(breakdown.usage_revenue, 37);
+    assert_eq(breakdown.margin, 37.93);
     drop(breakdown);
 }
