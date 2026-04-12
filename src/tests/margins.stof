@@ -15,13 +15,26 @@
 //
 
 
-Limitr mp: {
+Limitr TestMarginsPolicy: {
     credits: {
+        basic_plan: {
+            description: 'Basic Plan Subscription'
+            stof_units: 'int'
+            price: { amount: 10 }
+        }
+
+        pro_plan: {
+            description: 'Basic Plan Subscription'
+            stof_units: 'int'
+            price: { amount: 50 }
+        }
+
         ai_token: {
             description: 'AI token'
             overhead_cost: 0.000004
             stof_units: 'int'
             price: { amount: 0.000006 }
+            resets: true
         }
 
         mb_storage: {
@@ -42,8 +55,15 @@ Limitr mp: {
     plans: {
         basic: {
             label: 'Basic'
-            price: { amount: 10 }
             entitlements: {
+                subscription: {
+                    description: 'Base plan subscription'
+                    limit: {
+                        credit: 'basic_plan'
+                        mode: 'soft'
+                        value: 0
+                    }
+                }
                 file_storage: {
                     description: 'File storage'
                     limit: {
@@ -56,8 +76,15 @@ Limitr mp: {
         }
         pro: {
             label: 'Pro'
-            price: { amount: 50 }
             entitlements: {
+                subscription: {
+                    description: 'Pro plan subscription'
+                    limit: {
+                        credit: 'pro_plan'
+                        mode: 'soft'
+                        value: 0
+                    }
+                }
                 file_storage: {
                     description: 'File storage'
                     limit: {
@@ -80,36 +107,35 @@ Limitr mp: {
             }
         }
     }
-}
 
 
-#[test]
-fn test_storage_margins() {
-    const id = 'local_margin_customer';
-    self.mp.create_customer(id, 'pro');
+    #[test]
+    fn test_storage_margins() {
+        const id = 'local_margin_customer';
+        self.create_customer(id, 'pro');
 
-    self.mp.allow(id, 'file_storage', 70MB);
-    self.mp.allow(id, 'tokens', 2_300_000);
+        self.increment(id, 'subscription');
+        self.allow(id, 'file_storage', 70MB);
+        self.allow(id, 'tokens', 2_300_000);
 
-    const breakdown = Obj.from_map(self.mp.customer_local_margin_breakdown(id));
-    //pln(stringify('yaml', breakdown));
-    assert_eq(breakdown.usage_revenue, 50.2);
-    assert_eq(breakdown.margin, 48.9);
-    drop(breakdown);
-}
+        const breakdown = self.customer_local_margin_breakdown(id);
+        assert_eq(breakdown.get('revenue') - 50, 50.2);
+        assert_eq(breakdown.get('margin'), 48.9);
+    }
 
 
-#[test]
-fn test_local_breakdown() {
-    const breakdown = Obj.from_map(self.mp.local_margin_breakdown('pro', {
-        'file_storage': 70MB,
-        'tokens': {
-            'meter': 100_000,
-            'limit': 100_000
-        }
-    }));
-    //pln(stringify('toml', breakdown));
-    assert_eq(breakdown.usage_revenue, 37);
-    assert_eq(breakdown.margin, 37.93);
-    drop(breakdown);
+    #[test]
+    fn test_local_breakdown() {
+        const breakdown = self.local_margin_breakdown('pro', {
+            'subscription': 1,
+            'file_storage': 70MB,
+            'tokens': {
+                'meter': 100_000,
+                'limit': 100_000
+            }
+        });
+        assert_eq(breakdown.get('revenue') - 50, 37);
+        assert_eq(breakdown.get('margin'), 37.93);
+        drop(breakdown);
+    }
 }

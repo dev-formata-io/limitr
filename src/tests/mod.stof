@@ -14,7 +14,8 @@
 // limitations under the License.
 //
 
-import './margins' as Margins;
+import './plans' as TestPlans;
+import './margins' as TestMargins;
 
 
 Limitr policy: {
@@ -275,7 +276,6 @@ fn credit_grant_overage() {
 
     // lets give our user a grant of customer facing credits (300 = 600 overage_tokens because 1cf = 0.5ot)
     assert(self.policy.apply_customer_topup(user, 'overage_tokens')); // add a grant of 300 customer facing overage tokens
-    //assert(self.policy.create_customer_credit_grant(user, 'customer_facing_overage_token', 300));
     assert(self.policy.allow(user, ent, 200));
     assert_eq(customer.metadata.overage, 5);
     assert_eq(customer.grants[0][1].value, 200); // 200 remaining on the grant

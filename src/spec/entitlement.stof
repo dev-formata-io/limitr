@@ -40,10 +40,10 @@ Limit: {
     float | str value: 0;
 
     #[schema(<LimitrValidation>.valid_limit_number)]
-    /// Optional increment for an operation with this limit.
+    /// Increment for an operation with this limit.
     /// Used with <Limitr>.increment.
     /// If a str, can use units, but must be a valid stof number.
-    float | str increment: 0;
+    float | str increment: 1;
 
     #[schema(<LimitrValidation>.valid_limit_number)]
     #[schema_optional]
@@ -79,9 +79,6 @@ Limit: {
  * A Limitr entitlement.
  */
 Entitlement: {
-    /// Enabled?
-    bool enabled: true;
-
     /// Description for this entitlement.
     str description: '';
 
@@ -102,7 +99,6 @@ Entitlement: {
      * Check this entitlement.
      */
     fn check(value: float = 0, override?: Limit) -> bool {
-        if (!self.enabled) return false;
         let limit = override ?? self.limit;
         if (limit != null) return limit.check(value);
         true

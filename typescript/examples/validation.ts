@@ -33,7 +33,6 @@ policy: {
             stof_units: 'GB'
             price: {
                 amount: 3
-                suffix: '/day'
             }
         }
     }
@@ -81,7 +80,6 @@ policy: {
             stof_units: 'GB'
             price: {
                 amount: 3
-                suffix: '/month'
             }
         }
     }

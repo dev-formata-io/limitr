@@ -44,8 +44,63 @@ Topup: {
     /// What is the reset increment?
     ms reset_inc: 30days;
 
+    #[schema((target_val: str): bool => ['hard', 'add', 'rollover'].contains(target_val) ? true : <LimitrValidation>.error(`Invalid topup reset mode '${target_val}' - should be 'hard', 'add', or 'rollover'`))]
+    /// Reset mode for the credit grant.
+    str reset_mode: 'hard';
+
+    #[schema(<LimitrValidation>.valid_topup_number)]
+    #[schema_optional]
+    /// Optional rollover minimum.
+    float | str rollover_min: null;
+
+    #[schema(<LimitrValidation>.valid_topup_number)]
+    #[schema_optional]
+    /// Optional rollover maximum.
+    float | str rollover_max: null;
+
+    #[schema((target_val: float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Top-up rollover multiplier must be greater than zero`))]
+    #[schema_optional]
+    /// Optional rollover percent.
+    float rollover_pct: null;
+
+    #[schema(<LimitrValidation>.valid_topup_number)]
+    #[schema_optional]
+    /// Optional max reset balance.
+    float | str max_balance: null;
+
     #[schema((target_val: float): bool => target_val > 0 ? true : <LimitrValidation>.error(`Top-up expiration value must be greater than zero`))]
     #[schema_optional]
     /// Expires N ms after purchase.
     ms expires_after: null;
+
+    #[schema((target_val: float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Top-up reset period catch up cap must be greater than zero`))]
+    #[schema_optional]
+    /// Optional reset period catch-up cap.
+    int reset_catchup_cap: null;
+
+
+    /**
+     * Create a new grant from this topup.
+     */
+    fn create_grant(units: str = 'float', arena?: obj) -> Grant {
+        const now = Time.now();
+        const expires_on = self.expires_after != null ? Time.now() + self.expires_after : null;
+        new Grant {
+            id: 'lgrnt_' + nanoid(14),
+            credit: self.credit,
+            created_on: now,
+            granted_on: now,
+            starting_value: self.value,
+            value: (self.value as float).to_units(units),
+            resets: self.resets,
+            reset_inc: self.reset_inc ?? 30days,
+            expires_on,
+            reset_mode: self.reset_mode,
+            rollover_min: self.rollover_min,
+            rollover_max: self.rollover_max,
+            rollover_pct: self.rollover_pct,
+            max_balance: self.max_balance,
+            reset_catchup_cap: self.reset_catchup_cap,
+        } on arena
+    }
 }

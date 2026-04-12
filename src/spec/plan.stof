@@ -28,10 +28,8 @@ Plan: {
     /// Human-facing label for this plan.
     str! label: '';
 
-    #[schema((target_val: obj): bool => <Price>.schemafy(target_val))]
-    #[schema_optional]
-    /// Optional price for this plan.
-    Price price: null;
+    /// Plan period ('yearly', 'monthly', 'weekly', 'daily').
+    str! period: 'monthly';
 
     #[schema(<LimitrValidation>.valid_plan_entitlements)]
     /// Entitlements that this plan contains.
@@ -44,18 +42,16 @@ Plan: {
     /// Hidden plan?
     bool hidden: false;
 
-    /// Selectable plan?
-    bool selectable: true;
-
     /// Is this the default plan?
     /// If no plan is provided on create customer, this one should be used.
     bool default: false;
 
 
-    /**
-     * Price label.
-     */
-    fn price_label() -> str {
-        self.price ? self.price.label() : ''
+    /// Period time in ms.
+    fn period_time() -> ms {
+        if (self.period.contains('year')) return 365days;
+        if (self.period.contains('week')) return 7days;
+        if (self.period.contains('day') || self.period.contains('daily')) return 1day;
+        30days
     }
 }

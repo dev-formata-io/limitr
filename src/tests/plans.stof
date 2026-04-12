@@ -1,0 +1,109 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+Limitr TestPlansPolicy: {
+    const base_user: 'base_user'
+    const pro_user: 'pro_user'
+
+    credits: {
+        seat: {}
+    }
+    plans: {
+        base: {
+            default: true
+            label: 'Base Plan'
+            period: 'monthly'
+            entitlements: {
+                seats: {
+                    limit: {
+                        credit: 'seat'
+                        value: 5
+                    }
+                }
+            }
+        }
+        pro: {
+            label: 'Pro Plan'
+            period: 'daily'
+            entitlements: {
+                seats: {
+                    limit: {
+                        credit: 'seat'
+                        value: 2
+                    }
+                }
+            }
+        }
+    }
+
+
+    #[init]
+    fn add_test_customers() {
+        self.create_customer(self.base_user, 'base', 'user', 'Base User');
+        self.create_customer(self.pro_user, 'pro', 'user', 'Pro User');
+    }
+
+
+    #[test]
+    fn valid_policy() {
+        assert(self.valid());
+    }
+
+
+    #[test]
+    fn get_plan_by_id() {
+        const plan = self.plan('base');
+        assert(plan);
+        assert_eq(plan.name, 'base');
+        assert_eq(plan.label, 'Base Plan');
+    }
+
+
+    #[test]
+    fn get_plan_for_customer() {
+        const base = self.plan(self.base_user);
+        assert(base);
+        assert_eq(base, self.plans.base);
+
+        const pro = self.plan(self.pro_user);
+        assert(pro);
+        assert_eq(pro, self.plans.pro);
+    }
+
+
+    #[test]
+    fn get_default_plan() {
+        const default = self.default_plan();
+        assert(default);
+        assert_eq(default, self.plans.base);
+    }
+
+
+    #[test]
+    fn delete_set_plan() {
+        const base = self.plan('base');
+        assert(base);
+
+        const base_json = stringify('json', base);
+        assert(self.delete_plan('base'));
+        assert_not(base.exists());
+
+        self.set_plan('base', base_json);
+        const def = self.default_plan();
+        assert(def);
+        assert_eq(def, self.plans.base);
+    }
+}

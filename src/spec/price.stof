@@ -17,37 +17,12 @@
 
 #[type]
 Price: {
-    /// Optional ID of this price (to be interpreted by you).
+    /// Optional ID of this price (open to interpretation).
     str id: null;
 
     #[schema((target: obj, target_val:float): bool => target_val >= 0 ? true : <LimitrValidation>.error(`Price cannot have a negative amount: ${target.label()}`))]
     /// The amount to charge, using Limitr runes (in runes, default 1 rune = 1 usd).
     float! amount: 0;
-
-    /// Suffix for label & intervals.
-    str! suffix: '/month';
-
-    
-    /**
-     * Label for this price.
-     */
-    fn label() -> str {
-        const amount = self.amount.round(2);
-        const suf = self.suffix.len() > 0 ? ' ' + self.suffix : '';
-        `${amount} runes ${suf}`
-    }
-
-
-    /**
-     * Price period.
-     */
-    fn period() -> ms {
-        const suffix = self.suffix.lower();
-        if (suffix.contains('day')) return 1day;
-        if (suffix.contains('week')) return 7days;
-        if (suffix.contains('year')) return 365days;
-        30days
-    }
 }
 
 

@@ -84,8 +84,16 @@ Customer: {
             } else {
                 // Should this grant value be reset?
                 if (grant.resets && (grant.granted_on + grant.reset_inc) <= now) {
-                    while ((now - grant.granted_on) > grant.reset_inc) grant.granted_on += grant.reset_inc;
-                    grant.value = (grant.starting_value as float).to_units(stof_units);
+                    let reset_cap: int = grant.reset_catchup_cap;
+                    while ((now - grant.granted_on) > grant.reset_inc) {
+                        grant.granted_on += grant.reset_inc;
+                        if (reset_cap == null) {
+                            grant.reset_period(stof_units);
+                        } else if (reset_cap > 0) {
+                            reset_cap -= 1;
+                            grant.reset_period(stof_units);
+                        }
+                    }
                 }
 
                 // Does this grant match this credit exactly?

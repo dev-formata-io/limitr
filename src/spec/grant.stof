@@ -27,6 +27,9 @@ Grant: {
     /// Credit ID.
     str! credit: '';
 
+    /// Created on timestamp.
+    ms! created_on: 0;
+
     /// Granted on timestamp.
     ms! granted_on: 0;
 
@@ -44,4 +47,60 @@ Grant: {
 
     /// Does this grant expire?
     ms expires_on: null;
+
+    /// 'hard' (default) - set back to starting_value
+    /// 'add' - add starting_value to current vlalue
+    /// 'rollover' - carry over, using rollover caps
+    str reset_mode: null;
+    float | str rollover_min: null;
+    float | str rollover_max: null;
+    float rollover_pct: null;
+
+    /// Max reset balance.
+    float | str max_balance: null;
+
+    /// Optional reset period catch-up cap.
+    /// If grant is 5 periods behind, default behavior is to call reset_period 5 times.
+    /// If capped to 1 for example, reset_period will be called once.
+    int reset_catchup_cap: null;
+
+
+    /**
+     * Reset this grant for a single new period.
+     */
+    fn reset_period(units: str = 'float') {
+        if (!self.resets) return;
+        const starting_value = (self.starting_value as float).to_units(units);
+
+        if (self.reset_mode == null || self.reset_mode == 'hard') {
+            self.value = starting_value;
+        } else if (self.reset_mode == 'add') {
+            self.value += starting_value;
+        } else if (self.reset_mode == 'rollover') {
+            // 1. Apply percentage decay to carried balance
+            let rollover = max(0, self.value);
+            if (self.rollover_pct != null) {
+                rollover *= self.rollover_pct;
+            }
+            // Note: rollover_min/max clamp after pct, so min can override pct for low balances
+            // 2. Clamp to [rollover_min, rollover_max]
+            if (self.rollover_min != null) {
+                const rmin = (self.rollover_min as float).to_units(units);
+                if (rollover < rmin) rollover = rmin;
+            }
+            if (self.rollover_max != null) {
+                const rmax = (self.rollover_max as float).to_units(units);
+                if (rollover > rmax) rollover = rmax;
+            }
+            // 3. Add new period allocation on top of carry
+            //    (set starting_value = 0 for pure carry-forward grants)
+            self.value = starting_value + rollover;
+        }
+
+        // max balance check
+        if (self.max_balance != null) {
+            const max = (self.max_balance as float).to_units(units);
+            if (self.value > max) self.value = max;
+        }
+    }
 }

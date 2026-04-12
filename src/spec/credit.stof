@@ -30,6 +30,10 @@ Credit: {
     /// Human-facing label for this credit.
     str! label: 'Credit';
 
+    /// Is this credit overage only (true)?
+    /// If false, treat overage as an indefinite quantity.
+    bool resets: false;
+
 
     #[schema((target: obj, target_val: float): bool => {
         target_val >= 0 ? true : <LimitrValidation>.error(`Credit "${target.label}" cannot have a negative overhead cost`)

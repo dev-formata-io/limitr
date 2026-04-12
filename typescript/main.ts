@@ -182,40 +182,6 @@ export class Limitr {
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
-
-
-    /**
-     * Get a plan price by ID (plan ID or customer ID).
-     */
-    async planPrice(id: string): Promise<Record<string, unknown> | undefined> {
-        const priceNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price', id));
-        if (typeof priceNode === 'string') return this.doc.record(priceNode);
-        return undefined;
-    }
-
-
-    /**
-     * Get a plan price ID.
-     */
-    async planPriceId(id: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price_id', id)) as string | null;
-    }
-
-
-    /**
-     * Get a plan amount.
-     */
-    async planAmount(id: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_amount', id)) as number | null;
-    }
-
-
-    /**
-     * Get a plan price label.
-     */
-    async planPriceLabel(id: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan_price_label', id)) as string | null;
-    }
     
     
     /**
@@ -485,27 +451,10 @@ export class Limitr {
 
     /**
      * Apply a plan topup to a customer.
-     * Creates a credit grant with a topup/one-time-purchase if found on this customer's current plan.
+     * Creates a credit grant from a topup (by name) if found on this customer's plan.
      */
     async applyCustomerTopup(id: string, topup: string): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.apply_customer_topup', id, topup)) as boolean;
-    }
-
-
-    /**
-     * Create a customer credit grant (recommended use in top-ups & one-time purchases).
-     * Grants are applied when overage would occur (soft entitlement limits).
-     * Defaults to a one-time, fixed-value credit grant.
-     * More than one grant with the same "credit" can exist alongside one another.
-     * Do not sync grants up with plans - if a plan includes a credit grant, just set a soft limit value (same thing).
-     *
-     * Ex. a soft limit of 5k tokens + a grant of 2k tokens would result in the customer
-     * getting overage events (meter-overage) after 7k tokens spent.
-     *
-     * @returns true when the customer & credit exists, meaning the grant has been applied.
-     */
-    async createCustomerCreditGrant(id: string, credit: string, value: number | string, resets: boolean = false, reset_inc?: number | string, expires_on?: number, event: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_credit_grant', id, credit, value, resets, reset_inc ?? null, expires_on ?? null, event)) as boolean;
     }
 
 
