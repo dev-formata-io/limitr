@@ -323,6 +323,21 @@ Limitr: {
             ?self.get().set_plan(id, internal_stof)
         }
 
+        /// Plan period.
+        fn plan_period(id: str!) -> str {
+            ?self.get().plan_period(id)
+        }
+
+        /// Plan trial period in ms (optional).
+        fn plan_trial_period(id: str!) -> ms {
+            ?self.get().plan_trial_period()
+        }
+
+        /// Plan subscription entitlement name.
+        fn plan_sub_entitlement_name(id: str!) -> str {
+            ?self.get().plan_sub_entitlement_name(id)
+        }
+
 
         /*****************************************************************************
          * Entitlements.
@@ -429,6 +444,11 @@ Limitr: {
         /// Change a customer's plan ID.
         fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
             ?self.get().set_customer_plan(id, plan, overwrite_meters)
+        }
+
+        /// Ensure customer "subscription" credit quantity.
+        fn ensure_customer_plan_quantity(customer_id: str!) -> bool {
+            ?self.get().ensure_customer_plan_quantity(customer_id)
         }
 
         /// Create a new customer.
@@ -603,6 +623,34 @@ Limitr: {
         self.plans.insert(id, plan);
         await <Event>.send('plan-set', plan as Plan);
         plan
+    }
+
+
+    /**
+     * Plan period.
+     */
+    fn plan_period(id: str!) -> str {
+        const plan = self.plan(id);
+        plan != null ? plan.period : null
+    }
+
+
+    /**
+     * Plan trial period (optional).
+     */
+    fn plan_trial_period(id: str!) -> float {
+        const plan = self.plan(id);
+        plan != null && plan.trial_period != null ? (plan.trial_period as float) : null
+    }
+
+
+    /**
+     * Plan subscription entitlement.
+     * This is the entitlement to update for a base plan price (typically only once).
+     */
+    fn plan_sub_entitlement_name(id: str!) -> str {
+        const plan = self.plan(id);
+        plan != null ? plan.subscription : null
     }
 
 
@@ -1138,7 +1186,7 @@ Limitr: {
      * Change a customer's plan ID.
      * Will initialize any meters for the new plan, optionally overwritting previous usage.
      */
-    fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
+    fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
         const sub = self.customer(id);
         const prev = self.plan_for(id);
         const pn: Plan = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
@@ -1185,6 +1233,34 @@ Limitr: {
                 customer: sub,
             });
             return true;
+        }
+        false
+    }
+
+
+    /**
+     * Ensure this customer is charged for one plan "subscription" credit quantity.
+     * Call this for customers that should be accountable for a plan base subscripton price.
+     * Not called automatically anywhere!
+     *
+     * Note: must create a credit and assign as the "subscription" entitlement on this plan.
+     * Best practice is to call this just for the customers that are accountable for plan pricing (e.g. org).
+     * Ex. pro plan with a monthly price of $200/mo.
+     */
+    fn ensure_customer_plan_quantity(customer_id: str!) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer != null) {
+            // do not contemplate refs here... plan must be actually ON this customer
+            // this is because not all customers will be accountable for a base plan price
+            let pn = self.plans.get(customer.plan);
+            if (pn != null) {
+                const meter = customer.meters.get(pn.subscription);
+                if (meter != null && meter.value < 1 && meter.started != null) {
+                    if (pn.trial_period == null || (Time.now() - meter.started) >= (pn.trial_period as float)) {
+                        return self.increment(customer_id, pn.subscription);
+                    }
+                }
+            }
         }
         false
     }

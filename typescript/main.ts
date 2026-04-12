@@ -201,6 +201,30 @@ export class Limitr {
     }
 
 
+    /**
+     * Plan period string.
+     */
+    async planPeriod(id: string): Promise<'yearly' | 'monthly' | 'weekly' | 'daily' | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_period', id)) as 'yearly' | 'monthly' | 'weekly' | 'daily' | null;
+    }
+
+
+    /**
+     * Plan trial period in milliseconds (if any).
+     */
+    async planTrialPeriod(id: string): Promise<number | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_trial_period', id)) as number | null;
+    }
+
+
+    /**
+     * Plan subscription entitlement name.
+     */
+    async planSubEntitlementName(id: string): Promise<string | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_sub_entitlement_name', id)) as string | null;
+    }
+
+
     /*****************************************************************************
      * Credits API.
      *****************************************************************************/
@@ -282,6 +306,19 @@ export class Limitr {
      */
     async setCustomerPlan(id: string, plan: string, overwrite_meters: boolean = true): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan, overwrite_meters)) as boolean;
+    }
+
+
+    /**
+     * Ensure customer "subscription" credit quantity.
+     * Will increment the plan subscription entitlement if found and the current meter is less than 1.
+     * If there's a trial period, the allow call will not happen until the trial is over.
+     *
+     * Note: not called automatically - not all customers are responsible for a plan price.
+     * Make sure to set up a plan "subscription" entitlement and credit (typically flat rate that does not reset with a soft limit of 0).
+     */
+    async ensureCustomerPlanQuantity(id: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_customer_plan_quantity', id)) as boolean | null ?? false;
     }
 
 

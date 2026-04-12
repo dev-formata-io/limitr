@@ -28,8 +28,19 @@ Plan: {
     /// Human-facing label for this plan.
     str! label: '';
 
+    #[schema((target_val: str): bool => ['yearly', 'monthly', 'weekly', 'daily'].contains(target_val) ? true : <LimitrValidation>.error(`Invalid plan period '${target_val}', must be one of 'yearly', 'monthly', 'weekly', 'daily'`))]
     /// Plan period ('yearly', 'monthly', 'weekly', 'daily').
     str! period: 'monthly';
+
+    /// Plan subscription entitlement.
+    /// Optionally used to charge for this plan automatically (trials, etc.).
+    /// Use a soft limit of 0 if you want to charge for the first/only increment.
+    str! subscription: 'subscription';
+
+    #[schema(<LimitrValidation>.valid_plan_trial_period)]
+    #[schema_optional]
+    /// Optional trial period.
+    float | str trial_period: null;
 
     #[schema(<LimitrValidation>.valid_plan_entitlements)]
     /// Entitlements that this plan contains.

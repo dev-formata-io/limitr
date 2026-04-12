@@ -94,6 +94,27 @@ LimitrValidation: {
 
     #[static]
     /**
+     * Valid plan trial period.
+     */
+    fn valid_plan_trial_period(target: Plan, target_val: float | str) -> bool {
+        const ent_name = target.subscription ?? 'subscription';
+        const ent = target.entitlements.get(ent_name);
+        let res = ent != null;
+        if (res) {
+            try {
+                const val = target_val as float;
+                res = val >= 0;
+                if (!res) self.error(`Plan trial period value must be positive`);
+            } catch {
+                res = self.error(`Cannot use "${target_val}" as a plan trial period - not a valid number/units`);
+            }
+        }
+        res
+    }
+
+
+    #[static]
+    /**
      * Valid credit ID.
      */
     fn valid_credit_id(target: obj, target_val: str) -> bool {

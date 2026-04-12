@@ -20,13 +20,23 @@ Limitr TestPlansPolicy: {
 
     credits: {
         seat: {}
+        base: { price: { amount: 10 } }
+        pro: { price: { amount: 50 } }
     }
     plans: {
         base: {
             default: true
+            trial_period: 50ms
             label: 'Base Plan'
             period: 'monthly'
             entitlements: {
+                subscription: {
+                    limit: {
+                        credit: 'base'
+                        mode: 'soft'
+                    }
+                }
+
                 seats: {
                     limit: {
                         credit: 'seat'
@@ -39,6 +49,13 @@ Limitr TestPlansPolicy: {
             label: 'Pro Plan'
             period: 'daily'
             entitlements: {
+                subscription: {
+                    limit: {
+                        credit: 'pro'
+                        mode: 'soft'
+                    }
+                }
+
                 seats: {
                     limit: {
                         credit: 'seat'
@@ -54,6 +71,9 @@ Limitr TestPlansPolicy: {
     fn add_test_customers() {
         self.create_customer(self.base_user, 'base', 'user', 'Base User');
         self.create_customer(self.pro_user, 'pro', 'user', 'Pro User');
+
+        self.ensure_customer_plan_quantity(self.base_user);
+        self.ensure_customer_plan_quantity(self.pro_user);
     }
 
 
@@ -105,5 +125,18 @@ Limitr TestPlansPolicy: {
         const def = self.default_plan();
         assert(def);
         assert_eq(def, self.plans.base);
+    }
+
+
+    #[test]
+    fn subscription_quantities() {
+        const sub_name = self.plan_sub_entitlement_name(self.base_user);
+        assert_eq(sub_name, 'subscription');
+        assert_eq(self.value(self.base_user, sub_name), 0);
+        assert_eq(self.value(self.pro_user, sub_name), 1); // no trial period
+
+        sleep(50ms);
+        self.ensure_customer_plan_quantity(self.base_user);
+        assert_eq(self.value(self.base_user, sub_name), 1); // trial is up
     }
 }
