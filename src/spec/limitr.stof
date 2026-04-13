@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.0;
+    ver version: 0.6.1;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -837,14 +837,18 @@ Limitr: {
      */
     fn limit(id: str!, entitlement: str!) -> float {
         const pair = self.customer_entitlement(id, entitlement);
+        let limit;
         if (pair != null) {
-            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-            if (limit != null && limit.mode != 'observe') {
-                const credit = self.credit(limit.credit);
-                const stof_units = credit != null ? credit.stof_units : 'float';
-                const lim = limit.value as float; // can be a str w units
-                return lim.to_units(stof_units);
-            }
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
+        }
+        if (limit != null && limit.mode != 'observe') {
+            const credit = self.credit(limit.credit);
+            const stof_units = credit != null ? credit.stof_units : 'float';
+            const lim = limit.value as float; // can be a str w units
+            return lim.to_units(stof_units);
         }
         null
     }
@@ -893,11 +897,14 @@ Limitr: {
      */
     fn cost(id: str!, entitlement: str!) -> float {
         const pair = self.customer_entitlement(id, entitlement);
+        let limit;
         if (pair != null) {
-            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-            return limit != null ? (limit.increment ?? 1) : null;
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
         }
-        null
+        limit != null ? (limit.increment ?? 1) : null
     }
 
 
