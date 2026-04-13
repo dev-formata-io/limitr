@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.2;
+    ver version: 0.6.4;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -968,6 +968,8 @@ Limitr: {
             // check to see if the new value is valid (bounded by limit)
             let valid = ent.check(new_value, limit);
 
+            const pl = self.plan_for(customer.id);
+            const plan = pl != null ? pl.name : null;
             if (limit != null && (valid || limit.mode == 'soft')) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
                 const old_value = existing_meter.value;
