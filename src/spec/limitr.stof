@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.1;
+    ver version: 0.6.2;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1602,11 +1602,10 @@ Limitr: {
             }
         }
 
-        if (revenue <= 0) return null;
         return {
             'revenue': revenue,
             'cost': cost,
-            'margin': (((revenue - cost)/revenue) * 100).round(2),
+            'margin': revenue > 0 ? (((revenue - cost)/revenue) * 100).round(2) : -100,
             'entitlements': entitlements_map,
         };
     }
@@ -1731,11 +1730,10 @@ Limitr: {
             }
         }
         
-        if (revenue <= 0) return null;
         return {
             'revenue': revenue,
             'cost': cost,
-            'margin': (((revenue - cost)/revenue) * 100).round(2),
+            'margin': revenue > 0 ? (((revenue - cost)/revenue) * 100).round(2) : -100,
             'entitlements': entitlements_map,
         };
     }
