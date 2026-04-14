@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.4;
+    ver version: 0.6.5;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -444,6 +444,11 @@ Limitr: {
         /// Change a customer's plan ID.
         fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
             ?self.get().set_customer_plan(id, plan, overwrite_meters)
+        }
+
+        /// Ensure customers included plan topup grants.
+        fn ensure_customer_plan_included_topups(customer_id: str!) {
+            ?self.get().ensure_customer_plan_included_topups(customer_id)
         }
 
         /// Ensure customer "subscription" credit quantity.
@@ -997,7 +1002,7 @@ Limitr: {
                         // contemplate credit grants for this customer before sending overage amount
                         // grants will modify event_value.overage for appropriate aggregation in the correct units
                         event_value.overage = new_value > old_value ? new_value - max(old_value, limit_value) : new_value - limit_value;
-                        if (customer.apply_overage_grants(limit.credit, event_value, stof_units, self.exchange)) {
+                        if (customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
                             // intercept here with voucher mode to protect your costs if using a voucher with max spend
                             // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
                             if (!customer.ensure_voucher(limit.credit, event_value, self.exchange)) {
@@ -1244,6 +1249,20 @@ Limitr: {
             return true;
         }
         false
+    }
+
+
+    /**
+     * Ensure this customer has the included plan topups created as grants.
+     * Call this for customers that should have included topup grants (maybe not all customers).
+     * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
+     */
+    fn ensure_customer_plan_included_topups(customer_id: str!) {
+        const customer = self.customer(customer_id);
+        const plan = self.plan_for(customer_id);
+        if (customer != null && plan != null && customer.update_topup_plan_grants(self, plan)) {
+            await <Event>.send('customer-set', customer);
+        }
     }
 
 
@@ -1501,6 +1520,7 @@ Limitr: {
                 if (cred != null) {
                     const units = cred.stof_units ?? 'float';
                     const grant = top.create_grant(units, customer.grants);
+                    grant.topup = topup;
                     customer.grants.insert(grant.id, grant);
 
                     // Just the customer-topup-granted event, no customer-set here

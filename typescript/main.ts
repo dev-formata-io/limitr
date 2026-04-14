@@ -310,6 +310,16 @@ export class Limitr {
 
 
     /**
+     * Ensure this customer has the included plan topups created as grants.
+     * Call this for customers that should have included topup grants (maybe not all customers).
+     * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
+     */
+    async ensureCustomerPlanIncludedTopups(id: string) {
+        await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_customer_plan_included_topups', id));
+    }
+
+
+    /**
      * Ensure customer "subscription" credit quantity.
      * Will increment the plan subscription entitlement if found and the current meter is less than 1.
      * If there's a trial period, the allow call will not happen until the trial is over.

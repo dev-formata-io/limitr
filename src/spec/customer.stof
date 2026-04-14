@@ -149,17 +149,77 @@ Customer: {
 
 
     /**
+     * Update topup grants with their respective topup definitions in the plan.
+     * Topup grants adapt to the topup definition they are associated with.
+     */
+    fn update_topup_plan_grants(policy: Limitr, plan: Plan) -> bool {
+        if (policy == null || plan == null) return false;
+
+        let set_topup_names = set();
+        for (const pair in self.grants.fields()) {
+            const grant: Grant = pair[1];
+            const top: Topup = grant.topup != null ? plan.topups.get(grant.topup) : null;
+            if (top != null) {
+                if (top.included && top.included_scopes != null && !top.included_scopes.contains(self.type)) {
+                    // was included by default with the plan, now no longer applies to this customer
+                    self.grants.remove(id, shallow = false);
+                } else {
+                    set_topup_names.insert(topup);
+                    grant.credit = top.credit;
+                    grant.starting_value = top.value;
+                    grant.reset = top.resets;
+                    grant.reset_inc = top.reset_inc;
+                    grant.expires_on = top.expires_after != null ? grant.created_on + top.expires_after : null;
+                    grant.reset_mode = top.reset_mode;
+                    grant.rollover_min = top.rollover_min;
+                    grant.rollover_max = top.rollover_max;
+                    grant.rollover_pct = top.rollover_pct;
+                    grant.max_balance = top.max_balance;
+                    grant.reset_catchup_cap = top.reset_catchup_cap;
+                }
+            } else if (grant.topup != null) {
+                // this grant was defined via a topup, and the topup no longer exists, so remove the grant too
+                self.grants.remove(id, shallow = false);
+            }
+        }
+
+        // Make sure all included plan topups are applied to this customer
+        for (const pair in plan.topups.fields()) {
+            const name = pair[0];
+            const top: Topup = pair[1];
+            if (top.included && !set_topup_names.contains(name) && (top.included_scopes == null || top.included_scopes.contains(self.type))) {
+                const cred = policy.credit(top.credit);
+                if (cred != null) {
+                    set_topup_names.insert(name);
+                    const units = cred.stof_units ?? 'float';
+                    const grant = top.create_grant(units, self.grants);
+                    grant.topup = name;
+                    self.grants.insert(grant.id, grant);
+                }
+            }
+        }
+
+        set_topup_names.any()
+    }
+    
+
+    /**
      * Try using a grant on this customer before sending meter-overage.
      * Returns true if there is still overage to be applied to the customers account (grants were used up/not there).
      */
-    fn apply_overage_grants(credit: str!, event_value: obj!, stof_units: str!, exchange: Exchange) -> bool {
+    fn apply_overage_grants(policy: Limitr, plan: Plan, credit: str!, event_value: obj!, stof_units: str!) -> bool {
         const fields = self.grants.fields();
         if (fields.empty()) return true; // no grants present, send overage event
 
         let overage = event_value.overage;
         if (overage == null) return false; // no overage recorded, don't send event
 
+        // Update topup grants with their respective topup definitions in the plan
+        // Topup grants adapt to the topup definition they are associated with
+        self.update_topup_plan_grants(policy, plan);
+
         // while overage, take from grants
+        const exchange: Exchange = policy.exchange;
         let grant_value_applied = 0;
         while (overage > 0) {
             const grant: Grant = self.best_grant(credit, exchange, stof_units);

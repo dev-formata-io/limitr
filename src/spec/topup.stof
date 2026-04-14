@@ -40,6 +40,12 @@ Topup: {
     /// Does this topup reset?
     bool resets: false;
 
+    /// Is this topup included automatically for customers on this plan?
+    bool included: false;
+
+    /// Customer types that this topup is included for (leave empty or null for all).
+    list included_scopes: null;
+
     #[schema((target_val: float): bool => target_val > 0 ? true : <LimitrValidation>.error(`Top-up reset increment value must be greater than zero`))]
     /// What is the reset increment?
     ms reset_inc: 30days;
@@ -84,7 +90,7 @@ Topup: {
      */
     fn create_grant(units: str = 'float', arena?: obj) -> Grant {
         const now = Time.now();
-        const expires_on = self.expires_after != null ? Time.now() + self.expires_after : null;
+        const expires_on = self.expires_after != null ? now + self.expires_after : null;
         new Grant {
             id: 'lgrnt_' + nanoid(14),
             credit: self.credit,
@@ -93,7 +99,7 @@ Topup: {
             starting_value: self.value,
             value: (self.value as float).to_units(units),
             resets: self.resets,
-            reset_inc: self.reset_inc ?? 30days,
+            reset_inc: self.reset_inc,
             expires_on,
             reset_mode: self.reset_mode,
             rollover_min: self.rollover_min,

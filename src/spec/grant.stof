@@ -27,6 +27,9 @@ Grant: {
     /// Credit ID.
     str! credit: '';
 
+    /// Topup name - set when created via topup.
+    str topup: null;
+
     /// Created on timestamp.
     ms! created_on: 0;
 
