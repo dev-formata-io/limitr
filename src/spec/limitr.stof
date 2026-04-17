@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.7;
+    ver version: 0.6.8;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -354,13 +354,13 @@ Limitr: {
         }
 
         /// Get the remaining balance value for a customer ID (limit - current (metered) value).
-        fn remaining(id: str!, entitlement: str!) -> float {
-            ?self.get().remaining(id, entitlement)
+        fn remaining(id: str!, entitlement: str!, percent: bool = false) -> float {
+            ?self.get().remaining(id, entitlement, percent)
         }
 
         /// Get the current value of a metered entitlement for a customer ID.
-        fn value(id: str!, entitlement: str!) -> float {
-            ?self.get().value(id, entitlement)
+        fn value(id: str!, entitlement: str!, percent: bool = false) -> float {
+            ?self.get().value(id, entitlement, percent)
         }
 
         /// Get the standard increment "cost" of an "increment" operation.
@@ -863,7 +863,7 @@ Limitr: {
      * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
      * Returns a value in the units of the meter (not always the same as defined limit units).
      */
-    fn remaining(id: str!, entitlement: str!) -> float {
+    fn remaining(id: str!, entitlement: str!, percent: bool = false) -> float {
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
             const customer = pair[0];
@@ -873,8 +873,12 @@ Limitr: {
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
                 const meter: Meter = customer.meters.get(entitlement);
-                if (meter != null) return ((limit.value as float) - meter.value).to_units(stof_units);
-                return (limit.value as float).to_units(stof_units);
+                const lval = (limit.value as float).to_units(stof_units);
+                let res = meter != null ? lval - meter.value : lval;
+                if (percent) {
+                    res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
+                }
+                return res;
             }
         }
         null
@@ -885,12 +889,17 @@ Limitr: {
      * Get the current value of a metered entitlement for a customer ID.
      * Returns null if the entitlement doesn't exist.
      */
-    fn value(id: str!, entitlement: str!) -> float {
+    fn value(id: str!, entitlement: str!, percent: bool = false) -> float {
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
             const customer = pair[0];
             const meter: Meter = customer.meters.get(entitlement);
-            return meter != null ? meter.value : 0;
+            const val = meter != null ? meter.value : 0;
+            if (percent) {
+                const lim = self.limit(id, entitlement);
+                return lim != 0 ? (val / lim * 100).remove_units() : 0;
+            }
+            return val;
         }
         null
     }

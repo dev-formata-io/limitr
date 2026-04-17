@@ -414,6 +414,9 @@ fn usage_units() {
     assert_not(self.policy.allow('cj', 'usage', 1GB));
     assert(self.policy.allow('cj', 'usage', 10MiB));
 
+    assert_eq(self.policy.value('cj', 'usage', true).round(2), 75.62);
+    assert_eq(self.policy.remaining('cj', 'usage', true).round(2), 24.38);
+
     val = self.policy.value('cj', 'usage');
     let remaining = self.policy.remaining('cj', 'usage');
     assert_eq(val.round(2), 1512.49MB);

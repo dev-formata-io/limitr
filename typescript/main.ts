@@ -619,9 +619,9 @@ export class Limitr {
      * Get the remaining balance for a customer's entitlement (limit - current (metered) value).
      * Will always be in the units of the credit associated with this entitlement.
      */
-    async remaining(customer: string, entitlement: string): Promise<number | null> {
+    async remaining(customer: string, entitlement: string, percent: boolean = false): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement, percent)) as number | null;
     }
 
 
@@ -629,9 +629,9 @@ export class Limitr {
      * Get the current meter value for a customer's entitlement.
      * Will always be in the units of the credit associated with this entitlement.
      */
-    async value(customer: string, entitlement: string): Promise<number | null> {
+    async value(customer: string, entitlement: string, percent: boolean = false): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement, percent)) as number | null;
     }
 
 
