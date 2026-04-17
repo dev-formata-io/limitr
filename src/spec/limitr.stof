@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.6;
+    ver version: 0.6.7;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -944,8 +944,12 @@ Limitr: {
             const ent = pair[1];
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
-            // get the existing customer meter and new value
+            // get the credit & existing meter & cast value to credit units
             let existing_meter: Meter = customer.meters.get(entitlement);
+            let credit_name = limit != null ? limit.credit : (existing_meter != null ? existing_meter.credit : null);
+            const credit = credit_name != null ? self.credit(credit_name) : null;
+            const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+            value = value.to_units(stof_units);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
             // should the meter be reset?
@@ -956,11 +960,6 @@ Limitr: {
                 new_value = value;
                 existing_meter_reset = true;
             }
-
-            // put new_value into the credit's units, casting if needed (in case no units were given)
-            const credit = limit != null ? self.credit(limit.credit) : null;
-            const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
-            new_value = ?new_value.to_units(stof_units) ?? new_value;
 
             // is the new value below a defined minimum?
             if (limit != null && limit.minimum != null) {
@@ -1014,18 +1013,20 @@ Limitr: {
 
                             sent_overage = true;
 
-                            // Internal notifications first for any matching
-                            const notes: Notifications = self.notifications;
-                            await notes.handle_event('meter-overage', event_value);
-                            await <Event>.send('meter-overage', event_value);
+                            if (event) {
+                                // Internal notifications first for any matching
+                                const notes: Notifications = self.notifications;
+                                await notes.handle_event('meter-overage', event_value);
+                                await <Event>.send('meter-overage', event_value);
+                            }
                         }
                     }
-                    if (existing_meter_reset) {
+                    if (existing_meter_reset && event) {
                         const notes: Notifications = self.notifications;
                         await notes.handle_event('meter-reset', event_value);
                         await <Event>.send('meter-reset', event_value);
                     }
-                    if (!sent_overage) {
+                    if (!sent_overage && event) {
                         // Internal notifications first for any matching
                         const notes: Notifications = self.notifications;
                         await notes.handle_event('meter-changed', event_value);
@@ -1050,12 +1051,12 @@ Limitr: {
                     invalid_value: new_value,
                 };
 
-                // Internal notifications first for any matching
-                const notes: Notifications = self.notifications;
-                await notes.handle_event('meter-limit', event_value);
-
-                // Global meter limit event
-                await <Event>.send('meter-limit', event_value);
+                if (event) {
+                    // Internal notifications first for any matching
+                    const notes: Notifications = self.notifications;
+                    await notes.handle_event('meter-limit', event_value);
+                    await <Event>.send('meter-limit', event_value);
+                }
                 drop(event_value);
             }
 
@@ -1096,19 +1097,18 @@ Limitr: {
             const ent = pair[1];
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
-            // get the existing customer meter and new value
+            // get the credit & existing meter & cast value to credit units
             let existing_meter: Meter = customer.meters.get(entitlement);
+            let credit_name = limit != null ? limit.credit : (existing_meter != null ? existing_meter.credit : null);
+            const credit = credit_name != null ? self.credit(credit_name) : null;
+            const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+            value = value.to_units(stof_units);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
             // should the meter be reset?
             if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets && limit.reset_inc > 0 && (Time.now() - existing_meter.started) > limit.reset_inc) {
                 new_value = value;
             }
-
-            // put new_value into the credit's units, casting if needed (in case no units were given)
-            const credit = limit != null ? self.credit(limit.credit) : null;
-            const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
-            new_value = ?new_value.to_units(stof_units) ?? new_value;
 
             // is the new value below a defined minimum?
             if (limit != null && limit.minimum != null) {
