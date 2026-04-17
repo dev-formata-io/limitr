@@ -649,9 +649,9 @@ export class Limitr {
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async increment(customer: string, entitlement: string): Promise<boolean> {
+    async increment(customer: string, entitlement: string, event: boolean = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement, event)) as boolean;
     }
 
 
@@ -660,9 +660,9 @@ export class Limitr {
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async decrement(customer: string, entitlement: string): Promise<boolean> {
+    async decrement(customer: string, entitlement: string, event: boolean = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement, event)) as boolean;
     }
 
 
@@ -672,9 +672,9 @@ export class Limitr {
      * Changes a meter for this customer if true.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async allow(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, event)) as boolean;
     }
 
 
@@ -713,9 +713,9 @@ export class Limitr {
      * Set a customer's meter value for an entitlement using 'allow(value - current)'.
      * For accumulating usage, use 'allow' or 'increment'.
      */
-    async set(customer: string, entitlement: string, value: number): Promise<boolean> {
+    async set(customer: string, entitlement: string, value: number, event: boolean = true): Promise<boolean> {
         const current = await this.value(customer, entitlement);
-        if (current !== null) return await this.allow(customer, entitlement, value - current);
+        if (current !== null) return await this.allow(customer, entitlement, value - current, event);
         return false;
     }
 
