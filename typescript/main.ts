@@ -1039,7 +1039,11 @@ export class Limitr {
                 if (!!lv) {
                     await this.gate.run(async () => {
                         if (this.wsInit) {
-                            await this.doc.call('<Limitr>.api.update_policy_internals', buffer, 'bstf');
+                            // drop initial types - users can override rules locally and that logic should stay
+                            doc.parse(`fn before_policy_update_clean() { root.remove('LimitrTypes', shallow = false); drop(this); }`);
+                            doc.sync_call('before_policy_update_clean');
+                            const cleanBuffer = doc.blobify('bstf');
+                            await this.doc.call('<Limitr>.api.update_policy_internals', cleanBuffer, 'bstf');
                         } else {
                             this.doc = doc;
                             this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));

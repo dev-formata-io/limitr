@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.9;
+    ver version: 0.6.10;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -129,7 +129,6 @@ Limitr: {
 
 
         /// Replace the current active policy internals in this document with a new one.
-        /// Used to refresh this Limitr policies plans & credits (not customers).
         fn update_policy_internals(updated: unknown!, format: str! = 'json') {
             const policy = self.get();
             if (policy == null) return;
@@ -174,6 +173,18 @@ Limitr: {
                         const cap: Capability = pair[1];
                         if (cap.name == null || cap.name.len() < 1) cap.name = name;
                         policy.set_capability(cap);
+                    }
+                }
+                if ((typeof p.policy.customers) == 'obj') {
+                    for (const pair in p.policy.customers.fields()) {
+                        const id = pair[0];
+                        const existing = policy.customers.get(id);
+                        if (existing == null) {
+                            const c = pair[1];
+                            policy.customers.insert(id, c);
+                            c.move(policy.customers);
+                            for (const alt in c.alt_ids) policy.alt_customer_ids.insert(alt, id);
+                        }
                     }
                 }
 
