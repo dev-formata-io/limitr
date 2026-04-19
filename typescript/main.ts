@@ -160,6 +160,15 @@ export class Limitr {
     }
 
 
+    /**
+     * Limitr version string.
+     */
+    async version(): Promise<string> {
+        const ver = await this.doc.get('<root.Limitr>.version') as string | null;
+        return ver ?? 'unknown';
+    }
+
+
     /*****************************************************************************
      * Plans API.
      *****************************************************************************/
@@ -1026,7 +1035,7 @@ export class Limitr {
                 }
                 const doc = new StofDoc();
                 doc.parse(buffer, 'bstf');
-                const lv = await doc.get('root.Limitr.version');
+                const lv = await doc.get('<root.Limitr>.version');
                 if (!!lv) {
                     await this.gate.run(async () => {
                         if (this.wsInit) {

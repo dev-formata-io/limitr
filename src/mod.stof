@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import './spec/mod';
+import './spec/mod' as self.LimitrTypes;
 
 #[test]
 import './tests/mod';
