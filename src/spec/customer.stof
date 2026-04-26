@@ -164,7 +164,7 @@ Customer: {
                     // was included by default with the plan, now no longer applies to this customer
                     self.grants.remove(id, shallow = false);
                 } else {
-                    set_topup_names.insert(topup);
+                    set_topup_names.insert(grant.topup);
                     grant.credit = top.credit;
                     grant.starting_value = top.value;
                     grant.reset = top.resets;
@@ -200,6 +200,22 @@ Customer: {
         }
 
         set_topup_names.any()
+    }
+
+
+    /**
+     * Get the remaining amount of a credit from this customer's grants.
+     */
+    fn remaining_grant_credit(policy: Limitr, credit: str!) -> float {
+        const exchange: Exchange = policy.exchange;
+        if (exchange == null) return null;
+        let total: float = 0;
+        for (const field in self.grants.fields()) {
+            const grant: Grant = field[1];
+            const converted = exchange.exchange(grant.value, grant.credit, credit);
+            if (converted != null) total += converted;
+        }
+        total
     }
     
 

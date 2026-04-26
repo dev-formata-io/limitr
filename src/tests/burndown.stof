@@ -1,0 +1,167 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+Limitr TestBurndownPolicy: {
+    credits: {
+        abstract: {
+            description: 'Abstract customer-facing credit'
+        }
+
+        ai_input_token: {
+            description: 'Input token'
+            overhead_cost: 0.000004
+            stof_units: 'int'
+            price: { amount: 0.000006 }
+            resets: true
+        }
+        ai_output_token: {
+            description: 'Output token'
+            overhead_cost: 0.000015
+            stof_units: 'int'
+            price: { amount: 0.00003 }
+            resets: true
+        }
+
+        mb_storage: {
+            description: 'MB of file storage'
+            overhead_cost: 0.00002
+            stof_units: 'MB'
+            price: { amount: 0.00003 }
+        }
+    }
+
+    exchange: {
+        abstract: { value: 1, currency: 'rune' }
+
+        ai_tokens: { value: 1.25, currency: 'abstract' }
+        ai_input_token: { value: 0.000006, currency: 'ai_tokens' }
+        ai_output_token: { value: 0.00003, currency: 'ai_tokens' }
+
+        mb_storage: { value: 0.00003, currency: 'abstract' }
+    }
+
+    plans: {
+        base: {
+            label: 'Base Plan'
+            entitlements: {
+                ai_input: {
+                    description: 'AI input credits'
+                    limit: {
+                        credit: 'ai_input_token'
+                        mode: 'hard'
+                        value: 0
+                        resets: true
+                    }
+                }
+
+                ai_output: {
+                    description: 'AI output credits'
+                    limit: {
+                        credit: 'ai_output_token'
+                        mode: 'hard'
+                        value: 0
+                        resets: true
+                    }
+                }
+
+                file_storage: {
+                    description: 'File storage'
+                    limit: {
+                        credit: 'mb_storage'
+                        mode: 'hard'
+                        value: 0
+                    }
+                }
+            }
+            topups: {
+                monthly_included: {
+                    description: 'Monthly included abstract credits'
+                    credit: 'abstract'
+                    value: 10
+                    price: { amount: 10 }
+                    resets: true
+                    included: true
+                }
+            }
+        }
+    }
+
+    
+    #[test]
+    fn test_exchange() {
+        assert_eq(self.credit_exchange('abstract', 'ai_input_token').round(), 133_333);
+        assert_eq(self.credit_exchange('abstract', 'ai_output_token').round(), 26_667);
+        assert_eq(self.credit_exchange('abstract', 'mb_storage').round(), 33_333);
+        assert_eq(self.credit_exchange('abstract', 'mb_storage', 2).round(), 66_667);
+        assert_eq(self.credit_exchange('mb_storage', 'ai_output_token', 50), 40);
+    }
+
+
+    #[test]
+    fn burndown() {
+        const customer = self.create_customer('burndown', 'base');
+        //self.ensure_included_topups('burndown'); // done automatically now
+
+        assert_eq(self.credit_remaining('burndown', 'abstract'), 10);
+        assert_eq(self.credit_remaining('burndown', 'ai_output_token').round(), 266_667);
+        assert_eq(self.credit_remaining('burndown', 'ai_input_token').round(), 1_333_333);
+        assert_eq(self.credit_remaining('burndown', 'mb_storage').round(), 333_333);
+
+        assert_eq(self.limit('burndown', 'ai_output', false), 0);
+        assert_eq(self.limit('burndown', 'ai_output').round(), 266_667);
+        assert_not(self.check('burndown', 'ai_output', 266_667));
+
+        assert(self.allow('burndown', 'ai_input', 200_000));
+        assert(self.allow('burndown', 'ai_output', 200_000));
+        assert(self.allow('burndown', 'file_storage', 10GB));
+
+        // check doesn't modify
+        assert(self.check('burndown', 'ai_output', 18_666));
+        assert(self.check('burndown', 'ai_output', 10_000));
+        assert_not(self.check('burndown', 'ai_output', 100_000));
+
+        // allow tries to again, but fails
+        assert_not(self.allow('burndown', 'ai_output', 100_000));
+
+        // remaining and value percentage equal 100
+        assert_eq(100,
+            self.remaining('burndown', 'ai_input', percent = true) +
+            self.value('burndown', 'ai_input', percent = true)
+        );
+
+        // value percentage without grants clamped at 100
+        assert_eq(100, self.value('burndown', 'ai_input', percent = true, grants = false));
+
+        // lim = 0, so current limit == remaining
+        assert_eq(
+            self.limit('burndown', 'ai_output').round(),
+            self.remaining('burndown', 'ai_output').round()
+        );
+        assert_eq(self.value('burndown', 'ai_output'), 200_000);
+
+        // take up everything we can with input credits
+        assert(self.allow('burndown', 'ai_input', self.remaining('burndown', 'ai_input')));
+
+        //pln(customer);
+        assert_eq(customer.grants.len(), 1);
+        assert_eq(customer.grants[0][1].credit, 'abstract');
+        assert_eq(self.credit_remaining('burndown', 'abstract').round(4), 0);
+        assert_eq(self.credit_remaining('burndown', 'ai_output_token').round(), 0);
+        assert_eq(self.credit_remaining('burndown', 'ai_input_token').round(), 0);
+        assert_eq(self.credit_remaining('burndown', 'mb_storage').round(), 0);
+    }
+}

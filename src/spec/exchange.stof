@@ -96,6 +96,7 @@ Exchange: {
      * Exchange one currency for another.
      */
     fn exchange(value: float!, in_currency: str!, out_currency: str!) -> float {
+        value = value.remove_units();
         if (in_currency == out_currency) return value;
         const val_runes = self.to_runes(value, in_currency);
         const exc_runes = self.to_runes(1, out_currency);

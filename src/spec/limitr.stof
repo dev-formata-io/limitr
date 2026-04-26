@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.10;
+    ver version: 0.6.12;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -360,18 +360,18 @@ Limitr: {
         }
 
         /// Get the limit value for an entitlement.
-        fn limit(id: str!, entitlement: str!) -> float {
-            ?self.get().limit(id, entitlement)
+        fn limit(id: str!, entitlement: str!, grants: bool = true) -> float {
+            ?self.get().limit(id, entitlement, grants)
         }
 
         /// Get the remaining balance value for a customer ID (limit - current (metered) value).
-        fn remaining(id: str!, entitlement: str!, percent: bool = false) -> float {
-            ?self.get().remaining(id, entitlement, percent)
+        fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
+            ?self.get().remaining(id, entitlement, percent, grants)
         }
 
         /// Get the current value of a metered entitlement for a customer ID.
-        fn value(id: str!, entitlement: str!, percent: bool = false) -> float {
-            ?self.get().value(id, entitlement, percent)
+        fn value(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
+            ?self.get().value(id, entitlement, percent, grants)
         }
 
         /// Get the standard increment "cost" of an "increment" operation.
@@ -427,6 +427,11 @@ Limitr: {
             ?self.get().credit_for(id, entitlement)
         }
 
+        /// Exchange some of one credit for another (if possible).
+        fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
+            ?self.get().credit_exchange(in_currency, out_currency, value)
+        }
+
 
         /*****************************************************************************
          * Customers.
@@ -458,13 +463,13 @@ Limitr: {
         }
 
         /// Ensure customers included plan topup grants.
-        fn ensure_customer_plan_included_topups(customer_id: str!) {
-            ?self.get().ensure_customer_plan_included_topups(customer_id)
+        fn ensure_included_topups(customer_id: str!, event: bool = true) {
+            ?self.get().ensure_included_topups(customer_id, event)
         }
 
         /// Ensure customer "subscription" credit quantity.
-        fn ensure_customer_plan_quantity(customer_id: str!) -> bool {
-            ?self.get().ensure_customer_plan_quantity(customer_id)
+        fn ensure_plan_subscription(customer_id: str!) -> bool {
+            ?self.get().ensure_plan_subscription(customer_id)
         }
 
         /// Create a new customer.
@@ -505,6 +510,11 @@ Limitr: {
         /// Apply a plan topup to a customer.
         fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
             ?self.get().apply_customer_topup(customer_id, topup)
+        }
+
+        /// How much of a credit is remaining for a customer.
+        fn credit_remaining(customer_id: str!, credit: str!) -> float {
+            ?self.get().credit_remaining(customer_id, credit)
         }
 
 
@@ -850,8 +860,10 @@ Limitr: {
      * Get the limit value for an entitlement.
      * Returns a value in the units of the meter (credit) (not always the same as defined limit units).
      * Ex. limit.value = 2GB, but credit.stof_units = 'MB', limit(..) => MB
+     *
+     * If grants are included and id is a customer, return limit + current converted grants
      */
-    fn limit(id: str!, entitlement: str!) -> float {
+    fn limit(id: str!, entitlement: str!, grants: bool = true) -> float {
         const pair = self.customer_entitlement(id, entitlement);
         let limit;
         if (pair != null) {
@@ -864,7 +876,14 @@ Limitr: {
             const credit = self.credit(limit.credit);
             const stof_units = credit != null ? credit.stof_units : 'float';
             const lim = limit.value as float; // can be a str w units
-            return lim.to_units(stof_units);
+            let val = lim.to_units(stof_units);
+
+            if (grants && pair != null) {
+                const customer = pair[0];
+                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                if (remaining != null) val += remaining;
+            }
+            return val;
         }
         null
     }
@@ -874,7 +893,7 @@ Limitr: {
      * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
      * Returns a value in the units of the meter (not always the same as defined limit units).
      */
-    fn remaining(id: str!, entitlement: str!, percent: bool = false) -> float {
+    fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
             const customer = pair[0];
@@ -884,8 +903,15 @@ Limitr: {
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
                 const meter: Meter = customer.meters.get(entitlement);
-                const lval = (limit.value as float).to_units(stof_units);
-                let res = meter != null ? lval - meter.value : lval;
+                let mval = meter != null ? meter.value : 0;
+                let lval = (limit.value as float).to_units(stof_units);
+
+                if (grants) {
+                    const remaining = customer.remaining_grant_credit(self, limit.credit);
+                    if (remaining != null && remaining > 0) lval = max(mval, lval) + remaining;
+                }
+
+                let res = lval - mval;
                 if (percent) {
                     res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
                 }
@@ -900,17 +926,13 @@ Limitr: {
      * Get the current value of a metered entitlement for a customer ID.
      * Returns null if the entitlement doesn't exist.
      */
-    fn value(id: str!, entitlement: str!, percent: bool = false) -> float {
+    fn value(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
+        if (percent) return 100 - self.remaining(id, entitlement, true, grants);
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
             const customer = pair[0];
             const meter: Meter = customer.meters.get(entitlement);
-            const val = meter != null ? meter.value : 0;
-            if (percent) {
-                const lim = self.limit(id, entitlement);
-                return lim != 0 ? (val / lim * 100).remove_units() : 0;
-            }
-            return val;
+            return meter != null ? meter.value : 0;
         }
         null
     }
@@ -1058,9 +1080,11 @@ Limitr: {
                 valid = true; // meter was changed!
             } else if (limit != null && !valid) {
                 const limit_value = (limit.value as float).to_units(stof_units);
-                const event_value = new {
+                const meter_value = existing_meter ? existing_meter.value : 0;
+                let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+                let event_value = new {
                     meter: new {
-                        value: existing_meter ? existing_meter.value : 0,
+                        value: meter_value,
                         limit: limit_value,
                         invalid: new_value,
                     },
@@ -1069,13 +1093,58 @@ Limitr: {
                     plan,
                     credit,
                     invalid_value: new_value,
+                    overage,
                 };
+                
+                if (overage > 0) {
+                    const remaining = customer.remaining_grant_credit(self, limit.credit);
+                    if (remaining != null && remaining >= overage) {
+                        if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
+                            valid = true; // we're now valid
+                            
+                            const grant_value_applied = event_value.grant_value_applied;
+                            overage = event_value.overage;
+                            drop(event_value);
+                            event_value = new {
+                                meter: new {
+                                    old: meter_value,
+                                    value: new_value,
+                                    limit: limit_value,
+                                },
+                                customer,
+                                entitlement,
+                                plan,
+                                credit,
+                                remaining: limit_value - new_value,
+                                grant_value_applied,
+                                overage,
+                            };
+
+                            if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
+                            existing_meter.credit = limit.credit;
+                            existing_meter.value = new_value;
+                            customer.meters.insert(entitlement, existing_meter);
+                        }
+                    }
+                }
 
                 if (event) {
-                    // Internal notifications first for any matching
-                    const notes: Notifications = self.notifications;
-                    await notes.handle_event('meter-limit', event_value);
-                    await <Event>.send('meter-limit', event_value);
+                    if (existing_meter_reset) {
+                        const notes: Notifications = self.notifications;
+                        await notes.handle_event('meter-reset', event_value);
+                        await <Event>.send('meter-reset', event_value);
+                    }
+                    if (valid) {
+                        // Internal notifications first for any matching
+                        const notes: Notifications = self.notifications;
+                        await notes.handle_event('meter-changed', event_value);
+                        await <Event>.send('meter-changed', event_value);
+                    } else {
+                        // Internal notifications first for any matching
+                        const notes: Notifications = self.notifications;
+                        await notes.handle_event('meter-limit', event_value);
+                        await <Event>.send('meter-limit', event_value);
+                    }
                 }
                 drop(event_value);
             }
@@ -1139,7 +1208,21 @@ Limitr: {
             }
 
             // check to see if the new value is valid (bounded by limit)
-            return ent.check(new_value, limit) || (limit != null && limit.mode != 'hard');
+            let valid = ent.check(new_value, limit);
+            if (valid || (limit != null && limit.mode != 'hard')) return true;
+
+            // if we have a hard limit, lets check against credit grants to see if we're good
+            if (limit != null && limit.mode == 'hard') {
+                const limit_value = (limit.value as float).to_units(stof_units);
+                const meter_value = existing_meter ? existing_meter.value : 0;
+                const overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+                if (overage > 0) {
+                    const remaining = customer.remaining_grant_credit(self, limit.credit);
+                    if (remaining != null && remaining >= overage) {
+                        return true;
+                    }
+                }
+            }
         }
         false
     }
@@ -1168,6 +1251,14 @@ Limitr: {
             if (limit != null) return self.credit(limit.credit);
         }
         null
+    }
+
+
+    /**
+     * Exchange some of one credit for another (if possible).
+     */
+    fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
+        self.exchange.exchange(value, in_currency, out_currency)
     }
 
 
@@ -1277,11 +1368,11 @@ Limitr: {
      * Call this for customers that should have included topup grants (maybe not all customers).
      * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
      */
-    fn ensure_customer_plan_included_topups(customer_id: str!) {
+    fn ensure_included_topups(customer_id: str!, event: bool = true) {
         const customer = self.customer(customer_id);
         const plan = self.plan_for(customer_id);
         if (customer != null && plan != null && customer.update_topup_plan_grants(self, plan)) {
-            await <Event>.send('customer-set', customer);
+            if (event) await <Event>.send('customer-set', customer);
         }
     }
 
@@ -1295,7 +1386,7 @@ Limitr: {
      * Best practice is to call this just for the customers that are accountable for plan pricing (e.g. org).
      * Ex. pro plan with a monthly price of $200/mo.
      */
-    fn ensure_customer_plan_quantity(customer_id: str!) -> bool {
+    fn ensure_plan_subscription(customer_id: str!) -> bool {
         const customer = self.customer(customer_id);
         if (customer != null) {
             // do not contemplate refs here... plan must be actually ON this customer
@@ -1395,6 +1486,7 @@ Limitr: {
             // init alternative ids
             if (alts != null) for (const alt in alts) self.set_alt_customer_id(id, alt, false);
 
+            self.ensure_included_topups(id, false);
             await <Event>.send('customer-set', customer);
             return customer;
         }
@@ -1555,6 +1647,15 @@ Limitr: {
             }
         }
         false
+    }
+
+
+    /**
+     * Credit remaining for this customer through grants.
+     */
+    fn credit_remaining(customer_id: str!, credit: str!) -> float {
+        const customer = self.customer(customer_id);
+        customer != null ? customer.remaining_grant_credit(self, credit) : null
     }
 
 

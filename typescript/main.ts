@@ -259,6 +259,15 @@ export class Limitr {
     }
 
 
+    /**
+     * Credit exchange.
+     * Convert some of one credit to another (if possible).
+     */
+    async creditExchange(inCredit: string, outCredit: string, value: number = 1): Promise<number | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.credit_exchange', inCredit, outCredit, value)) as number | null;
+    }
+
+
     /*****************************************************************************
      * Customers API.
      *****************************************************************************/
@@ -320,11 +329,10 @@ export class Limitr {
 
     /**
      * Ensure this customer has the included plan topups created as grants.
-     * Call this for customers that should have included topup grants (maybe not all customers).
-     * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
+     * Also ensure this customer doesn't have included topups that are no longer applicable given their plan.
      */
-    async ensureCustomerPlanIncludedTopups(id: string) {
-        await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_customer_plan_included_topups', id));
+    async ensureCustomerIncludedTopups(id: string, event: boolean = true) {
+        await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_included_topups', id, event));
     }
 
 
@@ -337,7 +345,7 @@ export class Limitr {
      * Make sure to set up a plan "subscription" entitlement and credit (typically flat rate that does not reset with a soft limit of 0).
      */
     async ensureCustomerPlanQuantity(id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_customer_plan_quantity', id)) as boolean | null ?? false;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_plan_subscription', id)) as boolean | null ?? false;
     }
 
 
@@ -514,6 +522,15 @@ export class Limitr {
     }
 
 
+    /**
+     * Remaining credit for a customer (credit grants only).
+     * For remaining entitlement (optionally including credit grants), use "remaining" instead.
+     */
+    async remainingCredit(id: string, credit: string): Promise<number | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.credit_remaining', id, credit)) as number | null;
+    }
+
+
     /*****************************************************************************
      * Margin snapshots.
      *****************************************************************************/
@@ -619,8 +636,8 @@ export class Limitr {
      * ID can be a customer ID or a plan ID (to get the specific entitlement from a plan).
      * Will always be in the units of the credit associated with this entitlement (ex. limit.value = '2GB', credit.stof_units = 'MB', limit = 2000).
      */
-    async limit(id: string, entitlement: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.limit', id, entitlement)) as number | null;
+    async limit(id: string, entitlement: string, grants: boolean = true): Promise<number | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.limit', id, entitlement, grants)) as number | null;
     }
 
 
@@ -628,9 +645,9 @@ export class Limitr {
      * Get the remaining balance for a customer's entitlement (limit - current (metered) value).
      * Will always be in the units of the credit associated with this entitlement.
      */
-    async remaining(customer: string, entitlement: string, percent: boolean = false): Promise<number | null> {
+    async remaining(customer: string, entitlement: string, percent: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement, percent)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement, percent, grants)) as number | null;
     }
 
 
@@ -638,9 +655,9 @@ export class Limitr {
      * Get the current meter value for a customer's entitlement.
      * Will always be in the units of the credit associated with this entitlement.
      */
-    async value(customer: string, entitlement: string, percent: boolean = false): Promise<number | null> {
+    async value(customer: string, entitlement: string, percent: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement, percent)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement, percent, grants)) as number | null;
     }
 
 
@@ -882,6 +899,7 @@ export class Limitr {
             const start = Date.now();
             const poll = async () => {
                 if (await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id))) {
+                    await this.ensureCustomerIncludedTopups(id, false);
                     resolve(true);
                     return;
                 }
@@ -1019,6 +1037,7 @@ export class Limitr {
                     await this.gate.run(() => this.doc.call('<Limitr>.api.update_customer_invoices', data, 'json'));
                 } else if (!!record.type && !!record.id) {
                     await this.gate.run(() => this.doc.call('<Limitr>.api.update_customer_internals', data, 'json'));
+                    await this.ensureCustomerIncludedTopups(record.id, false);
                 }
             } catch {
                 // nada..
