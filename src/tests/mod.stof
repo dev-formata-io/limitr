@@ -426,6 +426,9 @@ fn usage_units() {
 
 #[test]
 fn org_scope_entitlements() {
+    const days_left = (self.policy.resets('free_org', 'usage') - Time.now()) as days;
+    assert(days_left > 29days && days_left < 30days);
+
     assert(self.policy.decrement('free_org', 'seats')); // min of 0, so no change
     assert(self.policy.decrement('free_org', 'seats'));
 

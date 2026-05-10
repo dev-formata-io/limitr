@@ -18,6 +18,7 @@ import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
 import { LimitrCustomer } from "./types.js";
+export * from './types.js';
 
 
 /**
@@ -642,6 +643,28 @@ export class Limitr {
 
 
     /**
+     * Get a customer's or plan's limit object.
+     * Could be overridden for a customer, so potentially different from the above entitlement's limit.
+     */
+    async limitObject(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
+        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.limit_obj', id, entitlement));
+        if (typeof node === 'string') return this.doc.record(node);
+        return undefined;
+    }
+
+
+    /**
+     * Get a customer's meter object for an entitlement.
+     * Resolves to a shared meter for the entitlement scope if defined and different from the customer type.
+     */
+    async meterObject(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
+        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.meter_obj', id, entitlement));
+        if (typeof node === 'string') return this.doc.record(node);
+        return undefined;
+    }
+
+
+    /**
      * Get the remaining balance for a customer's entitlement (limit - current (metered) value).
      * Will always be in the units of the credit associated with this entitlement.
      */
@@ -666,6 +689,14 @@ export class Limitr {
      */
     async cost(id: string, entitlement: string): Promise<number | null> {
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.cost', id, entitlement)) as number | null;
+    }
+
+
+    /**
+     * Meter resets at this timestamp (unix timestamp in ms) for this customer ID and entitlement.
+     */
+    async resets(id: string, entitlement: string): Promise<number | null> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.resets', id, entitlement)) as number | null;
     }
 
     

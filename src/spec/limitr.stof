@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.12;
+    ver version: 0.6.14;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -364,6 +364,16 @@ Limitr: {
             ?self.get().limit(id, entitlement, grants)
         }
 
+        /// Get the customers meter object (resolved to entitlement scope if needed).
+        fn meter_obj(id: str!, entitlement: str!) -> Meter {
+            ?self.get().meter_obj(id, entitlement)
+        }
+
+        /// Get the customers limit object (could be overridden).
+        fn limit_obj(id: str!, entitlement: str!) -> Limit {
+            ?self.get().limit_obj(id, entitlement)
+        }
+
         /// Get the remaining balance value for a customer ID (limit - current (metered) value).
         fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
             ?self.get().remaining(id, entitlement, percent, grants)
@@ -377,6 +387,11 @@ Limitr: {
         /// Get the standard increment "cost" of an "increment" operation.
         fn cost(id: str!, entitlement: str!) -> float {
             ?self.get().cost(id, entitlement)
+        }
+
+        /// Meter resets on this timestamp for this user & entitlement.
+        fn resets(id: str!, entitlement: str!) -> ms {
+            ?self.get().resets(id, entitlement)
         }
 
         /// Change the value of a metered entitlement by a standard increment.
@@ -857,6 +872,37 @@ Limitr: {
 
 
     /**
+     * Customer meter object.
+     * Resolved to the correct customer given the entitlement scope.
+     */
+    fn meter_obj(id: str!, entitlement: str!) -> Meter {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const customer = pair[0];
+            return customer.meters.get(entitlement);
+        }
+        null
+    }
+
+
+    /**
+     * Get the customer's limit object.
+     * Could be overridden, hence the helper.
+     */
+    fn limit_obj(id: str!, entitlement: str!) -> Limit {
+        const pair = self.customer_entitlement(id, entitlement);
+        let limit;
+        if (pair != null) {
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
+        }
+        limit
+    }
+
+
+    /**
      * Get the limit value for an entitlement.
      * Returns a value in the units of the meter (credit) (not always the same as defined limit units).
      * Ex. limit.value = 2GB, but credit.stof_units = 'MB', limit(..) => MB
@@ -952,6 +998,29 @@ Limitr: {
             limit = ent != null ? ent.limit : null;
         }
         limit != null ? (limit.increment ?? 1) : null
+    }
+
+
+    /**
+     * Entitlement resets on this timestamp for the following customer ID.
+     */
+    fn resets(id: str!, entitlement: str!) -> ms {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const customer = pair[0];
+            const ent = pair[1];
+            const limit = self.customer_entitlement_limit(customer, entitlement, ent);
+            if (limit != null && limit.resets && limit.reset_inc > 0) {
+                const existing_meter: Meter = customer.meters.get(entitlement);
+                const now = Time.now();
+                if (existing_meter != null && existing_meter.started != null) {
+                    while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
+                    return existing_meter.started + limit.reset_inc;
+                }
+                return now + limit.reset_inc;
+            }
+        }
+        null
     }
 
 
