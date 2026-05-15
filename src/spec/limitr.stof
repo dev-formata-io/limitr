@@ -1127,6 +1127,9 @@ Limitr: {
         let next_ts = now;
         if (reset_sch.starts_with('weekly')) next_ts = Time.add_days(now, 7);
         else next_ts = Time.add_months(now, 1);
+        // Note: for nth_weekday schedules, returns null if the Nth occurrence
+        // doesn't exist in the target month (e.g. 5th Tuesday in a short month).
+        // Callers should handle null gracefully.
         Time.start_of_period(next_ts, reset_sch)
     }
 
@@ -1852,6 +1855,7 @@ Limitr: {
         if (override != null) existing_limit = override;
 
         // Create the limit
+        if (reset_inc != null && reset_sch != null) return null; // mutually exclusive
         const limit = new Limit {
             credit: credit ?? existing_limit.credit ?? '',
             mode: mode ?? existing_limit.mode ?? 'hard',
