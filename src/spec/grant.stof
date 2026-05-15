@@ -45,8 +45,17 @@ Grant: {
     /// Does this grant reset after a period of time?
     bool resets: false;
 
-    /// What is the increment to reset with (if resets).
+    /// What is the increment to reset with (if resets and no reset_sch).
     ms reset_inc: 30days;
+
+    /// Calendar reset schedule (mutually exclusive with reset_inc).
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon'
+    /// All schedules use UTC. When set, reset_inc is ignored.
+    str reset_sch: null;
+
+    /// Timestamp of the last calendar reset (used with reset_sch only).
+    /// Null until the first calendar reset fires.
+    ms last_reset: null;
 
     /// Does this grant expire?
     ms expires_on: null;

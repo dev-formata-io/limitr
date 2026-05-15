@@ -46,9 +46,33 @@ Topup: {
     /// Customer types that this topup is included for (leave empty or null for all).
     list included_scopes: null;
 
-    #[schema((target_val: float): bool => target_val > 0 ? true : <LimitrValidation>.error(`Top-up reset increment value must be greater than zero`))]
-    /// What is the reset increment?
-    ms reset_inc: 30days;
+    #[schema((target: obj, target_val: float): bool => {
+        if (target.resets) {
+            if (target_val == null && target.reset_sch == null) {
+                target.reset_inc = 30days;
+                return true;
+            }
+            if (target_val != null && target.reset_sch != null) {
+                return <LimitrValidation>.error('Topup reset_inc and reset_sch are mutually exclusive');
+            }
+            if (target_val != null) return target_val > 0 ? true : <LimitrValidation>.error(`Top-up reset increment value must be greater than zero`);
+        }
+        true
+    })]
+    /// Duration-based reset increment. Mutually exclusive with reset_sch.
+    ms reset_inc: null;
+
+    #[schema((target: obj, target_val: str): bool => {
+        if (!target_val.starts_with('monthly') &&
+            !target_val.starts_with('weekly') &&
+            !target_val.starts_with('nth_weekday')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, or nth_weekday`);
+        true
+    })]
+    #[schema_optional]
+    /// Calendar reset schedule. Mutually exclusive with reset_inc.
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon'
+    /// All schedules use UTC. When set, reset_inc is ignored.
+    str reset_sch: null;
 
     #[schema((target_val: str): bool => ['hard', 'add', 'rollover'].contains(target_val) ? true : <LimitrValidation>.error(`Invalid topup reset mode '${target_val}' - should be 'hard', 'add', or 'rollover'`))]
     /// Reset mode for the credit grant.
@@ -100,6 +124,7 @@ Topup: {
             value: (self.value as float).to_units(units),
             resets: self.resets,
             reset_inc: self.reset_inc,
+            reset_sch: self.reset_sch,
             expires_on,
             reset_mode: self.reset_mode,
             rollover_min: self.rollover_min,

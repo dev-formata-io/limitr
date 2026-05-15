@@ -83,15 +83,25 @@ Customer: {
                 self.grants.remove(id, shallow = false);
             } else {
                 // Should this grant value be reset?
-                if (grant.resets && (grant.granted_on + grant.reset_inc) <= now) {
-                    let reset_cap: int = grant.reset_catchup_cap;
-                    while ((now - grant.granted_on) > grant.reset_inc) {
-                        grant.granted_on += grant.reset_inc;
-                        if (reset_cap == null) {
+                if (grant.resets) {
+                    if (grant.reset_sch != null) {
+                        // Calendar-based reset: fire once when a new period has started
+                        const period_start = Time.start_of_period(now, grant.reset_sch);
+                        if (period_start != null && (grant.last_reset == null || grant.last_reset < period_start)) {
+                            grant.last_reset = period_start;
                             grant.reset_period(stof_units);
-                        } else if (reset_cap > 0) {
-                            reset_cap -= 1;
-                            grant.reset_period(stof_units);
+                        }
+                    } else if (grant.reset_inc != null && (grant.granted_on + grant.reset_inc) <= now) {
+                        // Duration-based reset: advance granted_on and reset each elapsed period
+                        let reset_cap: int = grant.reset_catchup_cap;
+                        while ((now - grant.granted_on) > grant.reset_inc) {
+                            grant.granted_on += grant.reset_inc;
+                            if (reset_cap == null) {
+                                grant.reset_period(stof_units);
+                            } else if (reset_cap > 0) {
+                                reset_cap -= 1;
+                                grant.reset_period(stof_units);
+                            }
                         }
                     }
                 }
@@ -167,8 +177,9 @@ Customer: {
                     set_topup_names.insert(grant.topup);
                     grant.credit = top.credit;
                     grant.starting_value = top.value;
-                    grant.reset = top.resets;
+                    grant.resets = top.resets;
                     grant.reset_inc = top.reset_inc;
+                    grant.reset_sch = top.reset_sch;
                     grant.expires_on = top.expires_after != null ? grant.created_on + top.expires_after : null;
                     grant.reset_mode = top.reset_mode;
                     grant.rollover_min = top.rollover_min;
