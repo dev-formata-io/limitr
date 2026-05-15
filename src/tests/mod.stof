@@ -17,6 +17,7 @@
 import './plans' as TestPlans;
 import './margins' as TestMargins;
 import './burndown' as TestBurndown;
+import './governor' as TestGovernor;
 
 
 Limitr policy: {

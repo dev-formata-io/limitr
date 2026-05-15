@@ -127,6 +127,17 @@ AppEvents: {
     }
 
 
+    #[meter-governed]
+    /**
+     * Meter governed.
+     * Called when a governor rate limit is hit before the hard limit.
+     * Value includes meter state, customer, entitlement, plan, credit, and governor details.
+     */
+    fn app_meter_governed(value: obj) {
+        if (lib('App')) ?App.meter_governed(stringify('json', value));
+    }
+
+
     /*****************************************************************************
      * Customers.
      *****************************************************************************/

@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.14;
+    ver version: 0.6.15;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -374,9 +374,42 @@ Limitr: {
             ?self.get().limit_obj(id, entitlement)
         }
 
+        /// Estimated time until a customer exhausts their entitlement at the current rate of consumption.
+        /// Returns a future ms timestamp, or null if there is no consumption history or the rate is zero.
+        /// Meaningful after at least two allow() calls have been made.
+        fn projected_exhaustion(id: str!, entitlement: str!, smoothed: bool = false, grants: bool = true) -> ms {
+            ?self.get().projected_exhaustion(id, entitlement, smoothed, grants)
+        }
+
+        /// Current instantaneous consumption rate for a customer entitlement (units per ms).
+        /// Returns 0 if fewer than two allow() calls have been made.
+        /// Derived from the last two entries in the meter's ring buffer.
+        fn rate(id: str!, entitlement: str!) -> float {
+            const meter: Meter = ?self.get().meter_obj(id, entitlement);
+            if (meter == null) return 0;
+            meter.rate()
+        }
+
+        /// Rate of change between the two most recent consumption intervals (units per ms²).
+        /// Positive means consumption is accelerating, negative means decelerating.
+        /// Returns 0 if fewer than three allow() calls have been made.
+        fn acceleration(id: str!, entitlement: str!) -> float {
+            const meter: Meter = ?self.get().meter_obj(id, entitlement);
+            if (meter == null) return 0;
+            meter.acceleration()
+        }
+
         /// Get the remaining balance value for a customer ID (limit - current (metered) value).
         fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
             ?self.get().remaining(id, entitlement, percent, grants)
+        }
+
+        /// Get the immediately available allowance for a customer entitlement.
+        /// When a governor is configured, returns the minimum of the current governor
+        /// token balance and the remaining period balance.
+        /// Falls back to remaining() if no governor is configured.
+        fn allowance(id: str!, entitlement: str!, grants: bool = true) -> float {
+            ?self.get().allowance(id, entitlement, grants)
         }
 
         /// Get the current value of a metered entitlement for a customer ID.
@@ -936,6 +969,90 @@ Limitr: {
 
 
     /**
+     * Estimated time until a customer exhausts their entitlement at the current rate of consumption.
+     * Returns a future ms timestamp, or null if there is no consumption history,
+     * the rate is zero, or no meter exists yet.
+     * Uses the current rate from the meter's ring buffer — meaningful after at least
+     * two allow() calls have been made.
+     */
+    fn projected_exhaustion(id: str!, entitlement: str!, smoothed: bool = false, grants: bool = true) -> ms {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return null;
+        const customer = pair[0];
+        const meter: Meter = customer.meters.get(entitlement);
+        if (meter == null) return null;
+        const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
+        if (limit == null) return null;
+        const credit = self.credit(limit.credit);
+        const stof_units = credit != null ? credit.stof_units : 'float';
+        let limit_val = (limit.value as float).to_units(stof_units);
+        if (grants) {
+            const remaining = customer.remaining_grant_credit(self, limit.credit);
+            if (remaining != null && remaining > 0) limit_val = max(meter.value, limit_val) + remaining;
+        }
+        meter.projected_exhaustion(limit_val, smoothed)
+    }
+
+
+    /**
+     * Current instantaneous consumption rate for a customer entitlement.
+     * Returns consumption per ms derived from the last two ring buffer entries.
+     * Returns 0 if no meter exists or fewer than two allow() calls have been made.
+     */
+    fn rate(id: str!, entitlement: str!) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return 0;
+        const meter: Meter = pair[0].meters.get(entitlement);
+        if (meter == null) return 0;
+        meter.rate()
+    }
+
+
+    /**
+     * Rate of change between the two most recent consumption intervals.
+     * Positive means consumption is accelerating, negative means decelerating.
+     * Returns 0 if no meter exists or fewer than three allow() calls have been made.
+     */
+    fn acceleration(id: str!, entitlement: str!) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return 0;
+        const meter: Meter = pair[0].meters.get(entitlement);
+        if (meter == null) return 0;
+        meter.acceleration()
+    }
+
+
+    /**
+     * Get the immediately available allowance for a customer entitlement.
+     * When a governor is configured, this is the minimum of the current governor
+     * token balance and the remaining period balance — i.e., how much can actually
+     * be consumed right now before either the governor or the hard limit fires.
+     * Falls back to remaining() if no governor is configured.
+     *
+     * Use this to pre-size operations before submitting them — e.g. max video
+     * duration, max token budget, max compute seconds — so the operation is
+     * sized to what will actually be allowed rather than discovering the limit
+     * mid-execution.
+     */
+    fn allowance(id: str!, entitlement: str!, grants: bool = true) -> float {
+        const period_remaining = self.remaining(id, entitlement, grants = grants);
+        if (period_remaining == null) return null;
+
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+            if (limit != null && limit.governor_enabled) {
+                const meter: Meter = pair[0].meters.get(entitlement);
+                if (meter != null && meter.governor_tokens != null) {
+                    return min(meter.governor_tokens, period_remaining);
+                }
+            }
+        }
+        period_remaining
+    }
+
+
+    /**
      * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
      * Returns a value in the units of the meter (not always the same as defined limit units).
      */
@@ -1063,6 +1180,10 @@ Limitr: {
             value = value.to_units(stof_units);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
+            // get customer plan
+            const pl = self.plan_for(customer.id);
+            const plan = pl != null ? pl.name : null;
+
             // should the meter be reset?
             let existing_meter_reset = false;
             const now = Time.now();
@@ -1070,6 +1191,10 @@ Limitr: {
                 while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
                 new_value = value;
                 existing_meter_reset = true;
+                while (existing_meter.history.len() > 0) drop(existing_meter.history.pop_front());
+                existing_meter.governor_tokens = null;
+                existing_meter.governor_last_refill = null;
+                existing_meter.ewma_rate = null;
             }
 
             // is the new value below a defined minimum?
@@ -1080,17 +1205,56 @@ Limitr: {
                 }
             }
 
+            // Governor gate: check rate ceiling before hard limit
+            if (limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
+                if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
+                customer.meters.insert(entitlement, existing_meter);
+
+                // Lazy-init governor runtime state & refill
+                if (existing_meter.governor_tokens == null) {
+                    existing_meter.governor_tokens = limit.governor_capacity as float;
+                    existing_meter.governor_last_refill = Time.now();
+                }
+                existing_meter.refill_governor(limit.governor_capacity as float, limit.governor_refill_rate);
+
+                if (value > 0 && value > existing_meter.governor_tokens) {
+                    // Governor deny — fire new event, record history, return false
+                    existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
+                    if (event) {
+                        const event_value = new {
+                            meter: new { value: existing_meter.value, limit: (limit.value as float).to_units(stof_units) },
+                            customer,
+                            entitlement,
+                            plan,
+                            credit,
+                            governor: new {
+                                tokens: existing_meter.governor_tokens,
+                                capacity: limit.governor_capacity as float,
+                                requested: value,
+                            },
+                        };
+                        const notes: Notifications = self.notifications;
+                        await notes.handle_event('meter-governed', event_value);
+                        await <Event>.send('meter-governed', event_value);
+                        drop(event_value);
+                    }
+                    return false;
+                }
+
+                // Consume tokens
+                if (value > 0) existing_meter.governor_tokens -= value;
+            }
+
             // check to see if the new value is valid (bounded by limit)
             let valid = ent.check(new_value, limit);
-
-            const pl = self.plan_for(customer.id);
-            const plan = pl != null ? pl.name : null;
+            
             if (limit != null && (valid || limit.mode == 'soft')) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
                 const old_value = existing_meter.value;
                 const changed = new_value != old_value;
                 existing_meter.credit = limit.credit;
                 existing_meter.value = new_value;
+                existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                 customer.meters.insert(entitlement, existing_meter);
                 
                 const limit_value = (limit.value as float).to_units(stof_units);
@@ -1112,7 +1276,7 @@ Limitr: {
                         // contemplate credit grants for this customer before sending overage amount
                         // grants will modify event_value.overage for appropriate aggregation in the correct units
                         event_value.overage = new_value > old_value ? new_value - max(old_value, limit_value) : new_value - limit_value;
-                        if (customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
+                        if (!limit.grants_apply || customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
                             // intercept here with voucher mode to protect your costs if using a voucher with max spend
                             // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
                             if (!customer.ensure_voucher(limit.credit, event_value, self.exchange)) {
@@ -1165,7 +1329,7 @@ Limitr: {
                     overage,
                 };
                 
-                if (overage > 0) {
+                if (overage > 0 && limit.grants_apply) {
                     const remaining = customer.remaining_grant_credit(self, limit.credit);
                     if (remaining != null && remaining >= overage) {
                         if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
@@ -1281,7 +1445,7 @@ Limitr: {
             if (valid || (limit != null && limit.mode != 'hard')) return true;
 
             // if we have a hard limit, lets check against credit grants to see if we're good
-            if (limit != null && limit.mode == 'hard') {
+            if (limit != null && limit.mode == 'hard' && limit.grants_apply) {
                 const limit_value = (limit.value as float).to_units(stof_units);
                 const meter_value = existing_meter ? existing_meter.value : 0;
                 const overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;

@@ -34,6 +34,12 @@ Limit: {
     /// "observe" - Never deny, only record (unlimited value).
     str! mode: 'hard';
 
+    /// Should grants be allowed to apply to this limit?
+    /// Default true. Set to false on enforcement/governor entitlements where
+    /// grants should never extend a rate ceiling, or on soft entitlements
+    /// where you want a clean unmodified consumption signal.
+    bool grants_apply: true;
+
     #[schema(<LimitrValidation>.valid_limit_number)]
     /// Value of this limit.
     /// If a str, can use units, but must be a valid stof number.
@@ -60,6 +66,27 @@ Limit: {
     /// Expires on date (optional) for Limit overrides.
     /// Not used outside of customer overrides.
     ms override_expires_on: null;
+
+    /// Optional governor: rate ceiling below the hard limit.
+    /// When enabled, consumption is shaped before the hard limit is reached.
+    bool governor_enabled: false;
+
+    #[schema((target: obj, target_val: unknown): bool => target.governor_enabled && target_val == null ? <LimitrValidation>.error(`Limit governor_capacity must be set when governor_enabled is true`) : true)]
+    /// Governor bucket capacity (max burst).
+    /// Required if governor_enabled is true.
+    float | str governor_capacity: null;
+
+    #[schema((target: obj, target_val: unknown): bool => target.governor_enabled && target_val == null ? <LimitrValidation>.error(`Limit governor_refill_rate must be set when governor_enabled is true`) : true)]
+    /// Governor refill rate (tokens per ms).
+    /// Required if governor_enabled is true.
+    float governor_refill_rate: null;
+
+    #[schema((target_val: float): bool => target_val >= 0 && target_val <= 1 ? true : <LimitrValidation>.error(`Limit ewma_alpha value must be between 0.0 and 1.0`))]
+    /// EWMA smoothing factor for rate trend calculation (0.0–1.0).
+    /// Lower values smooth more aggressively (better for bursty workloads).
+    /// Higher values track recent changes faster (better for steady consumption).
+    /// Defaults to 0.2 if not set.
+    float ewma_alpha: 0.2;
 
 
     /**

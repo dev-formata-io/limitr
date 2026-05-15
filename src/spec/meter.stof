@@ -28,4 +28,84 @@ Meter: {
 
     /// Value of this meter (in credit's units).
     float value: 0;
+
+    /// Rate tracking ring buffer (max 3 entries, oldest first).
+    /// Each entry: { ts: ms, delta: float }
+    list! history: [];
+
+    /// EWMA smoothed rate.
+    float ewma_rate: null;
+
+
+    /**
+     * Push a delta into the history ring buffer.
+     */
+    fn push_history(delta: float, alpha: float = 0.2) {
+        if (self.history.len() >= 3) {
+            drop(self.history.pop_front()); // remove from array and doc
+        }
+        self.history.push_back(new { ts: Time.now(), delta });
+        const r = self.rate();
+        self.ewma_rate = self.ewma_rate == null ? r : (alpha * r) + ((1 - alpha) * self.ewma_rate);
+    }
+
+
+    /**
+     * Discrete derivative: consumption per ms.
+     * Returns 0 if fewer than 2 entries.
+     */
+    fn rate() -> float {
+        const len = self.history.len();
+        if (len < 2) return 0;
+        const a = self.history[len - 2];
+        const b = self.history[len - 1];
+        const dt = (b.ts - a.ts).remove_units();
+        dt <= 0 ? 0 : b.delta / dt
+    }
+
+
+    /**
+     * Rate of change between the two most recent intervals.
+     * Returns 0 if fewer than 3 entries.
+     */
+    fn acceleration() -> float {
+        if (self.history.len() < 3) return 0;
+        const a = self.history[0];
+        const b = self.history[1];
+        const c = self.history[2];
+        const dt1 = (b.ts - a.ts).remove_units();
+        const dt2 = (c.ts - b.ts).remove_units();
+        if (dt1 <= 0 || dt2 <= 0) return 0;
+        (b.delta / dt2) - (a.delta / dt1)
+    }
+
+
+    /**
+     * Estimated ms until this meter reaches a given limit at current rate.
+     * Returns null if rate is zero or negative.
+     */
+    fn projected_exhaustion(limit: float, smoothed: bool = false) -> ms {
+        const r = smoothed && self.ewma_rate != null ? self.ewma_rate : self.rate();
+        if (r <= 0) return null;
+        const rem = limit - self.value;
+        if (rem <= 0) return null;
+        (rem / r).remove_units()
+    }
+
+
+    /**
+     * Refill governor tokens based on elapsed time since last refill.
+     * No-op if governor fields not present on this meter.
+     */
+    fn refill_governor(capacity: float, refill_rate: float) {
+        if (self.governor_last_refill == null) return;
+        const now = Time.now();
+        const elapsed = (now - self.governor_last_refill).remove_units();
+        if (elapsed <= 0) return;
+        self.governor_tokens = min(
+            capacity,
+            (self.governor_tokens ?? 0) + (elapsed * refill_rate)
+        );
+        self.governor_last_refill = now;
+    }
 }

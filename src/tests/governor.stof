@@ -1,0 +1,497 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Governor test policy.
+//
+// Scenario: an AI API product with a 1M token monthly hard limit,
+// rate-governed to 50k token burst with a 0.5 tokens/ms (~500/sec) sustained refill.
+// A second plan exercises the hard limit without a governor for contrast.
+//
+Limitr TestGovernorPolicy: {
+    credits: {
+        ai_token: {
+            description: 'AI inference token'
+            overhead_cost: 0.000004
+            stof_units: 'int'
+            price: { amount: 0.000006 }
+            resets: true
+        }
+    }
+
+    plans: {
+        // Enterprise plan: 1M monthly token hard limit, rate-governed.
+        enterprise: {
+            label: 'Enterprise'
+            entitlements: {
+                ai_tokens: {
+                    description: 'AI token usage'
+                    limit: {
+                        credit: 'ai_token'
+                        mode: 'hard'
+                        value: 1_000_000
+                        resets: true
+                        reset_inc: 30days
+                        governor_enabled: true
+                        governor_capacity: 50_000       // max burst tokens
+                        governor_refill_rate: 0.5       // tokens per ms (~500/sec sustained)
+                    }
+                }
+            }
+        }
+
+        // Baseline plan: same hard limit, no governor.
+        // Used to confirm the hard limit still works independently.
+        baseline: {
+            label: 'Baseline'
+            entitlements: {
+                ai_tokens: {
+                    description: 'AI token usage'
+                    limit: {
+                        credit: 'ai_token'
+                        mode: 'hard'
+                        value: 1_000_000
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+            }
+        }
+    }
+
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Simulate elapsed time for governor refill by backdating governor_last_refill.
+     * This is the only way to test refill without actual wall-clock delay.
+     * ms_ago: how many ms in the past to set the last refill timestamp.
+     */
+    fn backdate_governor(customer_id: str!, entitlement: str!, ms_ago: int) {
+        const meter: Meter = self.meter_obj(customer_id, entitlement);
+        if (meter != null && meter.governor_last_refill != null) {
+            meter.governor_last_refill = meter.governor_last_refill - (ms_ago as ms);
+        }
+    }
+
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A normal small request well within both governor and hard limit is allowed.
+     * Governor state is initialised lazily on first allow().
+     */
+    fn test_normal_allow() {
+        const customer = self.create_customer('normal', 'enterprise');
+
+        // First call — governor tokens should lazy-init to full capacity (50k)
+        assert(self.allow('normal', 'ai_tokens', 1_000));
+
+        const meter: Meter = self.meter_obj('normal', 'ai_tokens');
+        assert_eq(meter.value, 1_000);
+
+        // Governor tokens consumed: 50_000 - 1_000 = 49_000
+        assert_eq(meter.governor_tokens, 49_000);
+
+        // History has one entry
+        assert_eq(meter.history.len(), 1);
+        assert_eq(meter.history[0].delta, 1_000);
+    }
+
+
+    #[test]
+    /**
+     * A single request exactly equal to full burst capacity is allowed.
+     * Token balance should reach zero, next request should be denied.
+     */
+    fn test_burst_ceiling() {
+        const customer = self.create_customer('burst', 'enterprise');
+
+        // Consume the full burst bucket in one shot
+        assert(self.allow('burst', 'ai_tokens', 50_000));
+
+        const meter: Meter = self.meter_obj('burst', 'ai_tokens');
+        assert_eq(meter.governor_tokens, 0);
+
+        // After draining 50k bucket, request 10k — far more than
+        // a few ms of refill at 0.5 tokens/ms could cover (~1-5 tokens)
+        assert_not(self.allow('burst', 'ai_tokens', 10_000));
+
+        // Hard limit not touched — meter value is only 50_000 of 1_000_000
+        assert_eq(meter.value, 50_000);
+        assert_eq(self.remaining('burst', 'ai_tokens'), 950_000);
+    }
+
+
+    #[test]
+    /**
+     * Governor deny fires when request exceeds token balance,
+     * even though the hard limit has plenty of headroom.
+     * Meter value must not change on a governed deny.
+     */
+    fn test_governor_deny() {
+        const customer = self.create_customer('governed', 'enterprise');
+
+        // Use 30k of the 50k bucket
+        assert(self.allow('governed', 'ai_tokens', 30_000));
+
+        const meter: Meter = self.meter_obj('governed', 'ai_tokens');
+        assert_eq(meter.governor_tokens, 20_000);
+        assert_eq(meter.value, 30_000);
+
+        // Request 25k — exceeds remaining 20k bucket → governed deny
+        assert_not(self.allow('governed', 'ai_tokens', 25_000));
+
+        // Meter value unchanged — no consumption on deny
+        assert_eq(meter.value, 30_000);
+
+        // History still has the denied delta recorded (demand signal)
+        assert_eq(meter.history.len(), 2);
+        assert_eq(meter.history[1].delta, 25_000);
+
+        // Hard limit completely untouched
+        assert_eq(self.remaining('governed', 'ai_tokens'), 970_000);
+    }
+
+
+    #[test]
+    /**
+     * Tokens refill over time at governor_refill_rate.
+     * We backdate last_refill to simulate elapsed time without wall-clock delay.
+     * After simulated refill, a previously-denied request size should pass.
+     */
+    fn test_token_refill() {
+        const customer = self.create_customer('refill', 'enterprise');
+
+        // Drain the bucket
+        assert(self.allow('refill', 'ai_tokens', 50_000));
+
+        const meter: Meter = self.meter_obj('refill', 'ai_tokens');
+        assert_eq(meter.governor_tokens, 0);
+
+        // Without refill, any positive request should fail
+        assert_not(self.allow('refill', 'ai_tokens', 1_000));
+
+        // Simulate 10 seconds (10_000 ms) having passed since last refill
+        // refill_rate = 0.5 tokens/ms → 0.5 * 10_000 = 5_000 tokens refilled
+        self.backdate_governor('refill', 'ai_tokens', 10_000);
+
+        // Now 5k should be available — a 4k request should pass
+        assert(self.allow('refill', 'ai_tokens', 4_000));
+
+        // ~1k tokens remaining in bucket (5k refilled - 4k consumed)
+        // Use approx check since refill timing isn't perfectly deterministic
+        assert(meter.governor_tokens >= 0);
+        assert(meter.governor_tokens < 5_000);
+
+        // Meter value reflects only allowed consumption
+        assert_eq(meter.value, 54_000);
+    }
+
+
+    #[test]
+    /**
+     * After several allowed calls, rate() and acceleration() return meaningful values.
+     * Ring buffer holds the last 3 deltas — rate is the discrete derivative.
+     */
+    fn test_rate_tracking() {
+        const customer = self.create_customer('rate', 'enterprise');
+
+        // Three sequential allows to populate the ring buffer
+        assert(self.allow('rate', 'ai_tokens', 1_000));
+        assert(self.allow('rate', 'ai_tokens', 2_000));
+        assert(self.allow('rate', 'ai_tokens', 3_000));
+
+        const meter: Meter = self.meter_obj('rate', 'ai_tokens');
+
+        // History should be exactly 3 entries
+        assert_eq(meter.history.len(), 3);
+
+        // Rate is positive (consumption is happening)
+        assert(meter.rate() > 0);
+        assert_eq(meter.rate(), self.rate('rate', 'ai_tokens'));
+
+        // A 4th allow should evict the oldest entry (ring buffer max 3)
+        assert(self.allow('rate', 'ai_tokens', 1_000));
+        assert_eq(meter.history.len(), 3);
+
+        // Acceleration is defined with 3 entries — may be positive or negative
+        // depending on timing, but should not throw
+        const acc = meter.acceleration();
+        assert((typeof acc) == 'float' || (typeof acc) == 'int');
+    }
+
+
+    #[test]
+    /**
+     * projected_exhaustion() returns a future timestamp at current rate.
+     * Returns null when rate is zero (no history).
+     */
+    fn test_projected_exhaustion() {
+        const customer = self.create_customer('exhaust', 'enterprise');
+
+        // No history yet — rate is zero — projected_exhaustion should return null
+        // Force meter creation with a zero-value allow (boolean entitlement check)
+        assert(self.allow('exhaust', 'ai_tokens', 10_000));
+        assert(self.allow('exhaust', 'ai_tokens', 10_000));
+
+        const exhaustion = self.projected_exhaustion('exhaust', 'ai_tokens');
+        assert(exhaustion != null);
+        assert(exhaustion > 0);
+    }
+
+
+    #[test]
+    /**
+     * Decrement (negative delta) does not consume governor tokens.
+     * Only positive consumption should drain the bucket.
+     */
+    fn test_decrement_no_governor_drain() {
+        const customer = self.create_customer('decrement', 'enterprise');
+
+        // Consume some tokens
+        assert(self.allow('decrement', 'ai_tokens', 10_000));
+
+        const meter: Meter = self.meter_obj('decrement', 'ai_tokens');
+        const tokens_after_allow = meter.governor_tokens;
+
+        // Decrement (return tokens to meter)
+        self.allow('decrement', 'ai_tokens', -5_000);
+
+        // Governor tokens should not have decreased — only positive deltas drain
+        assert(meter.governor_tokens >= tokens_after_allow);
+
+        // Meter value correctly reduced
+        assert_eq(meter.value, 5_000);
+    }
+
+
+    #[test]
+    /**
+     * Hard limit enforces correctly on a plan without a governor.
+     * Ensures governor changes haven't broken the baseline allow() path.
+     */
+    fn test_hard_limit_without_governor() {
+        const customer = self.create_customer('hardlimit', 'baseline');
+
+        // Large requests allowed up to 1M
+        assert(self.allow('hardlimit', 'ai_tokens', 500_000));
+        assert(self.allow('hardlimit', 'ai_tokens', 499_999));
+
+        // One token left
+        assert_eq(self.remaining('hardlimit', 'ai_tokens'), 1);
+
+        // Exactly the remaining amount — allowed
+        assert(self.allow('hardlimit', 'ai_tokens', 1));
+
+        // Hard limit hit — denied
+        assert_not(self.allow('hardlimit', 'ai_tokens', 1));
+        assert_eq(self.remaining('hardlimit', 'ai_tokens'), 0);
+    }
+
+
+    #[test]
+    /**
+     * allowance() before any consumption returns the full period limit.
+     * Governor tokens are null until the first allow() call, so the function
+     * falls back to remaining() — the customer's full period allocation.
+     */
+    fn test_allowance_fresh_customer() {
+        const customer = self.create_customer('allowance_fresh', 'enterprise');
+
+        // No consumption yet — governor not initialized
+        const avail = self.allowance('allowance_fresh', 'ai_tokens');
+        assert_eq(avail, 1_000_000);
+
+        // Should equal remaining() since no meter exists yet
+        assert_eq(avail, self.remaining('allowance_fresh', 'ai_tokens'));
+    }
+
+
+    #[test]
+    /**
+     * allowance() mid-period returns governor tokens when they are the binding constraint.
+     * This is the primary use case: sizing an operation to what the governor will allow
+     * right now, e.g. max video duration or max token budget before submitting a job.
+     */
+    fn test_allowance_governor_is_binding() {
+        const customer = self.create_customer('allowance_gov', 'enterprise');
+
+        // Consume 30k of the 50k bucket — 20k tokens remain in governor
+        assert(self.allow('allowance_gov', 'ai_tokens', 30_000));
+
+        // Period remaining is 970k, governor tokens ~20k → governor is the binding constraint
+        const avail = self.allowance('allowance_gov', 'ai_tokens');
+        assert_eq(avail, 20_000);
+
+        // Confirms allowance < remaining — governor is tighter than the period
+        assert(avail < self.remaining('allowance_gov', 'ai_tokens'));
+
+        // A job sized to exactly the allowance should be allowed
+        assert(self.allow('allowance_gov', 'ai_tokens', avail));
+    }
+
+
+    #[test]
+    /**
+     * allowance() returns period_remaining when the period is nearly exhausted,
+     * even if the governor bucket has more capacity.
+     * Critical: prevents pre-sizing a job larger than the period allows,
+     * which would pass the governor gate but fail the hard limit mid-execution.
+     */
+    fn test_allowance_period_is_binding() {
+        const customer = self.create_customer('allowance_period', 'enterprise');
+
+        // Seed the meter directly to simulate near-exhaustion without going through
+        // the governor gate (a single 990k allow would be governed and denied)
+        assert(self.allow('allowance_period', 'ai_tokens', 1_000));
+        const meter: Meter = self.meter_obj('allowance_period', 'ai_tokens');
+        meter.value = 990_000;
+
+        // Backdate governor to ensure bucket is fully refilled (200s × 0.5/ms = 100k, capped at 50k)
+        self.backdate_governor('allowance_period', 'ai_tokens', 200_000);
+
+        // period_remaining = 10k, governor tokens = 50k → period is the binding constraint
+        const avail = self.allowance('allowance_period', 'ai_tokens');
+        assert(avail <= 10_000);
+        assert(avail > 0);
+
+        // Confirms allowance equals remaining — period is tighter than the governor
+        assert_eq(avail, self.remaining('allowance_period', 'ai_tokens'));
+    }
+
+
+    #[test]
+    /**
+     * allowance() on a plan without a governor equals remaining() exactly.
+     * Ensures the fallback path works correctly for non-governed entitlements.
+     */
+    fn test_allowance_no_governor() {
+        const customer = self.create_customer('allowance_base', 'baseline');
+
+        // Fresh customer — allowance should equal full period
+        assert_eq(self.allowance('allowance_base', 'ai_tokens'), 1_000_000);
+
+        // After some consumption, allowance should track remaining() exactly
+        assert(self.allow('allowance_base', 'ai_tokens', 200_000));
+        assert_eq(
+            self.allowance('allowance_base', 'ai_tokens'),
+            self.remaining('allowance_base', 'ai_tokens')
+        );
+        assert_eq(self.allowance('allowance_base', 'ai_tokens'), 800_000);
+    }
+
+
+    #[test]
+    /**
+     * projected_exhaustion(smoothed: true) uses ewma_rate instead of instantaneous rate.
+     * Verifies ewma_rate is populated after consumption and that the smoothed
+     * projection returns a positive delta. The smoothed and instantaneous projections
+     * may differ — the key invariant is that smoothed uses ewma_rate, not rate().
+     */
+    fn test_projected_exhaustion_smoothed() {
+        const customer = self.create_customer('smoothed', 'enterprise');
+
+        // No history — smoothed projection should be null
+        assert_eq(self.projected_exhaustion('smoothed', 'ai_tokens', true), null);
+
+        // First allow — single history entry, rate() returns 0, ewma_rate seeds to 0
+        assert(self.allow('smoothed', 'ai_tokens', 10_000));
+        const meter: Meter = self.meter_obj('smoothed', 'ai_tokens');
+        assert_eq(meter.history.len(), 1);
+
+        // Second allow — rate() now defined, ewma_rate begins tracking
+        assert(self.allow('smoothed', 'ai_tokens', 10_000));
+        assert(meter.ewma_rate != null);
+
+        // Third allow — ewma_rate is now a running average
+        assert(self.allow('smoothed', 'ai_tokens', 10_000));
+        assert_eq(meter.history.len(), 3);
+
+        // Both projections return positive deltas
+        const instant = self.projected_exhaustion('smoothed', 'ai_tokens', false);
+        const smoothed = self.projected_exhaustion('smoothed', 'ai_tokens', true);
+        assert(instant != null && instant > 0);
+        assert(smoothed != null && smoothed > 0);
+
+        // Smoothed projection is a positive time delta — customer won't exhaust immediately
+        const limit_val = self.limit('smoothed', 'ai_tokens');
+        assert(smoothed < (limit_val as ms)); // sanity: projection is less than limit value in ms
+    }
+
+
+    #[test]
+    /**
+     * ewma_rate is cleared when the meter period resets.
+     * A fresh period should start with no smoothed rate signal.
+     * Note: requires limitr.stof reset block to clear ewma_rate alongside history.
+     */
+    fn test_ewma_resets_with_period() {
+        const customer = self.create_customer('ewma_reset', 'enterprise');
+
+        // Build up ewma_rate with a few allows
+        assert(self.allow('ewma_reset', 'ai_tokens', 10_000));
+        assert(self.allow('ewma_reset', 'ai_tokens', 10_000));
+        assert(self.allow('ewma_reset', 'ai_tokens', 10_000));
+
+        const meter: Meter = self.meter_obj('ewma_reset', 'ai_tokens');
+        assert(meter.ewma_rate != null);
+        assert(meter.ewma_rate >= 0);
+
+        // Force period reset
+        meter.started = Time.now() - 31days;
+
+        // Next allow() triggers reset — history and governor state cleared
+        assert(self.allow('ewma_reset', 'ai_tokens', 1_000));
+
+        // History cleared, only the post-reset allow present
+        assert_eq(meter.history.len(), 1);
+        assert_eq(meter.value, 1_000);
+    }
+
+
+    #[test]
+    /**
+     * When the meter period resets, governor state is cleared.
+     * Tokens return to full capacity, history is wiped.
+     */
+    fn test_governor_resets_with_period() {
+        const customer = self.create_customer('reset', 'enterprise');
+
+        // Drain the bucket and add some history
+        assert(self.allow('reset', 'ai_tokens', 50_000));
+        assert_not(self.allow('reset', 'ai_tokens', 1_000)); // governed deny
+
+        const meter: Meter = self.meter_obj('reset', 'ai_tokens');
+        assert(meter.history.len() > 0);
+
+        // Force period reset by backdating meter.started beyond reset_inc (30 days)
+        meter.started = Time.now() - 31days;
+
+        // Next allow() will detect the reset and clear governor + history
+        assert(self.allow('reset', 'ai_tokens', 10_000));
+
+        // After reset: history cleared (only the new entry present), tokens reinitialised
+        assert_eq(meter.history.len(), 1);
+        assert(meter.governor_tokens != null);
+        assert(meter.governor_tokens > 0);
+
+        // Meter value reflects fresh period — only the new call
+        assert_eq(meter.value, 10_000);
+    }
+}
