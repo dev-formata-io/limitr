@@ -546,8 +546,8 @@ Limitr: {
         }
 
         /// Create a new customer override (limit).
-        fn create_customer_override(id: str!, entitlement: str!, expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms) -> Limit {
-            ?self.get().create_customer_override(id, entitlement, expires, credit, mode, value, increment, resets, reset_inc)
+        fn create_customer_override(id: str!, entitlement: str!, expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms, reset_sch?: str) -> Limit {
+            ?self.get().create_customer_override(id, entitlement, expires, credit, mode, value, increment, resets, reset_inc, reset_sch)
         }
 
         /// Remove a customer override (limit).
@@ -1119,6 +1119,19 @@ Limitr: {
 
 
     /**
+     * Compute the next calendar period boundary after now for a given schedule.
+     * Uses Time.add_months or Time.add_days to step into the next period,
+     * then calls Time.start_of_period to find its start.
+     */
+    fn next_period_start(now: ms, reset_sch: str) -> ms {
+        let next_ts = now;
+        if (reset_sch.starts_with('weekly')) next_ts = Time.add_days(now, 7);
+        else next_ts = Time.add_months(now, 1);
+        Time.start_of_period(next_ts, reset_sch)
+    }
+
+
+    /**
      * Entitlement resets on this timestamp for the following customer ID.
      */
     fn resets(id: str!, entitlement: str!) -> ms {
@@ -1127,14 +1140,19 @@ Limitr: {
             const customer = pair[0];
             const ent = pair[1];
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
-            if (limit != null && limit.resets && limit.reset_inc > 0) {
-                const existing_meter: Meter = customer.meters.get(entitlement);
+            if (limit != null && limit.resets) {
                 const now = Time.now();
-                if (existing_meter != null && existing_meter.started != null) {
-                    while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
-                    return existing_meter.started + limit.reset_inc;
+                if (limit.reset_sch != null) {
+                    return self.next_period_start(now, limit.reset_sch);
                 }
-                return now + limit.reset_inc;
+                if (limit.reset_inc != null && limit.reset_inc > 0) {
+                    const existing_meter: Meter = customer.meters.get(entitlement);
+                    if (existing_meter != null && existing_meter.started != null) {
+                        while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
+                        return existing_meter.started + limit.reset_inc;
+                    }
+                    return now + limit.reset_inc;
+                }
             }
         }
         null
@@ -1187,14 +1205,26 @@ Limitr: {
             // should the meter be reset?
             let existing_meter_reset = false;
             const now = Time.now();
-            if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets && limit.reset_inc > 0 && (now - existing_meter.started) > limit.reset_inc) {
-                while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
-                new_value = value;
-                existing_meter_reset = true;
-                while (existing_meter.history.len() > 0) drop(existing_meter.history.pop_front());
-                existing_meter.governor_tokens = null;
-                existing_meter.governor_last_refill = null;
-                existing_meter.ewma_rate = null;
+            if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets) {
+                let should_reset = false;
+                if (limit.reset_sch != null) {
+                    const period_start = Time.start_of_period(now, limit.reset_sch);
+                    if (period_start != null && existing_meter.started < period_start) {
+                        existing_meter.started = period_start;
+                        should_reset = true;
+                    }
+                } else if (limit.reset_inc != null && limit.reset_inc > 0 && (now - existing_meter.started) > limit.reset_inc) {
+                    while ((now - existing_meter.started) > limit.reset_inc) existing_meter.started += limit.reset_inc;
+                    should_reset = true;
+                }
+                if (should_reset) {
+                    new_value = value;
+                    existing_meter_reset = true;
+                    while (existing_meter.history.len() > 0) drop(existing_meter.history.pop_front());
+                    existing_meter.governor_tokens = null;
+                    existing_meter.governor_last_refill = null;
+                    existing_meter.ewma_rate = null;
+                }
             }
 
             // is the new value below a defined minimum?
@@ -1428,8 +1458,16 @@ Limitr: {
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
             // should the meter be reset?
-            if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets && limit.reset_inc > 0 && (Time.now() - existing_meter.started) > limit.reset_inc) {
-                new_value = value;
+            if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets) {
+                const cnow = Time.now();
+                if (limit.reset_sch != null) {
+                    const period_start = Time.start_of_period(cnow, limit.reset_sch);
+                    if (period_start != null && existing_meter.started < period_start) {
+                        new_value = value;
+                    }
+                } else if (limit.reset_inc != null && limit.reset_inc > 0 && (cnow - existing_meter.started) > limit.reset_inc) {
+                    new_value = value;
+                }
             }
 
             // is the new value below a defined minimum?
@@ -1800,7 +1838,7 @@ Limitr: {
      * If the customer already has an override for this entitlement, it will be replaced.
      */
     fn create_customer_override(customer_id: str!, entitlement: str!,
-        expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms) -> Limit {
+        expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms, reset_sch?: str) -> Limit {
         
         // Get the customer and entitlement
         const ent = self.entitlement(customer_id, entitlement);
@@ -1820,7 +1858,8 @@ Limitr: {
             value: value ?? existing_limit.value ?? 0,
             increment: increment ?? existing_limit.increment ?? 0,
             resets: resets ?? existing_limit.resets ?? false,
-            reset_inc: reset_inc ?? existing_limit.reset_inc ?? 30days,
+            reset_inc: reset_inc ?? existing_limit.reset_inc,
+            reset_sch: reset_sch ?? existing_limit.reset_sch,
             override_expires_on: expires ?? existing_limit.override_expires_on,
         };
 
@@ -2033,8 +2072,9 @@ Limitr: {
                     if (set_ent_limit_val) {
                         limit_value = e.limit.value as float;
                     }
-                    // Scale the limit_value to the plan period, not the individual meter period
-                    if (scaled && e.limit.resets && e.limit.reset_inc != plan_period && e.limit.reset_inc > 0) {
+                    // Scale the limit_value to the plan period, not the individual meter period.
+                    // Skipped for calendar schedules (reset_sch) since there is no fixed ms duration to divide by.
+                    if (scaled && e.limit.resets && e.limit.reset_sch == null && e.limit.reset_inc != null && e.limit.reset_inc != plan_period && e.limit.reset_inc > 0) {
                         limit_value *= (plan_period/e.limit.reset_inc).remove_units();
                         adjusted_meter_period = e.limit.reset_inc;
                     }

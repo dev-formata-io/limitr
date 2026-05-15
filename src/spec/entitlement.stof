@@ -59,9 +59,34 @@ Limit: {
     /// Should the meter reset after a certain period?
     bool resets: false;
 
-    #[schema((target_val: float): bool => target_val > 0 ? true : <LimitrValidation>.error(`Limit reset increment value must be greater than zero`))]
-    /// Optional reset increment (default 30 days).
-    ms reset_inc: 30days;
+    #[schema((target: obj, target_val: float): bool => {
+        if (target.resets) {
+            if (target_val == null && target.reset_sch == null) {
+                target.reset_inc = 30days;
+                return true;
+            }
+            if (target_val != null && target.reset_sch != null) {
+                return <LimitrValidation>.error('Limit reset_inc and reset_sch are mutually exclusive');
+            }
+            if (target_val != null) return target_val > 0 ? true : <LimitrValidation>.error(`Limit reset increment value must be greater than zero`);
+        }
+        true
+    })]
+    /// Duration-based reset increment. Mutually exclusive with reset_sch.
+    /// Defaults to 30 days when resets is true and reset_sch is not set.
+    ms reset_inc: null;
+
+    #[schema((target: obj, target_val: str): bool => {
+        if (!target_val.starts_with('monthly') &&
+            !target_val.starts_with('weekly') &&
+            !target_val.starts_with('nth_weekday')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, or nth_weekday`);
+        true
+    })]
+    #[schema_optional]
+    /// Calendar reset schedule. Mutually exclusive with reset_inc.
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon'
+    /// All schedules use UTC. When set, reset_inc is ignored.
+    str reset_sch: null;
 
     /// Expires on date (optional) for Limit overrides.
     /// Not used outside of customer overrides.
