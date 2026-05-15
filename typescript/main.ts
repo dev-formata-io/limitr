@@ -501,8 +501,8 @@ export class Limitr {
      *
      * If the customer already has an override for this entitlement, it will be replaced.
      */
-    async createCustomerOverride(id: string, entitlement: string, value?: string | number, expires_on?: number, credit?: string, mode?: string, increment?: number | string, resets?: boolean, reset_inc?: number | string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_override', id, entitlement, expires_on ?? null, credit ?? null, mode ?? null, value ?? null, increment ?? null, resets ?? null, reset_inc ?? null)) as string | null;
+    async createCustomerOverride(id: string, entitlement: string, value?: string | number, expires_on?: number, credit?: string, mode?: string, increment?: number | string, resets?: boolean, reset_inc?: number | string, reset_sch?: string): Promise<string | null> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_override', id, entitlement, expires_on ?? null, credit ?? null, mode ?? null, value ?? null, increment ?? null, resets ?? null, reset_inc ?? null, reset_sch ?? null)) as string | null;
     }
 
 
@@ -671,6 +671,49 @@ export class Limitr {
     async remaining(customer: string, entitlement: string, percent: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement, percent, grants)) as number | null;
+    }
+
+
+    /**
+     * Get the immediately available allowance for a customer entitlement.
+     * When a governor is configured, returns the minimum of the current governor
+     * token balance and the remaining period balance.
+     * Falls back to remaining() if no governor is configured.
+     */
+    async allowance(customer: string, entitlement: string, grants: boolean = true): Promise<number | null> {
+        if (!await this.cloudPreCheckContinue(customer)) return null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.allowance', customer, entitlement, grants)) as number | null;
+    }
+
+
+    /**
+     * Estimated time until a customer exhausts their entitlement at the current rate of consumption.
+     * Returns a future ms timestamp, or null if there is no consumption history or the rate is zero.
+     * Meaningful after at least two allow() calls have been made.
+     */
+    async projectedExhaustion(customer: string, entitlement: string, smoothed: boolean = false, grants: boolean = true): Promise<number | null> {
+        if (!await this.cloudPreCheckContinue(customer)) return null;
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.projected_exhaustion', customer, entitlement, smoothed, grants)) as number | null;
+    }
+
+
+    /**
+     * Current instantaneous consumption rate for a customer entitlement (units per ms).
+     * Returns 0 if fewer than two allow() calls have been made.
+     * Derived from the last two entries in the meter's ring buffer.
+     */
+    async rate(customer: string, entitlement: string): Promise<number> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.rate', customer, entitlement)) as number ?? 0;
+    }
+
+
+    /**
+     * Rate of change between the two most recent consumption intervals (units per ms²).
+     * Positive means consumption is accelerating, negative means decelerating.
+     * Returns 0 if fewer than three allow() calls have been made.
+     */
+    async acceleration(customer: string, entitlement: string): Promise<number> {
+        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.acceleration', customer, entitlement)) as number ?? 0;
     }
 
 

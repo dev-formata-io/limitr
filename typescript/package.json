@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.6.14",
+    "version": "0.6.15",
     "type": "module",
     "main": "./dist/main.js",
     "types": "./dist/main.d.ts",
@@ -27,7 +27,7 @@
     },
     "homepage": "https://limitr.dev",
     "dependencies": {
-        "@formata/stof": "^0.9.18"
+        "@formata/stof": "^0.9.19"
     },
     "devDependencies": {
         "cpy-cli": "^7.0.0",
