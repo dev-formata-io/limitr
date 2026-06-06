@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.15;
+    ver version: 0.6.16;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1126,6 +1126,8 @@ Limitr: {
     fn next_period_start(now: ms, reset_sch: str) -> ms {
         let next_ts = now;
         if (reset_sch.starts_with('weekly')) next_ts = Time.add_days(now, 7);
+        else if (reset_sch.starts_with('yearly')) next_ts = Time.add_months(now, 12);
+        else if (reset_sch.starts_with('quarterly')) next_ts = Time.add_months(now, 3);
         else next_ts = Time.add_months(now, 1);
         // Note: for nth_weekday schedules, returns null if the Nth occurrence
         // doesn't exist in the target month (e.g. 5th Tuesday in a short month).
@@ -1297,6 +1299,7 @@ Limitr: {
                             old: old_value,
                             value: new_value,
                             limit: limit_value,
+                            diff: value,
                         },
                         customer,
                         entitlement,
@@ -1353,6 +1356,7 @@ Limitr: {
                         value: meter_value,
                         limit: limit_value,
                         invalid: new_value,
+                        diff: value,
                     },
                     customer,
                     entitlement,
@@ -1376,6 +1380,7 @@ Limitr: {
                                     old: meter_value,
                                     value: new_value,
                                     limit: limit_value,
+                                    diff: value,
                                 },
                                 customer,
                                 entitlement,

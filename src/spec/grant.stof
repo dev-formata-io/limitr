@@ -49,7 +49,7 @@ Grant: {
     ms reset_inc: 30days;
 
     /// Calendar reset schedule (mutually exclusive with reset_inc).
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
 

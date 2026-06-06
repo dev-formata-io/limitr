@@ -79,12 +79,14 @@ Limit: {
     #[schema((target: obj, target_val: str): bool => {
         if (!target_val.starts_with('monthly') &&
             !target_val.starts_with('weekly') &&
-            !target_val.starts_with('nth_weekday')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, or nth_weekday`);
+            !target_val.starts_with('nth_weekday') &&
+            !target_val.starts_with('yearly') &&
+            !target_val.starts_with('quarterly')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, nth_weekday, yearly, or quarterly`);
         true
     })]
     #[schema_optional]
     /// Calendar reset schedule. Mutually exclusive with reset_inc.
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
 
