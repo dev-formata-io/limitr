@@ -18,6 +18,7 @@ import './plans' as TestPlans;
 import './margins' as TestMargins;
 import './burndown' as TestBurndown;
 import './governor' as TestGovernor;
+import './spend_caps' as TestSpendCaps;
 
 
 Limitr policy: {

@@ -533,6 +533,94 @@ export class Limitr {
 
 
     /*****************************************************************************
+     * Customer Spend Caps.
+     *****************************************************************************/
+
+    /**
+     * Add a standing spend cap to a customer.
+     *
+     * A spend cap is an independent ceiling on consumption - it never grants extra
+     * room, it only restricts. Multiple caps (standing and call-scoped) can apply to
+     * the same call; ALL applicable caps must have room for the call to be allowed.
+     *
+     * - "credit" defaults to 'rune' (Limitr's USD-pegged base currency). Leaving it at
+     *   the default gives a USD-wide umbrella cap applying to spend on any entitlement
+     *   convertible to rune - the common "cap this customer/pipeline at $N total" case.
+     * - "exchangeable": when undefined, it is inferred - 'rune' implies true (umbrella),
+     *   a specific named credit implies false (watch just that credit). Pass explicitly
+     *   to override either inference.
+     * - "ignore_grants" (default false): when true, spend that grants already covered is
+     *   NOT counted against the cap - the cap only accumulates genuinely out-of-pocket
+     *   spend beyond a customer's free credits.
+     * - "observe_only" (default false): when true, this cap never denies a call - it
+     *   still accumulates meter_value exactly like an enforcing cap, it just has no
+     *   gating effect at all. Useful as a pure spend tracker over a period (commonly
+     *   in rune/USD) with no ceiling effect. `value` still serves as an optional
+     *   notification threshold either way - crossing it fires a 'cap-threshold-crossed'
+     *   event exactly once, regardless of whether the cap enforces or just observes.
+     * - "id" (cap_id) lets you choose a stable key for later reset/remove. If omitted, an
+     *   id is generated and returned on the resulting Cap record.
+     *
+     * Returns the created Cap record, or null if a cap with this id already exists on the
+     * customer (reset or remove it first) or the credit doesn't resolve to a known credit.
+     */
+    async addCustomerCap(
+        id: string,
+        value: number | string,
+        cap_id: string = '',
+        credit: string = 'rune',
+        exchangeable?: boolean,
+        ignore_grants: boolean = false,
+        observe_only: boolean = false,
+        scope?: string[],
+        resets: boolean = false,
+        reset_inc?: number,
+        reset_sch?: string,
+        expires_on?: number,
+    ): Promise<Record<string, unknown> | null> {
+        const capNode = await this.gate.run(() => this.doc.call(
+            '<Limitr>.api.add_customer_cap',
+            id, value, cap_id, credit,
+            exchangeable ?? null, ignore_grants, observe_only, scope ?? null,
+            resets, reset_inc ?? null, reset_sch ?? null, expires_on ?? null,
+        ));
+        if (typeof capNode === 'string') return this.doc.record(capNode);
+        return null;
+    }
+
+
+    /**
+     * Look up a customer's standing spend cap by id.
+     * Returns the Cap record, or undefined if not present.
+     */
+    async customerCap(id: string, cap_id: string): Promise<Record<string, unknown> | undefined> {
+        const capNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_cap', id, cap_id));
+        if (typeof capNode === 'string') return this.doc.record(capNode);
+        return undefined;
+    }
+
+
+    /**
+     * Reset a customer's spend cap consumption back to zero without removing the cap
+     * or changing its ceiling/credit/scope/schedule. Also restarts its reset-period clock.
+     * Returns false if no cap with this id exists on the customer.
+     */
+    async resetCustomerCap(id: string, cap_id: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.reset_customer_cap', id, cap_id)) as boolean;
+    }
+
+
+    /**
+     * Remove a standing spend cap from a customer entirely - it no longer applies to
+     * any future calls. Distinct from resetCustomerCap, which keeps the cap active.
+     * Returns false if no cap with this id exists on the customer.
+     */
+    async removeCustomerCap(id: string, cap_id: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_cap', id, cap_id)) as boolean;
+    }
+
+
+    /*****************************************************************************
      * Margin snapshots.
      *****************************************************************************/
     

@@ -1,0 +1,186 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * A Limitr spend cap.
+ *
+ * Unlike a Grant (a consumable balance that extends a Limit on overage),
+ * a Cap is an independent ceiling - it never grants extra room, it only
+ * restricts. Many caps can apply to the same call (even denominated in
+ * different credits); ALL applicable caps must pass for a call to be
+ * allowed - the most restrictive one (after Exchange conversion) wins.
+ *
+ * Caps are evaluated via Exchange, so a cap denominated in one credit
+ * (e.g. 'usd') can restrict consumption of an entitlement metered in a
+ * different credit (e.g. 'ai_credits'), as long as an exchange path
+ * exists between them. If no path exists, the cap simply does not apply
+ * to that entitlement.
+ *
+ * Standing caps live on a customer (customer.caps, keyed by id) and are
+ * always applied automatically wherever they're convertible - no opt-in
+ * required at the call site, mirroring how Limit/Grant already behave.
+ * The same type is also used transiently (constructed, checked, dropped)
+ * to represent a one-off call-scoped ceiling passed as an argument to
+ * allow()/check() - see <Limitr>.api.cap_from for that path.
+ */
+Cap: {
+    /// Cap ID (customer caps key). Chosen so a specific cap can be
+    /// looked up and reset/removed manually without affecting others.
+    str! id: '';
+
+    /// Currency/credit ID this cap's ceiling is denominated in.
+    /// Default `rune` currency means cap applies to all credits that map to a rune.
+    /// Rune is by default backed by 1 rune = 1 USD.
+    str! credit: 'rune';
+
+    /// Use the exchange table for this cap?
+    /// If false, `credit` must match the entitlement credit exactly for this cap to apply.
+    bool! exchangeable: true;
+
+    /// Ignore grants?
+    /// If true, allowed usage captured by grants will not be applied to this spend cap.
+    bool! ignore_grants: false;
+
+    /// Observe only - never deny a call, just accumulate meter_value.
+    /// Lets a cap act as a pure spend tracker over its reset period (with
+    /// no ceiling effect at all) while `value` still serves as an optional
+    /// notification threshold - see <Limitr>.allow's cap-threshold event.
+    bool! observe_only: false;
+
+    #[schema(<LimitrValidation>.valid_limit_number)]
+    /// The ceiling itself, in units of `credit`.
+    /// If a str, can use units, but must be a valid stof number.
+    float | str value: 0;
+
+    /// Optional scope: entitlement names this cap restricts.
+    /// Null (default) = applies to every entitlement with a valid
+    /// Exchange path from the entitlement's credit to this cap's credit.
+    list scope: null;
+
+    /// Created on timestamp.
+    ms! created_on: 0;
+
+    /// Cumulative consumption against this cap's ceiling, in units of
+    /// `credit`. Independent of any entitlement Meter - many different
+    /// entitlements/credits can all contribute to this same running
+    /// total via Exchange conversion.
+    float meter_value: 0;
+
+    /// This cap's meter started accumulating on this timestamp.
+    ms started: null;
+
+    /// Does this cap's consumption reset after a period of time?
+    bool resets: false;
+
+    #[schema((target: obj, target_val: float): bool => {
+        if (target.resets) {
+            if (target_val == null && target.reset_sch == null) {
+                target.reset_inc = 30days;
+                return true;
+            }
+            if (target_val != null && target.reset_sch != null) {
+                return <LimitrValidation>.error('Cap reset_inc and reset_sch are mutually exclusive');
+            }
+            if (target_val != null) return target_val > 0 ? true : <LimitrValidation>.error(`Cap reset increment value must be greater than zero`);
+        }
+        true
+    })]
+    /// Duration-based reset increment. Mutually exclusive with reset_sch.
+    /// Defaults to 30 days when resets is true and reset_sch is not set.
+    ms reset_inc: null;
+
+    #[schema((target: obj, target_val: str): bool => {
+        if (!target_val.starts_with('monthly') &&
+            !target_val.starts_with('weekly') &&
+            !target_val.starts_with('nth_weekday') &&
+            !target_val.starts_with('yearly') &&
+            !target_val.starts_with('quarterly')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, nth_weekday, yearly, or quarterly`);
+        true
+    })]
+    #[schema_optional]
+    /// Calendar reset schedule. Mutually exclusive with reset_inc.
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
+    /// All schedules use UTC. When set, reset_inc is ignored.
+    str reset_sch: null;
+
+    /// Timestamp of the last calendar reset (used with reset_sch only).
+    /// Null until the first calendar reset fires.
+    ms last_reset: null;
+
+    /// Does this cap expire entirely (removed, not just reset)?
+    ms expires_on: null;
+
+
+    /**
+     * Reset this cap's running consumption for a single new period.
+     * Always resets to zero - caps don't carry rollover/add semantics
+     * like Grant, since they represent "how much have we spent", not
+     * a balance.
+     */
+    fn reset_period() {
+        if (!self.resets) return;
+        self.meter_value = 0;
+    }
+
+
+    /**
+     * Ensure this cap is current: drop it if expired, roll it forward
+     * through any elapsed reset periods otherwise.
+     * Returns false if the cap expired and should be removed by the caller.
+     */
+    fn ensure_current() -> bool {
+        const now = Time.now();
+        if (self.expires_on != null && self.expires_on < now) {
+            return false;
+        }
+        if (self.resets) {
+            if (self.reset_sch != null) {
+                const period_start = Time.start_of_period(now, self.reset_sch);
+                if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
+                    self.last_reset = period_start;
+                    self.reset_period();
+                }
+            } else if (self.reset_inc != null && self.started != null && (self.started + self.reset_inc) <= now) {
+                while ((now - self.started) > self.reset_inc) {
+                    self.started += self.reset_inc;
+                    self.reset_period();
+                }
+            }
+        }
+        if (self.started == null) self.started = now;
+        true
+    }
+
+
+    /**
+     * Does this cap apply to a given entitlement name?
+     * (scope check only - does not check Exchange convertibility)
+     */
+    fn applies_to(entitlement: str!) -> bool {
+        self.scope == null || self.scope.contains(entitlement)
+    }
+
+
+    /**
+     * How much room remains under this cap's ceiling, in units of `credit`.
+     */
+    fn remaining(stof_units: str = 'float') -> float {
+        const ceiling = (self.value as float).to_units(stof_units);
+        max(0, ceiling - self.meter_value)
+    }
+}

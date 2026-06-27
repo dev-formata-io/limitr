@@ -48,6 +48,9 @@ Customer: {
     /// Credit grants.
     obj! grants: {};
 
+    /// Spend caps.
+    obj! caps: {};
+
     /// Optional metadata object.
     obj metadata: null;
 
@@ -297,5 +300,182 @@ Customer: {
             }
         }
         true
+    }
+
+
+    /*****************************************************************************
+     * Spend Cap Helpers.
+     *****************************************************************************/
+    
+    /**
+     * Check whether a proposed change to an entitlement (denominated in
+     * entitlement_credit) would be allowed under every standing cap on
+     * this customer that applies to `entitlement` and has a valid Exchange
+     * path to/from entitlement_credit.
+     *
+     * observe_only caps never cause a denial here - they're skipped for
+     * the purposes of this check (their accumulation still happens in
+     * check_and_apply_caps, just never their enforcement).
+     *
+     * Returns true if every applicable, enforcing cap has enough remaining
+     * room. A cap with no Exchange path to entitlement_credit is skipped
+     * (does not apply to this entitlement) rather than causing a failure.
+     */
+    fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, value: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false) -> bool {
+        const exchange: Exchange = policy.exchange;
+    
+        const check_one = (cap: Cap): bool => {
+            if (cap == null) return true;
+            if (!cap.applies_to(entitlement)) return true;
+            if (non_ignore_grants_only && cap.ignore_grants) return true;
+            if (!cap.exchangeable && entitlement_credit != cap.credit) return true;
+
+            const converted = exchange != null ? exchange.exchange(value, entitlement_credit, cap.credit) : null;
+            if (converted == null) return true; // no exchange path - cap not applicable here
+            if (cap.observe_only) return true; // never denies - accumulates only, see check_and_apply_caps
+
+            const ceiling = (cap.value as float).to_units(stof_units);
+            const existing = cap.meter_value ?? 0;
+            existing + converted <= ceiling
+        };
+    
+        for (const pair in self.caps.fields()) {
+            const cap: Cap = pair[1];
+            if (!cap.ensure_current()) {
+                self.caps.remove(pair[0], shallow = false);
+                continue;
+            }
+            if (!check_one(cap)) return false;
+        }
+        for (const cap: Cap in extra) {
+            if (cap.ensure_current() && !check_one(cap)) return false;
+        }
+    
+        true
+    }
+    
+    
+    /**
+     * Like check_caps, but on success also commits: advances every
+     * applicable standing cap's meter_value by the converted amount, and
+     * lazily removes any caps that have expired. Call only after the
+     * corresponding Limit/Grant checks have also passed - Cap is an
+     * additional independent gate, not a replacement for either.
+     *
+     * `extra` is a list of ephemeral Caps (the call-arg / map-shorthand
+     * case, expanded via caps_from_arg) - each is checked and incremented
+     * identically to a stored cap, but the caller is responsible for
+     * dropping them afterward; they are never inserted into self.caps.
+     *
+     * observe_only caps never deny - they still accumulate meter_value,
+     * they just never fail the ceiling check below.
+     *
+     * Returns null (and applies nothing) if any non-observe_only applicable
+     * cap would be exceeded - same all-or-nothing semantics as a single
+     * allow() call. On success, returns a (possibly empty) list of caps
+     * that just crossed their `value` threshold on THIS call (pre-commit
+     * meter_value was below value, post-commit is at or above) - the
+     * caller (Limitr.allow) uses this to fire a threshold-crossing event
+     * per cap, exactly once per crossing rather than on every call past it.
+     */
+    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, value: float!, non_grant_value: float!, extra: list = [], stof_units: str = 'float') -> list {
+        const exchange: Exchange = policy.exchange;
+        const now = Time.now();
+    
+        // Pass 1: roll forward resets, drop expired, and verify - mutate nothing yet.
+        const applicable = [];
+        for (const pair in self.caps.fields()) {
+            const id = pair[0];
+            const cap: Cap = pair[1];
+            if (!cap.ensure_current()) {
+                self.caps.remove(id, shallow = false);
+                continue;
+            }
+            if (!cap.applies_to(entitlement)) continue;
+            if (!cap.exchangeable && entitlement_credit != cap.credit) continue;
+    
+            const val = cap.ignore_grants ? non_grant_value : value;
+            const converted = exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null;
+            if (converted == null) continue; // not applicable to this entitlement/credit pair
+    
+            const ceiling = (cap.value as float).to_units(stof_units);
+            if (!cap.observe_only && (cap.meter_value ?? 0) + converted > ceiling) return null;
+            applicable.push_back((cap, converted, ceiling));
+        }
+    
+        for (const ext: Cap in extra) {
+            if (!ext.ensure_current() || !ext.applies_to(entitlement)) continue;
+            if (!ext.exchangeable && entitlement_credit != ext.credit) continue;
+    
+            const val = ext.ignore_grants ? non_grant_value : value;
+            const converted = exchange != null ? exchange.exchange(val, entitlement_credit, ext.credit) : null;
+            if (converted == null) continue;
+    
+            const ceiling = (ext.value as float).to_units(stof_units);
+            if (!ext.observe_only && (ext.meter_value ?? 0) + converted > ceiling) return null;
+            applicable.push_back((ext, converted, ceiling));
+        }
+    
+        // Pass 2: every applicable cap had room (or is observe_only) - commit,
+        // tracking any cap that crosses its threshold on this exact call.
+        const crossings = [];
+        for (const entry in applicable) {
+            const cap: Cap = entry[0];
+            const converted = entry[1];
+            const ceiling = entry[2];
+            const before = cap.meter_value ?? 0;
+            const after = before + converted;
+            cap.meter_value = after;
+            if (before < ceiling && after >= ceiling) crossings.push_back(cap);
+        }
+    
+        crossings
+    }
+    
+    
+    /**
+     * Build a list of transient, unattached Cap objects from either a
+     * single Cap (returned as a one-element list) or a bare map shorthand
+     * of credit -> ceiling pairs, e.g. map(('ai_credits', 2), ('usd', 5)).
+     *
+     * A map with multiple entries expands into multiple transient Caps
+     * (one per credit), since the Cap type is single-credit by design.
+     * The resulting list is what check_caps / check_and_apply_caps expect
+     * for their `extra` parameter.
+     *
+     * Caller owns the returned object(s) and is responsible for drop()
+     * on each once the call completes - these are never inserted into any
+     * customer.caps map.
+     */
+    fn caps_from_arg(arg: Cap | map = null) -> list {
+        const out = [];
+        if (arg == null) return out;
+        if ((typeof arg) == 'obj' && arg.instance_of('Cap')) {
+            out.push_back(arg);
+            return out;
+        }
+        // bare map shorthand: credit -> ceiling
+        for (const pair in arg) {
+            const credit = pair[0];
+            let ceiling = pair[1];
+
+            if ((typeof ceiling) == 'fn') {
+                ceiling = ceiling();
+            }
+
+            if ((typeof ceiling) == 'obj') {
+                out.push_back(ceiling as Cap);
+            } else {
+                const tmp = new Cap {
+                    id: `tmp-${credit}`,
+                    credit: credit,
+                    value: ceiling,
+                    created_on: Time.now(),
+                    temp: true, // for document mem management
+                };
+                out.push_back(tmp);
+            }
+        }
+        out
     }
 }

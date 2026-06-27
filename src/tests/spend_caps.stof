@@ -1,0 +1,959 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Cap test policy.
+//
+// Scenario: an AI product with two credits - ai_credit ($0.40/credit) and
+// compute_sec ($0.10/sec) - both auto-mapping to rune (USD) via price, so
+// Exchange can convert freely between them and a USD-denominated cap.
+// One plan with generous entitlement limits, so caps (not the plan Limit)
+// are almost always the binding constraint in these tests.
+//
+Limitr TestCapPolicy: {
+    credits: {
+        ai_credit: {
+            label: 'AI Credit'
+            description: 'Abstract AI usage credit'
+            stof_units: 'float'
+            price: { amount: 0.40 }   // 1 ai_credit = $0.40
+            resets: true
+        }
+        compute_sec: {
+            label: 'Compute Second'
+            description: 'Compute time in seconds'
+            stof_units: 'float'
+            price: { amount: 0.10 }   // 1 compute_sec = $0.10
+            resets: true
+        }
+    }
+
+    plans: {
+        free: {
+            label: 'Free'
+            entitlements: {
+                ai_credits: {
+                    description: 'AI credit usage'
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'hard'
+                        value: 100_000          // generous - caps bind first in these tests
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+                compute: {
+                    description: 'Compute usage'
+                    limit: {
+                        credit: 'compute_sec'
+                        mode: 'hard'
+                        value: 100_000
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+                // Zero-value limit: every unit of consumption is immediately
+                // overage, so apply_overage_grants actually engages and the
+                // grant-vs-cap interaction tests exercise the real code path
+                // (a generous limit like ai_credits above never overflows,
+                // so grants would never be consulted at all).
+                metered_credits: {
+                    description: 'AI credit usage, fully metered against grants'
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'hard'
+                        value: 0
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+                // Soft-mode, zero-value limit: soft mode never blocks on
+                // overage, and applies grants unconditionally to whatever
+                // overage occurs (no all-or-nothing gate like hard mode) -
+                // this is the only way to test TRUE partial grant coverage
+                // within a single call. metered_credits (hard) cannot do
+                // this: hard mode requires a grant to cover an overage in
+                // full or the call is denied outright.
+                soft_credits: {
+                    description: 'AI credit usage, soft-limited for partial-grant-coverage tests'
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'soft'
+                        value: 0
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+            }
+        }
+    }
+
+
+    // Records every cap-threshold-crossed event this policy instance has
+    // seen, keyed by customer id, for tests to assert against. Keyed (not
+    // a flat list) because #[test] functions run async and can interleave
+    // at await points - a single shared list would let one test's crossings
+    // bleed into another's length-based assertions. Each test uses its own
+    // unique customer id, so per-customer buckets are race-free without
+    // needing any synchronization.
+    map threshold_crossings: map();
+
+    notifications: {
+        threshold_recorder: {
+            fn matches(type: str, event: obj) -> bool {
+                type == 'cap-threshold-crossed'
+            }
+            fn fire(event: obj) {
+                const bucket = super.super;
+                const id = event.customer.id;
+                let list = bucket.threshold_crossings.get(id);
+                if (list == null) {
+                    list = [];
+                    bucket.threshold_crossings.insert(id, list);
+                }
+                list.push_back(event.cap.id);
+            }
+        }
+    }
+
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Attach a Grant directly to a customer, bypassing the topup/plan
+     * machinery - mirrors how add_customer_cap constructs Cap objects
+     * directly. Returns the created Grant.
+     */
+    fn give_grant(customer_id: str!, credit: str!, value: float!, resets: bool = false) -> Grant {
+        const customer = self.customer(customer_id);
+        const grant = new Grant {
+            id: `grant-${credit}`,
+            credit,
+            starting_value: value,
+            value,
+            created_on: Time.now(),
+            granted_on: Time.now(),
+            resets,
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        grant
+    }
+
+    /**
+     * Simulate elapsed time for a cap's reset_inc by backdating its
+     * `started` timestamp - same technique governor.stof uses for
+     * governor_last_refill.
+     */
+    fn backdate_cap(customer_id: str!, cap_id: str!, ms_ago: int) {
+        const customer = self.customer(customer_id);
+        const cap: Cap = customer != null ? customer.caps.get(cap_id) : null;
+        if (cap != null && cap.started != null) {
+            cap.started = cap.started - (ms_ago as ms);
+        }
+    }
+
+    /**
+     * Backdate a cap's `last_reset` to simulate a prior calendar period
+     * for reset_sch-based caps. The calendar reset path in ensure_current
+     * keys off last_reset (not started), firing when last_reset < the
+     * current period start. Passing null clears it (as if never reset).
+     */
+    fn backdate_cap_last_reset(customer_id: str!, cap_id: str!, to: ms) {
+        const customer = self.customer(customer_id);
+        const cap: Cap = customer != null ? customer.caps.get(cap_id) : null;
+        if (cap != null) {
+            cap.last_reset = to;
+        }
+    }
+
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A standing cap denominated in the entitlement's own credit, with
+     * exchangeable: false, restricts that credit and only that credit.
+     * Confirms the basic single-credit ceiling works and that a call
+     * within the ceiling succeeds while one that would exceed it fails,
+     * with meter_value advancing only on success.
+     */
+    fn test_basic_exact_credit_cap() {
+        const customer = self.create_customer('basic', 'free');
+        const cap = self.add_customer_cap('basic', 5, 'cap1', 'ai_credit', false);
+        assert(cap != null);
+        assert_eq(cap.exchangeable, false);
+
+        // Within the cap - allowed
+        assert(self.allow('basic', 'ai_credits', 3));
+        assert_eq(cap.meter_value, 3);
+
+        // Would push to 6, over the 5 ceiling - denied
+        assert_not(self.allow('basic', 'ai_credits', 3));
+        assert_eq(cap.meter_value, 3); // unchanged on deny
+
+        // Exactly to the ceiling - allowed
+        assert(self.allow('basic', 'ai_credits', 2));
+        assert_eq(cap.meter_value, 5);
+
+        // Any further consumption denied
+        assert_not(self.allow('basic', 'ai_credits', 0.01));
+    }
+
+
+    #[test]
+    /**
+     * A cap with exchangeable: false denominated in one credit must NOT
+     * restrict spend on a different credit, even though both convert to
+     * rune. This is the core case that motivated the exchangeable flag.
+     */
+    fn test_exact_credit_cap_does_not_leak() {
+        const customer = self.create_customer('noleak', 'free');
+        self.add_customer_cap('noleak', 2, 'ai_cap', 'ai_credit', false);
+
+        // compute_sec spend is unrelated to the ai_credit-scoped cap
+        assert(self.allow('noleak', 'compute', 50));
+        assert(self.allow('noleak', 'compute', 50));
+
+        const cap: Cap = self.customer_cap('noleak', 'ai_cap');
+        assert_eq(cap.meter_value, 0); // never touched by compute spend
+    }
+
+
+    #[test]
+    /**
+     * The default umbrella cap (credit: 'rune', exchangeable: true) applies
+     * across every entitlement convertible to rune. A $1 USD cap is more
+     * restrictive than a separate 2 ai_credit cap once exchange rates are
+     * taken into account (1 ai_credit = $0.40, so 1.5 credits = $0.60 -
+     * fine against the $1 cap and fine against a 2-credit cap; push to
+     * 3 credits = $1.20 and the USD cap binds first even though the
+     * ai_credit-denominated ceiling alone would have allowed it).
+     */
+    fn test_umbrella_usd_cap_cross_credit() {
+        const customer = self.create_customer('umbrella', 'free');
+
+        // Default credit='rune', default exchangeable=true (inferred)
+        const usd_cap = self.add_customer_cap('umbrella', 1.00, 'usd_cap');
+        assert(usd_cap != null);
+        assert_eq(usd_cap.credit, 'rune');
+        assert_eq(usd_cap.exchangeable, true);
+
+        // 1.5 ai_credits = $0.60 - within the $1 cap
+        assert(self.allow('umbrella', 'ai_credits', 1.5));
+        assert_eq(usd_cap.meter_value.round(2), 0.60);
+
+        // Spend on a DIFFERENT credit also counts against the same USD cap:
+        // 2 compute_sec = $0.20, bringing total to $0.80 - still within $1
+        assert(self.allow('umbrella', 'compute', 2));
+        assert_eq(usd_cap.meter_value.round(2), 0.80);
+
+        // One more ai_credit = $0.40 more -> $1.20 total, exceeds the $1 cap
+        assert_not(self.allow('umbrella', 'ai_credits', 1));
+        assert_eq(usd_cap.meter_value.round(2), 0.80); // unchanged on deny
+    }
+
+
+    #[test]
+    /**
+     * scope restricts a cap to named entitlements even if other
+     * entitlements would otherwise be convertible.
+     */
+    fn test_cap_scope() {
+        const customer = self.create_customer('scoped', 'free');
+        const cap = self.add_customer_cap('scoped', 1.00, 'scoped_cap', 'rune', true, false, false, ['ai_credits']);
+        assert(cap != null);
+
+        // compute is NOT in scope - unrestricted by this cap regardless of USD value
+        assert(self.allow('scoped', 'compute', 50)); // 50 * 0.10 = $5, way over $1
+        assert_eq(cap.meter_value, 0);
+
+        // ai_credits IS in scope - restricted
+        assert(self.allow('scoped', 'ai_credits', 2)); // $0.80 - within $1
+        assert_eq(cap.meter_value, 0.80);
+        assert_not(self.allow('scoped', 'ai_credits', 1)); // would push to $1.20
+    }
+
+
+    #[test]
+    /**
+     * A call-scoped ephemeral cap (map shorthand) restricts just that one
+     * call and leaves no trace afterward - not in customer.caps, and a
+     * later call doesn't inherit any consumption from it.
+     */
+    fn test_ephemeral_cap_map_shorthand() {
+        const customer = self.create_customer('ephemeral', 'free');
+
+        // 3 ai_credits = $1.20 - exceeds an inline $1 ceiling for this call only
+        assert_not(self.allow('ephemeral', 'ai_credits', 3, true, map(('rune', 1.00))));
+
+        // No standing cap was created
+        assert_eq(customer.caps.fields().len(), 0);
+
+        // A second call with no cap arg at all is unrestricted by the
+        // earlier ephemeral cap - it left no state behind
+        assert(self.allow('ephemeral', 'ai_credits', 3));
+    }
+
+
+    #[test]
+    /**
+     * An ephemeral cap that DOES allow the call still leaves no residue -
+     * confirms the temp Cap is dropped after a passing call too, not just
+     * after a denial.
+     */
+    fn test_ephemeral_cap_pass_leaves_no_residue() {
+        const customer = self.create_customer('ephemeral_pass', 'free');
+
+        // 1 ai_credit = $0.40 - within an inline $1 ceiling
+        assert(self.allow('ephemeral_pass', 'ai_credits', 1, true, map(('rune', 1.00))));
+        assert_eq(customer.caps.fields().len(), 0);
+
+        // Repeating the same ephemeral cap on a fresh call doesn't remember
+        // the prior $0.40 - each ephemeral cap starts at meter_value 0
+        assert(self.allow('ephemeral_pass', 'ai_credits', 2, true, map(('rune', 1.00)))); // $0.80, fresh cap, within $1
+    }
+
+
+    #[test]
+    /**
+     * A standing cap and a call-scoped ephemeral cap both apply to the same
+     * call - ALL applicable caps must hold (AND), not just one.
+     */
+    fn test_standing_and_ephemeral_together() {
+        const customer = self.create_customer('combo', 'free');
+        const standing = self.add_customer_cap('combo', 5, 'standing_cap', 'ai_credit', false);
+
+        // Ephemeral cap (USD, $0.50) is tighter than the standing 5-credit cap
+        // for a 2-credit ($0.80) call - ephemeral cap should deny even though
+        // the standing cap alone would allow it (2 <= 5).
+        assert_not(self.allow('combo', 'ai_credits', 2, true, map(('rune', 0.50))));
+        assert_eq(standing.meter_value, 0); // denial means neither cap committed
+
+        // Without the ephemeral cap, the same call passes against the
+        // standing cap alone.
+        assert(self.allow('combo', 'ai_credits', 2));
+        assert_eq(standing.meter_value, 2);
+    }
+
+
+    #[test]
+    /**
+     * A standing cap with resets: true rolls meter_value back to zero
+     * once reset_inc has elapsed, mirroring Grant/Meter period semantics.
+     */
+    fn test_cap_resets_with_period() {
+        const customer = self.create_customer('capreset', 'free');
+        const cap = self.add_customer_cap('capreset', 5, 'reset_cap', 'ai_credit', false, false, false, null, true, 30days);
+
+        assert(self.allow('capreset', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4);
+
+        // Without elapsed time, the cap remembers prior consumption
+        assert_not(self.allow('capreset', 'ai_credits', 4)); // would push to 8, over 5
+
+        // Backdate past the 30-day reset_inc (raw ms, matching backdate_cap's
+        // int parameter - governor.stof's backdate_governor uses the same
+        // raw-int convention, not duration literals like 31days)
+        self.backdate_cap('capreset', 'reset_cap', 31 * 24 * 60 * 60 * 1000);
+
+        // Next check_caps call (via allow/ensure_current) should roll the
+        // period forward and zero meter_value before evaluating
+        assert(self.allow('capreset', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4); // fresh period, not 8
+    }
+
+
+    #[test]
+    /**
+     * A cap with a calendar reset schedule (reset_sch, e.g. 'monthly:1')
+     * resets via the start_of_period / last_reset path in ensure_current -
+     * a wholly separate mechanism from reset_inc. The first evaluation
+     * stamps last_reset to the current period start; backdating last_reset
+     * to a prior period makes the next evaluation roll forward and zero
+     * meter_value.
+     */
+    fn test_cap_resets_with_calendar_schedule() {
+        const customer = self.create_customer('calreset', 'free');
+        // resets=true, reset_inc=null, reset_sch='monthly:1' (1st of each month, UTC)
+        const cap = self.add_customer_cap('calreset', 5, 'cal_cap', 'ai_credit', false, false, false, null, true, null, 'monthly:1');
+        assert(cap != null);
+        assert_eq(cap.reset_sch, 'monthly:1');
+
+        // First consumption - the initial evaluation stamps last_reset to the
+        // current period start and accumulates.
+        assert(self.allow('calreset', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4);
+        assert(cap.last_reset != null); // calendar path stamped it
+
+        // At ceiling - further consumption denied within the same period
+        assert_not(self.allow('calreset', 'ai_credits', 4)); // would push to 8, over 5
+
+        // Backdate last_reset ~45 days into the past, before the current
+        // period start, so the next evaluation sees it as stale and resets.
+        self.backdate_cap_last_reset('calreset', 'cal_cap', Time.now() - (45 * 24 * 60 * 60 * 1000));
+
+        // Next evaluation should roll the calendar period forward and zero
+        // meter_value before checking.
+        assert(self.allow('calreset', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4); // fresh period, not 8
+    }
+
+
+    #[test]
+    /**
+     * ensure_current's reset_inc catch-up loop rolls a cap forward through
+     * MULTIPLE elapsed periods in one evaluation, not just one. A cap
+     * several periods stale should still land zeroed with `started` advanced
+     * into the current period - exercising the while loop (lines 153-156),
+     * which single-period tests never drive past one iteration.
+     */
+    fn test_cap_multi_period_catchup() {
+        const customer = self.create_customer('multicatch', 'free');
+        const cap = self.add_customer_cap('multicatch', 5, 'mc_cap', 'ai_credit', false, false, false, null, true, 30days);
+
+        assert(self.allow('multicatch', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4);
+        const started_before = cap.started;
+
+        // Backdate by ~95 days against a 30-day reset_inc: 3 full periods
+        // have elapsed, so the while loop must iterate 3 times.
+        self.backdate_cap('multicatch', 'mc_cap', 95 * 24 * 60 * 60 * 1000);
+
+        // One evaluation should catch up across all 3 stale periods, landing
+        // meter_value at the fresh consumption (4), not stacked.
+        assert(self.allow('multicatch', 'ai_credits', 4));
+        assert_eq(cap.meter_value, 4); // fully caught up, single fresh period of consumption
+
+        // started should have advanced forward in 30-day steps and now sit
+        // within ~one reset_inc of now (not still 95 days back, and not null)
+        assert(cap.started != null);
+        assert(cap.started > (started_before - (95 * 24 * 60 * 60 * 1000))); // moved forward from the backdated value
+        assert((Time.now() - cap.started) <= (30 * 24 * 60 * 60 * 1000)); // within the current period
+    }
+
+
+    #[test]
+    /**
+     * A standing cap and the entitlement's own meter reset on independent
+     * clocks. Here the entitlement meter resets (new billing period) but a
+     * standing cap that does NOT reset keeps its accumulated consumption -
+     * confirming the two reset mechanisms don't interfere. Real scenario:
+     * a monthly plan reset alongside a longer-lived (or non-resetting)
+     * spend cap.
+     */
+    fn test_cap_independent_of_meter_reset() {
+        const customer = self.create_customer('indep', 'free');
+        // Non-resetting cap (resets defaults false)
+        const cap = self.add_customer_cap('indep', 10, 'indep_cap', 'ai_credit', false);
+
+        assert(self.allow('indep', 'ai_credits', 6));
+        assert_eq(cap.meter_value, 6);
+
+        // Force the ENTITLEMENT meter to reset by backdating its started
+        // beyond the entitlement's 30-day reset_inc (ai_credits limit resets).
+        const meter: Meter = self.meter_obj('indep', 'ai_credits');
+        meter.started = Time.now() - 31days;
+
+        // Next call triggers the entitlement meter reset (its value rolls to
+        // just the new call), but the non-resetting cap keeps its prior 6.
+        assert(self.allow('indep', 'ai_credits', 3));
+        assert_eq(meter.value, 3); // entitlement meter reset to fresh consumption
+
+        // Cap accumulated across the meter reset: 6 + 3 = 9 (still under 10)
+        assert_eq(cap.meter_value, 9);
+
+        // One more unit hits the cap ceiling (9 + 1 = 10), still allowed
+        assert(self.allow('indep', 'ai_credits', 1));
+        assert_eq(cap.meter_value, 10);
+
+        // Cap now binds even though the entitlement meter has plenty of room
+        assert_not(self.allow('indep', 'ai_credits', 1));
+    }
+
+
+    #[test]
+    /**
+     * Multiple standing caps on the same customer and credit, with
+     * different ceilings, all apply simultaneously - the most restrictive
+     * binds first (AND semantics across the check_caps loop over
+     * customer.caps). Distinct from test_standing_and_ephemeral_together,
+     * which mixes a standing and an ephemeral cap; this is two STANDING
+     * caps at once.
+     */
+    fn test_multiple_standing_caps() {
+        const customer = self.create_customer('multi', 'free');
+        const loose = self.add_customer_cap('multi', 10, 'loose_cap', 'ai_credit', false);
+        const tight = self.add_customer_cap('multi', 3, 'tight_cap', 'ai_credit', false);
+
+        // 2 credits - within both caps
+        assert(self.allow('multi', 'ai_credits', 2));
+        assert_eq(loose.meter_value, 2);
+        assert_eq(tight.meter_value, 2);
+
+        // 2 more would push to 4 - exceeds the tight (3) cap even though the
+        // loose (10) cap has plenty of room. Most restrictive binds.
+        assert_not(self.allow('multi', 'ai_credits', 2));
+        // Neither cap committed on the denied call
+        assert_eq(loose.meter_value, 2);
+        assert_eq(tight.meter_value, 2);
+
+        // Exactly to the tight ceiling - allowed, both advance
+        assert(self.allow('multi', 'ai_credits', 1));
+        assert_eq(tight.meter_value, 3);
+        assert_eq(loose.meter_value, 3);
+
+        // Tight cap now exhausted - even though loose has 7 left, denied
+        assert_not(self.allow('multi', 'ai_credits', 1));
+
+        // Removing the tight cap lets the loose cap's headroom be used
+        assert(self.remove_customer_cap('multi', 'tight_cap'));
+        assert(self.allow('multi', 'ai_credits', 5)); // 3 + 5 = 8, under loose 10
+        assert_eq(loose.meter_value, 8);
+    }
+
+
+    #[test]
+    /**
+     * A cap with expires_on in the past is treated as inapplicable and is
+     * pruned from customer.caps on the next check - it no longer restricts.
+     */
+    fn test_cap_expiry() {
+        const customer = self.create_customer('expiry', 'free');
+        const cap = self.add_customer_cap('expiry', 1, 'expiring_cap', 'ai_credit', false);
+        assert(cap != null);
+
+        // Force expiry into the past
+        cap.expires_on = Time.now() - 1000;
+
+        // A call that would have exceeded the (now-expired) 1-credit cap
+        // should succeed, since the cap no longer applies
+        assert(self.allow('expiry', 'ai_credits', 5));
+
+        // The expired cap should have been pruned from customer.caps
+        assert_eq(self.customer_cap('expiry', 'expiring_cap'), null);
+    }
+
+
+    #[test]
+    /**
+     * add_customer_cap infers exchangeable from whether a specific credit
+     * was named: default 'rune' -> true, a named credit -> false, and an
+     * explicit argument overrides either inference in both directions.
+     */
+    fn test_exchangeable_inference() {
+        const customer = self.create_customer('infer', 'free');
+
+        // Default credit ('rune') -> exchangeable inferred true
+        const c1 = self.add_customer_cap('infer', 1, 'c1');
+        assert_eq(c1.credit, 'rune');
+        assert_eq(c1.exchangeable, true);
+
+        // Named specific credit -> exchangeable inferred false
+        const c2 = self.add_customer_cap('infer', 1, 'c2', 'ai_credit');
+        assert_eq(c2.exchangeable, false);
+
+        // Explicit override: named credit, but force exchangeable true
+        const c3 = self.add_customer_cap('infer', 1, 'c3', 'ai_credit', true);
+        assert_eq(c3.exchangeable, true);
+
+        // Explicit override: rune credit, but force exchangeable false
+        const c4 = self.add_customer_cap('infer', 1, 'c4', 'rune', false);
+        assert_eq(c4.exchangeable, false);
+    }
+
+
+    #[test]
+    /**
+     * add_customer_cap rejects an id that already exists on the customer
+     * (caller should reset_customer_cap or remove_customer_cap first),
+     * and rejects a credit name that doesn't resolve to a known credit.
+     */
+    fn test_add_customer_cap_validation() {
+        const customer = self.create_customer('addval', 'free');
+        assert(self.add_customer_cap('addval', 1, 'dup') != null);
+
+        // Same id again - collision, rejected
+        assert_eq(self.add_customer_cap('addval', 1, 'dup'), null);
+
+        // Unknown credit - rejected
+        assert_eq(self.add_customer_cap('addval', 1, 'badcredit', 'not_a_real_credit'), null);
+
+        // Unknown customer - rejected
+        assert_eq(self.add_customer_cap('nonexistent_customer', 1, 'x'), null);
+    }
+
+
+    #[test]
+    /**
+     * reset_customer_cap zeroes meter_value and restarts the clock without
+     * removing the cap or changing its ceiling. remove_customer_cap deletes
+     * it entirely. Both return false for a nonexistent cap id.
+     */
+    fn test_reset_and_remove_customer_cap() {
+        const customer = self.create_customer('resetrm', 'free');
+        const cap = self.add_customer_cap('resetrm', 3, 'rr_cap', 'ai_credit', false);
+
+        assert(self.allow('resetrm', 'ai_credits', 3));
+        assert_eq(cap.meter_value, 3);
+        assert_not(self.allow('resetrm', 'ai_credits', 1)); // at ceiling
+
+        // Reset: zeroes consumption, ceiling (value) unchanged, cap still present
+        assert(self.reset_customer_cap('resetrm', 'rr_cap'));
+        assert_eq(cap.meter_value, 0);
+        assert_eq(cap.value, 3);
+        assert(self.allow('resetrm', 'ai_credits', 3)); // room again
+
+        // Remove: gone entirely
+        assert(self.remove_customer_cap('resetrm', 'rr_cap'));
+        assert_eq(self.customer_cap('resetrm', 'rr_cap'), null);
+
+        // No longer restricted by the (now-removed) 3-credit cap
+        assert(self.allow('resetrm', 'ai_credits', 50));
+
+        // Nonexistent cap id - both return false
+        assert_not(self.reset_customer_cap('resetrm', 'no_such_cap'));
+        assert_not(self.remove_customer_cap('resetrm', 'no_such_cap'));
+    }
+
+
+    // ── ignore_grants matrix ────────────────────────────────────────────────
+    //
+    // These are the cases that motivated ignore_grants: a customer with free
+    // grant credit should be able to consume it without an ignore_grants cap
+    // reacting at all - the cap should only "see" spend that costs the
+    // customer something beyond what grants already covered.
+
+    #[test]
+    /**
+     * Core case: an ignore_grants cap must not advance while a Grant is
+     * fully covering consumption. Only once the grant is exhausted does
+     * further spend start counting against the cap.
+     */
+    fn test_ignore_grants_not_charged_while_grant_covers() {
+        const customer = self.create_customer('ignoreg', 'free');
+        self.give_grant('ignoreg', 'ai_credit', 50); // 50 free ai_credits, no reset
+
+        // ignore_grants USD cap: customer's actual out-of-pocket spend
+        // should never exceed $2, but free-credit usage shouldn't count.
+        const cap = self.add_customer_cap('ignoreg', 2.00, 'oop_cap', 'rune', true, true);
+        assert_eq(cap.ignore_grants, true);
+
+        // metered_credits has a ZERO-value limit, so every unit requested
+        // is immediately overage and apply_overage_grants actually engages -
+        // grants absorb it entirely here.
+        assert(self.allow('ignoreg', 'metered_credits', 30)); // fully grant-covered
+        assert_eq(cap.meter_value.round(2), 0); // cap untouched - grant paid for it
+
+        assert(self.allow('ignoreg', 'metered_credits', 20)); // remaining 20 of the grant
+        assert_eq(cap.meter_value.round(2), 0); // still untouched - grant exactly exhausted now
+    }
+
+
+    #[test]
+    /**
+     * Once the grant is exhausted, further spend is genuinely
+     * out-of-pocket and an ignore_grants cap must start accumulating it -
+     * and still enforce its ceiling. Uses soft_credits deliberately: a
+     * HARD limit can never produce "genuinely out-of-pocket and allowed"
+     * spend once its grant is exhausted - with no grant left, a hard
+     * limit's overage gate (remaining >= overage) simply denies the call
+     * outright, every time. Only soft mode allows spend to continue past
+     * grant exhaustion (billable overage), which is the actual scenario
+     * this test needs.
+     */
+    fn test_ignore_grants_charged_after_grant_exhausted() {
+        const customer = self.create_customer('ignoreg2', 'free');
+        self.give_grant('ignoreg2', 'ai_credit', 50);
+
+        const cap = self.add_customer_cap('ignoreg2', 2.00, 'oop_cap2', 'rune', true, true);
+
+        // Exhaust the grant exactly (zero-value limit -> all overage)
+        assert(self.allow('ignoreg2', 'soft_credits', 50));
+        assert_eq(cap.meter_value.round(2), 0);
+
+        // Now genuinely out-of-pocket: 3 ai_credits = $1.20, no grant left.
+        // Soft mode allows this (and bills the overage) where hard mode
+        // would have denied it outright.
+        assert(self.allow('ignoreg2', 'soft_credits', 3));
+        assert_eq(cap.meter_value.round(2), 1.20);
+
+        // Another $1.20 would bring total to $2.40, over the $2 cap - the
+        // CAP denies this (not the limit - soft mode itself never blocks)
+        assert_not(self.allow('ignoreg2', 'soft_credits', 3));
+        assert_eq(cap.meter_value.round(2), 1.20); // unchanged on deny
+
+        // Exactly enough room for $0.80 more (1.20 + 0.80 = 2.00)
+        assert(self.allow('ignoreg2', 'soft_credits', 2));
+        assert_eq(cap.meter_value.round(2), 2.00);
+    }
+
+
+    #[test]
+    /**
+     * Partial coverage within a single call: soft mode applies grants
+     * unconditionally to whatever overage occurs (no all-or-nothing gate
+     * like hard mode), so a call can be genuinely part-covered by the
+     * remaining grant and part not. The ignore_grants cap should only be
+     * charged for the uncovered remainder, not the full call value.
+     */
+    fn test_ignore_grants_partial_coverage_single_call() {
+        const customer = self.create_customer('ignoreg3', 'free');
+        self.give_grant('ignoreg3', 'ai_credit', 10); // only 10 free credits left
+
+        const cap = self.add_customer_cap('ignoreg3', 5.00, 'oop_cap3', 'rune', true, true);
+
+        // Request 15 credits in one call against the soft-mode entitlement:
+        // 10 covered by grant, 5 uncovered. Uncovered 5 credits = $2.00 -
+        // well within the $5 cap. Soft mode allows this in a single call
+        // since it never blocks on overage and grants apply unconditionally.
+        assert(self.allow('ignoreg3', 'soft_credits', 15));
+        assert_eq(cap.meter_value.round(2), 2.00); // only the uncovered 5 credits ($2), not all 15 ($6)
+    }
+
+
+    #[test]
+    /**
+     * A non-ignore_grants cap and an ignore_grants cap on the same
+     * entitlement at the same time: the plain cap sees the full raw spend
+     * regardless of grants, while the ignore_grants cap only sees the
+     * uncovered remainder - in the same call. Uses soft_credits since this
+     * relies on true within-call partial grant coverage (see
+     * test_ignore_grants_partial_coverage_single_call).
+     */
+    fn test_ignore_grants_and_plain_cap_together() {
+        const customer = self.create_customer('mixed', 'free');
+        self.give_grant('mixed', 'ai_credit', 20);
+
+        const plain_cap = self.add_customer_cap('mixed', 100, 'plain_cap', 'ai_credit', false, false);
+        const oop_cap = self.add_customer_cap('mixed', 5.00, 'oop_cap', 'rune', true, true);
+
+        // 25 credits against the soft-mode entitlement: 20 grant-covered,
+        // 5 uncovered ($2.00)
+        assert(self.allow('mixed', 'soft_credits', 25));
+
+        // Plain cap sees the FULL raw 25 credits, regardless of grant coverage
+        assert_eq(plain_cap.meter_value, 25);
+
+        // ignore_grants cap sees only the uncovered $2.00
+        assert_eq(oop_cap.meter_value.round(2), 2.00);
+    }
+
+
+    #[test]
+    /**
+     * check() agrees with allow() for ordinary (non-ignore_grants) caps,
+     * and does not mutate any cap's meter_value or remove expired caps'
+     * consumption state as a side effect of evaluation timing differences.
+     */
+    fn test_check_matches_allow_plain_cap() {
+        const customer = self.create_customer('checkplain', 'free');
+        const cap = self.add_customer_cap('checkplain', 3, 'cp_cap', 'ai_credit', false);
+
+        assert(self.check('checkplain', 'ai_credits', 2));
+        assert_eq(cap.meter_value, 0); // check() never commits
+
+        assert(self.allow('checkplain', 'ai_credits', 2));
+        assert_eq(cap.meter_value, 2);
+
+        // Now at 2/3 - check() for 2 more should agree with what allow() would do (deny)
+        assert_not(self.check('checkplain', 'ai_credits', 2));
+        assert_not(self.allow('checkplain', 'ai_credits', 2));
+        assert_eq(cap.meter_value, 2); // still unchanged - the denied allow() didn't commit either
+    }
+
+
+    #[test]
+    /**
+     * check() and allow() must agree exactly for an ignore_grants cap
+     * evaluated against the grant-adjusted `diff` in the early gate -
+     * not just "check() is never unsafe", but exact agreement. check()'s
+     * early gate mirrors allow()'s early gate verbatim (same diff formula,
+     * same remaining_grant_credit snapshot, no mutation between the two
+     * reads within a single call), so there is no reachable case where
+     * they should diverge for this gate. This test pins three points
+     * around the ignore_grants cap's ceiling: comfortably under, right at
+     * the boundary, and over - confirming exact agreement at each.
+     */
+    fn test_check_matches_allow_ignore_grants_cap() {
+        const customer = self.create_customer('checkcons', 'free');
+        self.give_grant('checkcons', 'ai_credit', 10);
+        const cap = self.add_customer_cap('checkcons', 1.00, 'cc_cap', 'rune', true, true);
+
+        // 12 credits: 10 grant-covered, 2 uncovered ($0.80) - under the $1 cap
+        assert_eq(self.check('checkcons', 'soft_credits', 12), self.allow('checkcons', 'soft_credits', 12));
+
+        // Reset state for a clean second comparison
+        const customer2 = self.create_customer('checkcons2', 'free');
+        self.give_grant('checkcons2', 'ai_credit', 10);
+        const cap2 = self.add_customer_cap('checkcons2', 1.00, 'cc_cap2', 'rune', true, true);
+
+        // 12.4 credits: 10 grant-covered, 2.4 uncovered ($0.96) - just under
+        // the $1 cap (kept off the exact boundary to avoid float-precision
+        // flakiness in the <= comparison; this test is about agreement
+        // between check() and allow(), not pinning the exact boundary)
+        assert_eq(self.check('checkcons2', 'soft_credits', 12.4), self.allow('checkcons2', 'soft_credits', 12.4));
+
+        const customer3 = self.create_customer('checkcons3', 'free');
+        self.give_grant('checkcons3', 'ai_credit', 10);
+        const cap3 = self.add_customer_cap('checkcons3', 1.00, 'cc_cap3', 'rune', true, true);
+
+        // 20 credits: 10 grant-covered, 10 uncovered ($4.00) - well over the $1 cap
+        assert_eq(self.check('checkcons3', 'soft_credits', 20), self.allow('checkcons3', 'soft_credits', 20));
+    }
+
+
+    #[test]
+    /**
+     * Decrements (negative values) never gate against or advance caps -
+     * mirrors governor.stof's test_decrement_no_governor_drain pattern.
+     * Caps restrict consumption, not the act of giving usage back.
+     */
+    fn test_decrement_does_not_touch_caps() {
+        const customer = self.create_customer('decr', 'free');
+        const cap = self.add_customer_cap('decr', 3, 'decr_cap', 'ai_credit', false);
+
+        assert(self.allow('decr', 'ai_credits', 3)); // at ceiling
+        assert_eq(cap.meter_value, 3);
+
+        // Decrement should succeed (not gated by the cap) and not change meter_value
+        assert(self.allow('decr', 'ai_credits', -1));
+        assert_eq(cap.meter_value, 3); // cap untouched by the decrement
+
+        // Still at the (unchanged) cap ceiling - a further positive call denied
+        assert_not(self.allow('decr', 'ai_credits', 1));
+    }
+
+
+    // ── observe_only ────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * An observe_only cap never denies a call, even when consumption
+     * exceeds its `value` - it still accumulates meter_value exactly like
+     * an enforcing cap, it just has no gating effect at all.
+     */
+    fn test_observe_only_never_denies() {
+        const customer = self.create_customer('obs1', 'free');
+        const cap = self.add_customer_cap('obs1', 2, 'obs_cap', 'ai_credit', false, false, true);
+        assert(cap != null);
+        assert_eq(cap.observe_only, true);
+
+        // Well past the 2-credit "ceiling" - allowed every time, no denial
+        assert(self.allow('obs1', 'ai_credits', 2));
+        assert_eq(cap.meter_value, 2);
+
+        assert(self.allow('obs1', 'ai_credits', 5)); // total 7, way past value=2
+        assert_eq(cap.meter_value, 7);
+
+        assert(self.allow('obs1', 'ai_credits', 100)); // total 107 - still never denied
+        assert_eq(cap.meter_value, 107);
+    }
+
+
+    #[test]
+    /**
+     * The common case: an observe_only cap denominated in rune (USD),
+     * exchangeable across credits, used purely to track cumulative spend
+     * over a period with no enforcement at all - a pure spend monitor.
+     * Tracks spend across TWO different credits into one USD total.
+     */
+    fn test_observe_only_usd_spend_tracker() {
+        const customer = self.create_customer('obs2', 'free');
+        // No ceiling effect intended - value is irrelevant to enforcement
+        // when observe_only, but still useful as a notification threshold
+        // (see test_observe_only_threshold_event). Default credit='rune',
+        // default exchangeable=true (umbrella), explicit observe_only=true.
+        const tracker = self.add_customer_cap('obs2', 1000.00, 'spend_tracker', 'rune', true, false, true);
+
+        // 5 ai_credits = $2.00
+        assert(self.allow('obs2', 'ai_credits', 5));
+        assert_eq(tracker.meter_value.round(2), 2.00);
+
+        // 10 compute_sec = $1.00 more, across a DIFFERENT credit - tracker
+        // accumulates both into the same USD total via exchange
+        assert(self.allow('obs2', 'compute', 10));
+        assert_eq(tracker.meter_value.round(2), 3.00);
+
+        // Large spend that would exceed almost any reasonable cap - still
+        // never denied, and still tracked accurately
+        assert(self.allow('obs2', 'ai_credits', 5000));
+        assert_eq(tracker.meter_value.round(2), 2003.00);
+    }
+
+
+    #[test]
+    /**
+     * An observe_only cap's `value` still serves as a notification
+     * threshold: crossing it fires a 'cap-threshold-crossed' event exactly
+     * once (on the call that crosses), not on every subsequent call past
+     * it. Uses the threshold_recorder Notification registered on this
+     * test policy (see self.threshold_crossings).
+     */
+    fn test_observe_only_threshold_event() {
+        const customer = self.create_customer('obs3', 'free');
+        const cap = self.add_customer_cap('obs3', 5.00, 'threshold_cap', 'rune', true, false, true);
+
+        // No crossing yet - bucket doesn't exist until the first event
+        assert_eq(self.threshold_crossings.get('obs3'), null);
+
+        // 5 ai_credits = $2.00 - under the $5 threshold, no event
+        assert(self.allow('obs3', 'ai_credits', 5));
+        assert_eq(self.threshold_crossings.get('obs3'), null);
+
+        // 8 more ai_credits = $3.20 more -> total $5.20, crosses the $5
+        // threshold on THIS call - exactly one event fires
+        assert(self.allow('obs3', 'ai_credits', 8));
+        let bucket: list = self.threshold_crossings.get('obs3');
+        assert(bucket != null);
+        assert_eq(bucket.len(), 1);
+        assert_eq(bucket[0], 'threshold_cap');
+
+        // Further calls stay past the threshold but must NOT refire -
+        // crossing fires once, not on every call past it
+        assert(self.allow('obs3', 'ai_credits', 1));
+        bucket = self.threshold_crossings.get('obs3');
+        assert_eq(bucket.len(), 1); // unchanged
+    }
+
+
+    #[test]
+    /**
+     * A threshold event also fires for an ENFORCING cap that crosses its
+     * own ceiling exactly (before <-> denial boundary). This confirms the
+     * threshold mechanism isn't observe_only-specific - it's general to
+     * any cap crossing `value`, enforcing or not (see check_and_apply_caps).
+     */
+    fn test_enforcing_cap_also_fires_threshold_event() {
+        const customer = self.create_customer('obs4', 'free');
+        const cap = self.add_customer_cap('obs4', 3, 'enforcing_threshold_cap', 'ai_credit', false);
+
+        assert_eq(self.threshold_crossings.get('obs4'), null);
+
+        // Lands exactly at the 3-credit ceiling - allowed AND crosses the threshold
+        assert(self.allow('obs4', 'ai_credits', 3));
+        let bucket: list = self.threshold_crossings.get('obs4');
+        assert(bucket != null);
+        assert_eq(bucket.len(), 1);
+        assert_eq(bucket[0], 'enforcing_threshold_cap');
+
+        // A further call is denied outright (enforcing cap) - denial must
+        // not fire a second threshold event
+        assert_not(self.allow('obs4', 'ai_credits', 1));
+        bucket = self.threshold_crossings.get('obs4');
+        assert_eq(bucket.len(), 1); // unchanged
+    }
+}
