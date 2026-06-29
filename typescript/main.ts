@@ -17,7 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
-import { LimitrCustomer } from "./types.js";
+import { LimitrCustomer, LimitrCap, LimitrCapOptions } from "./types.js";
 export * from './types.js';
 
 
@@ -543,59 +543,44 @@ export class Limitr {
      * room, it only restricts. Multiple caps (standing and call-scoped) can apply to
      * the same call; ALL applicable caps must have room for the call to be allowed.
      *
-     * - "credit" defaults to 'rune' (Limitr's USD-pegged base currency). Leaving it at
-     *   the default gives a USD-wide umbrella cap applying to spend on any entitlement
-     *   convertible to rune - the common "cap this customer/pipeline at $N total" case.
-     * - "exchangeable": when undefined, it is inferred - 'rune' implies true (umbrella),
-     *   a specific named credit implies false (watch just that credit). Pass explicitly
-     *   to override either inference.
-     * - "ignore_grants" (default false): when true, spend that grants already covered is
-     *   NOT counted against the cap - the cap only accumulates genuinely out-of-pocket
-     *   spend beyond a customer's free credits.
-     * - "observe_only" (default false): when true, this cap never denies a call - it
-     *   still accumulates meter_value exactly like an enforcing cap, it just has no
-     *   gating effect at all. Useful as a pure spend tracker over a period (commonly
-     *   in rune/USD) with no ceiling effect. `value` still serves as an optional
-     *   notification threshold either way - crossing it fires a 'cap-threshold-crossed'
-     *   event exactly once, regardless of whether the cap enforces or just observes.
-     * - "id" (cap_id) lets you choose a stable key for later reset/remove. If omitted, an
-     *   id is generated and returned on the resulting Cap record.
+     * See LimitrCapOptions for the full set of options and their defaults - notably:
+     * - "credit" defaults to 'rune' (Limitr's USD-pegged base currency), giving a
+     *   USD-wide umbrella cap applying to spend on any entitlement convertible to
+     *   rune - the common "cap this customer/pipeline at $N total" case.
+     * - "exchangeable" is inferred from "credit" when omitted - 'rune' implies true
+     *   (umbrella), a specific named credit implies false (watch just that credit).
+     * - "ignore_grants", "overage_only", and "observe_only" each narrow or relax what
+     *   counts against the cap - see LimitrCapOptions for what each means; they
+     *   compose (e.g. ignore_grants + overage_only together tracks only genuinely
+     *   out-of-pocket spend beyond the plan's included amount).
+     * - "follow_decrements" opts a cap into moving back down on a decrement (e.g. an
+     *   end-of-month billing correction) - off by default, since most caps should
+     *   track cumulative spend as a one-way ratchet.
      *
-     * Returns the created Cap record, or null if a cap with this id already exists on the
-     * customer (reset or remove it first) or the credit doesn't resolve to a known credit.
+     * Returns the created Cap, or null if a cap with options.cap_id already exists on
+     * the customer (reset or remove it first) or options.credit doesn't resolve to a
+     * known credit.
      */
-    async addCustomerCap(
-        id: string,
-        value: number | string,
-        cap_id: string = '',
-        credit: string = 'rune',
-        exchangeable?: boolean,
-        ignore_grants: boolean = false,
-        observe_only: boolean = false,
-        scope?: string[],
-        resets: boolean = false,
-        reset_inc?: number,
-        reset_sch?: string,
-        expires_on?: number,
-    ): Promise<Record<string, unknown> | null> {
+    async addCustomerCap(id: string, value: number | string, options: LimitrCapOptions = {}): Promise<LimitrCap | null> {
         const capNode = await this.gate.run(() => this.doc.call(
             '<Limitr>.api.add_customer_cap',
-            id, value, cap_id, credit,
-            exchangeable ?? null, ignore_grants, observe_only, scope ?? null,
-            resets, reset_inc ?? null, reset_sch ?? null, expires_on ?? null,
+            id, value, options.cap_id ?? '', options.credit ?? 'rune',
+            options.exchangeable ?? null, options.ignore_grants ?? false, options.overage_only ?? false,
+            options.observe_only ?? false, options.follow_decrements ?? false, options.scope ?? null,
+            options.resets ?? false, options.reset_inc ?? null, options.reset_sch ?? null, options.expires_on ?? null,
         ));
-        if (typeof capNode === 'string') return this.doc.record(capNode);
+        if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return null;
     }
 
 
     /**
      * Look up a customer's standing spend cap by id.
-     * Returns the Cap record, or undefined if not present.
+     * Returns the Cap, or undefined if not present.
      */
-    async customerCap(id: string, cap_id: string): Promise<Record<string, unknown> | undefined> {
+    async customerCap(id: string, cap_id: string): Promise<LimitrCap | undefined> {
         const capNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_cap', id, cap_id));
-        if (typeof capNode === 'string') return this.doc.record(capNode);
+        if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return undefined;
     }
 

@@ -37,7 +37,7 @@ const policy = await Limitr.new(doc);
 await policy.createCustomer('cus_123', 'starter', 'user', 'Jane Doe', [], [], { email: 'jane@example.com' });
 
 // Place a $2 cap on pipeline spend
-await policy.addCustomerCap('cus_123', 2, 'pipeline_usd_cap');
+await policy.addCustomerCap('cus_123', 2, { cap_id: 'pipeline_usd_cap' });
 
 // Spend!!! Call into LLMs, upload files, do GPU stuff, etc. Limitr handles it all
 if (await policy.allow('cus_123', 'ai_chat', 6420)) {

@@ -56,6 +56,15 @@ Cap: {
     /// If true, allowed usage captured by grants will not be applied to this spend cap.
     bool! ignore_grants: false;
 
+    /// Overage only?
+    /// If true, usage inside of included plan limits will not be applied to this spend cap, only overage
+    bool! overage_only: false;
+
+    /// Follow decrements?
+    /// If true, this spend cap will decrease with negative allow() calls, or decrement operations.
+    /// Useful when modeling spend that will occur at the end of a period instead of real-time.
+    bool! follow_decrements: false;
+
     /// Observe only - never deny a call, just accumulate meter_value.
     /// Lets a cap act as a pure spend tracker over its reset period (with
     /// no ceiling effect at all) while `value` still serves as an optional

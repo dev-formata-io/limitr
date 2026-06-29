@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.17;
+    ver version: 0.6.18;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -561,8 +561,8 @@ Limitr: {
         /// Add a standing spend cap to a customer. See Limitr.add_customer_cap for
         /// the full explanation of credit/exchangeable/ignore_grants defaults.
         fn add_customer_cap(id: str!, value: float | str!, cap_id: str = '', credit: str! = 'rune',
-            exchangeable?: bool, ignore_grants: bool = false, observe_only: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
-            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, observe_only, scope, resets, reset_inc, reset_sch, expires_on)
+            exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
+            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on)
         }
 
         /// Look up a customer's standing spend cap by id.
@@ -1234,27 +1234,7 @@ Limitr: {
             const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
             value = value.to_units(stof_units);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
-
-            // Cap gate: resolve any call-scoped ephemeral caps and check ALL
-            // applicable caps (standing + ephemeral) BEFORE any mutation -
-            // governor tokens, meters, and grants are all untouched at this
-            // point, so a cap denial here is a clean no-op deny.
-            const ephemeral_caps = customer.caps_from_arg(cap);
-            let cap_value = value;
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, value, ephemeral_caps, stof_units, true)) {
-                for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
-                return false;
-            }
-            if (limit != null && limit.grants_apply) {
-                const remaining = customer.remaining_grant_credit(self, limit.credit);
-                if (remaining != null) {
-                    const diff = value - remaining;
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, diff, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
-                        for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
-                        return false;
-                    }
-                }
-            }
+            const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
 
             // get customer plan
             const pl = self.plan_for(customer.id);
@@ -1293,6 +1273,33 @@ Limitr: {
                 }
             }
 
+            // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
+            const meter_value = existing_meter ? existing_meter.value : 0;
+            let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+
+            // Cap gate: resolve any call-scoped ephemeral caps and check ALL
+            // applicable caps (standing + ephemeral) BEFORE any mutation -
+            // governor tokens, meters, and grants are all untouched at this
+            // point, so a cap denial here is a clean no-op deny.
+            const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
+            let cap_grant_applied = 0.0;
+            let cap_overage = 0.0;
+            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, value, overage, ephemeral_caps, stof_units, true)) {
+                for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                return false;
+            }
+            if (limit != null && limit.grants_apply) {
+                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                if (remaining != null) {
+                    const diff = max(0, value - remaining);
+                    const diff_overage = max(0, overage - remaining);
+                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, diff, diff_overage, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
+                        for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                        return false;
+                    }
+                }
+            }
+
             // Governor gate: check rate ceiling before hard limit
             if (limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
@@ -1310,7 +1317,7 @@ Limitr: {
                     existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                     if (event) {
                         const event_value = new {
-                            meter: new { value: existing_meter.value, limit: (limit.value as float).to_units(stof_units) },
+                            meter: new { value: existing_meter.value, limit: limit_value },
                             customer,
                             entitlement,
                             plan,
@@ -1339,14 +1346,13 @@ Limitr: {
             
             if (limit != null && (valid || limit.mode == 'soft')) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
-                const old_value = existing_meter.value;
+                const old_value = meter_value;
                 const changed = new_value != old_value;
                 existing_meter.credit = limit.credit;
                 existing_meter.value = new_value;
                 existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                 customer.meters.insert(entitlement, existing_meter);
                 
-                const limit_value = (limit.value as float).to_units(stof_units);
                 if (changed) {
                     const event_value = new {
                         meter: new {
@@ -1365,7 +1371,8 @@ Limitr: {
                     if (!valid) {
                         // contemplate credit grants for this customer before sending overage amount
                         // grants will modify event_value.overage for appropriate aggregation in the correct units
-                        event_value.overage = new_value > old_value ? new_value - max(old_value, limit_value) : new_value - limit_value;
+                        event_value.overage = overage;
+                        cap_overage += overage; // before grants applied to overage of course
                         if (!limit.grants_apply || customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
                             // intercept here with voucher mode to protect your costs if using a voucher with max spend
                             // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
@@ -1387,9 +1394,9 @@ Limitr: {
                             }
                         }
 
-                        // take away grant_value_applied from the cap_value applied to ignore_grant caps
+                        // capture grant_value_applied for ignore_grant caps
                         if (event_value.grant_value_applied) {
-                            cap_value -= event_value.grant_value_applied;
+                            cap_grant_applied += event_value.grant_value_applied;
                         }
                     }
                     if (existing_meter_reset && event) {
@@ -1408,9 +1415,6 @@ Limitr: {
 
                 valid = true; // meter was changed!
             } else if (limit != null && !valid) {
-                const limit_value = (limit.value as float).to_units(stof_units);
-                const meter_value = existing_meter ? existing_meter.value : 0;
-                let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
                 let event_value = new {
                     meter: new {
                         value: meter_value,
@@ -1429,6 +1433,7 @@ Limitr: {
                 if (overage > 0 && limit.grants_apply) {
                     const remaining = customer.remaining_grant_credit(self, limit.credit);
                     if (remaining != null && remaining >= overage) {
+                        cap_overage += overage; // for spend caps that are overage only
                         if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
                             valid = true; // we're now valid
                             
@@ -1457,9 +1462,9 @@ Limitr: {
                             customer.meters.insert(entitlement, existing_meter);
                         }
 
-                        // take away grant_value_applied from the cap_value applied to ignore_grant caps
+                        // capture grant_value_applied for ignore_grant caps
                         if (event_value.grant_value_applied) {
-                            cap_value -= event_value.grant_value_applied;
+                            cap_grant_applied += event_value.grant_value_applied;
                         }
                     }
                 }
@@ -1491,8 +1496,8 @@ Limitr: {
             // reason (hard limit with no grant coverage, voucher exhausted,
             // governor deny) must not consume cap room for a call that
             // never went through.
-            if (valid && value > 0 && credit_name != null) {
-                const crossings = customer.check_and_apply_caps(self, entitlement, credit_name, value, max(0, cap_value), ephemeral_caps, stof_units);
+            if (valid && credit_name != null) {
+                const crossings = customer.check_and_apply_caps(self, entitlement, credit_name, value, cap_overage, cap_grant_applied, ephemeral_caps, stof_units);
                 if (crossings != null && event) {
                     for (const crossed: Cap in crossings) {
                         const threshold_event = new {
@@ -1577,28 +1582,30 @@ Limitr: {
                 }
             }
 
-            // Cap gate. This mirrors allow()'s pre-mutation cap gate exactly
-            // (the raw non-ignore_grants check, then the grant-adjusted `diff`
-            // check), so check() and allow() reach the same cap decision in
-            // every case except the rare partial-grant-coverage edge - there,
-            // check() is conservative (may return false where allow() would
-            // ultimately succeed via grant coverage). It never errs the unsafe
-            // direction (true where allow() denies). allow() is authoritative;
-            // check() is advisory and grant-resolution logic is deliberately
-            // NOT duplicated here beyond what the early gate needs.
-            // Read-only: caps_from_arg's ephemeral objects are dropped before
-            // returning on every path.
-            const ephemeral_caps = customer.caps_from_arg(cap);
-            let caps_ok = true;
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, value, ephemeral_caps, stof_units, true)) {
-                caps_ok = false;
+            // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
+            const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
+            const meter_value = existing_meter ? existing_meter.value : 0;
+            let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+
+            // Cap gate: resolve any call-scoped ephemeral caps and check ALL
+            // applicable caps (standing + ephemeral) BEFORE any mutation -
+            // governor tokens, meters, and grants are all untouched at this
+            // point, so a cap denial here is a clean no-op deny.
+            const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
+            let cap_grant_applied = 0.0;
+            let cap_overage = 0.0;
+            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, value, overage, ephemeral_caps, stof_units, true)) {
+                for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                return false;
             }
-            if (caps_ok && limit != null && limit.grants_apply) {
+            if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit);
                 if (remaining != null) {
-                    const diff = value - remaining;
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, diff, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
-                        caps_ok = false;
+                    const diff = max(0, value - remaining);
+                    const diff_overage = max(0, overage - remaining);
+                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, diff, diff_overage, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
+                        for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                        return false;
                     }
                 }
             }
@@ -1607,20 +1614,15 @@ Limitr: {
             let valid = ent.check(new_value, limit);
             if (valid || (limit != null && limit.mode != 'hard')) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
-                return caps_ok;
+                return true;
             }
 
             // if we have a hard limit, lets check against credit grants to see if we're good
-            if (limit != null && limit.mode == 'hard' && limit.grants_apply) {
-                const limit_value = (limit.value as float).to_units(stof_units);
-                const meter_value = existing_meter ? existing_meter.value : 0;
-                const overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
-                if (overage > 0) {
-                    const remaining = customer.remaining_grant_credit(self, limit.credit);
-                    if (remaining != null && remaining >= overage) {
-                        for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
-                        return caps_ok;
-                    }
+            if (limit != null && limit.mode == 'hard' && limit.grants_apply && overage > 0) {
+                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                if (remaining != null && remaining >= overage) {
+                    for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                    return true;
                 }
             }
             for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
@@ -2059,7 +2061,7 @@ Limitr: {
      * given doesn't resolve to a known credit/'rune'.
      */
     fn add_customer_cap(customer_id: str!, value: float | str!, id: str = '', credit: str! = 'rune',
-        exchangeable?: bool, ignore_grants: bool = false, observe_only: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
+        exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
         const customer = self.customer(customer_id);
         if (customer == null) return null;
         if (credit != 'rune' && self.credit(credit) == null) return null; // unknown credit, can't cap it
@@ -2079,7 +2081,9 @@ Limitr: {
             value,
             exchangeable,
             ignore_grants,
+            overage_only,
             observe_only,
+            follow_decrements,
             scope: scope ?? null,
             created_on: Time.now(),
             started: Time.now(),

@@ -98,6 +98,38 @@ Limitr TestCapPolicy: {
                         reset_inc: 30days
                     }
                 }
+                // A real non-zero included plan amount (10 ai_credits), hard
+                // mode. Needed specifically for overage_only tests: with a
+                // zero-value limit (metered_credits), every unit is overage
+                // by definition and the "in-plan usage doesn't touch the
+                // cap" contrast can't be demonstrated. Here, the first 10
+                // credits are included and genuinely should never reach an
+                // overage_only cap at all - only consumption past 10 should.
+                included_credits: {
+                    description: 'AI credit usage with a real included plan amount'
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'hard'
+                        value: 10
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+                // Soft mode WITH a real non-zero included amount - needed to
+                // demonstrate overage_only vs a plain cap diverging within a
+                // single call with zero grant involvement. included_credits
+                // (hard) can't show this: any overage there with no grant
+                // simply denies the call outright.
+                included_soft_credits: {
+                    description: 'AI credit usage, soft-limited, with a real included plan amount'
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'soft'
+                        value: 10
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
             }
         }
     }
@@ -274,7 +306,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_scope() {
         const customer = self.create_customer('scoped', 'free');
-        const cap = self.add_customer_cap('scoped', 1.00, 'scoped_cap', 'rune', true, false, false, ['ai_credits']);
+        const cap = self.add_customer_cap('scoped', 1.00, 'scoped_cap', 'rune', true, false, false, false, false, ['ai_credits']);
         assert(cap != null);
 
         // compute is NOT in scope - unrestricted by this cap regardless of USD value
@@ -357,7 +389,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_resets_with_period() {
         const customer = self.create_customer('capreset', 'free');
-        const cap = self.add_customer_cap('capreset', 5, 'reset_cap', 'ai_credit', false, false, false, null, true, 30days);
+        const cap = self.add_customer_cap('capreset', 5, 'reset_cap', 'ai_credit', false, false, false, false, false, null, true, 30days);
 
         assert(self.allow('capreset', 'ai_credits', 4));
         assert_eq(cap.meter_value, 4);
@@ -389,7 +421,7 @@ Limitr TestCapPolicy: {
     fn test_cap_resets_with_calendar_schedule() {
         const customer = self.create_customer('calreset', 'free');
         // resets=true, reset_inc=null, reset_sch='monthly:1' (1st of each month, UTC)
-        const cap = self.add_customer_cap('calreset', 5, 'cal_cap', 'ai_credit', false, false, false, null, true, null, 'monthly:1');
+        const cap = self.add_customer_cap('calreset', 5, 'cal_cap', 'ai_credit', false, false, false, false, false, null, true, null, 'monthly:1');
         assert(cap != null);
         assert_eq(cap.reset_sch, 'monthly:1');
 
@@ -423,7 +455,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_multi_period_catchup() {
         const customer = self.create_customer('multicatch', 'free');
-        const cap = self.add_customer_cap('multicatch', 5, 'mc_cap', 'ai_credit', false, false, false, null, true, 30days);
+        const cap = self.add_customer_cap('multicatch', 5, 'mc_cap', 'ai_credit', false, false, false, false, false, null, true, 30days);
 
         assert(self.allow('multicatch', 'ai_credits', 4));
         assert_eq(cap.meter_value, 4);
@@ -848,7 +880,7 @@ Limitr TestCapPolicy: {
      */
     fn test_observe_only_never_denies() {
         const customer = self.create_customer('obs1', 'free');
-        const cap = self.add_customer_cap('obs1', 2, 'obs_cap', 'ai_credit', false, false, true);
+        const cap = self.add_customer_cap('obs1', 2, 'obs_cap', 'ai_credit', false, false, false, true);
         assert(cap != null);
         assert_eq(cap.observe_only, true);
 
@@ -877,7 +909,7 @@ Limitr TestCapPolicy: {
         // when observe_only, but still useful as a notification threshold
         // (see test_observe_only_threshold_event). Default credit='rune',
         // default exchangeable=true (umbrella), explicit observe_only=true.
-        const tracker = self.add_customer_cap('obs2', 1000.00, 'spend_tracker', 'rune', true, false, true);
+        const tracker = self.add_customer_cap('obs2', 1000.00, 'spend_tracker', 'rune', true, false, false, true);
 
         // 5 ai_credits = $2.00
         assert(self.allow('obs2', 'ai_credits', 5));
@@ -905,7 +937,7 @@ Limitr TestCapPolicy: {
      */
     fn test_observe_only_threshold_event() {
         const customer = self.create_customer('obs3', 'free');
-        const cap = self.add_customer_cap('obs3', 5.00, 'threshold_cap', 'rune', true, false, true);
+        const cap = self.add_customer_cap('obs3', 5.00, 'threshold_cap', 'rune', true, false, false, true);
 
         // No crossing yet - bucket doesn't exist until the first event
         assert_eq(self.threshold_crossings.get('obs3'), null);
@@ -955,5 +987,348 @@ Limitr TestCapPolicy: {
         assert_not(self.allow('obs4', 'ai_credits', 1));
         bucket = self.threshold_crossings.get('obs4');
         assert_eq(bucket.len(), 1); // unchanged
+    }
+
+
+    // ── overage_only ────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * The core overage_only contrast: usage within the plan's included
+     * amount must never touch the cap at all, even at the early gate -
+     * only consumption past the included limit counts. Uses
+     * included_soft_credits (a real 10-credit included amount), not
+     * metered_credits (limit=0, where everything is overage by definition
+     * and this contrast can't be demonstrated).
+     */
+    fn test_overage_only_ignores_in_plan_usage() {
+        const customer = self.create_customer('ovonly1', 'free');
+        // 2-credit ceiling, but overage_only - well under the 10-credit
+        // included amount, this cap should never even be consulted for
+        // in-plan calls, regardless of how small its ceiling is.
+        const cap = self.add_customer_cap('ovonly1', 2, 'ov_cap', 'ai_credit', false, false, true);
+        assert_eq(cap.overage_only, true);
+
+        // 8 credits, entirely within the 10-credit included limit - zero
+        // overage. Must be allowed even though 8 > the cap's 2-credit
+        // ceiling, because none of this is overage.
+        assert(self.allow('ovonly1', 'included_soft_credits', 8));
+        assert_eq(cap.meter_value, 0); // cap never touched - no overage occurred
+
+        // 2 more credits: total 10, still exactly at the included limit -
+        // still zero overage.
+        assert(self.allow('ovonly1', 'included_soft_credits', 2));
+        assert_eq(cap.meter_value, 0);
+
+        // 1 more credit: total 11, now 1 credit of overage - the cap
+        // engages for the FIRST time here, charged only for the 1 credit
+        // of overage, not the full request or the cumulative 11.
+        assert(self.allow('ovonly1', 'included_soft_credits', 1));
+        assert_eq(cap.meter_value, 1);
+
+        // 2 more credits of overage would bring the cap to 3, over its
+        // 2-credit ceiling - denied
+        assert_not(self.allow('ovonly1', 'included_soft_credits', 2));
+        assert_eq(cap.meter_value, 1); // unchanged on deny
+    }
+
+
+    // Note: overage_only's "no plan limit at all" degenerate case (every
+    // unit counts as overage when there's no included amount) isn't
+    // separately testable here. An entitlement with no Limit block also has
+    // no resolvable credit (Meter.credit is only ever set from limit.credit
+    // inside allow()) - so no cap, overage_only or otherwise, can ever apply
+    // to it at all; the exchange lookup has nothing to resolve against. The
+    // no-limit overage formula (allow()'s limit_value defaulting to 0) is
+    // still exercised by every metered_credits test (limit value: 0), which
+    // is the practically-equivalent "no included amount" case that's
+    // actually reachable.
+
+
+    #[test]
+    /**
+     * overage_only composed with ignore_grants: a grant that fully covers
+     * an overage means the overage_only+ignore_grants cap sees ZERO
+     * consumption for that call - it's simultaneously "not overage the
+     * customer pays for" from two independent angles. Uses the two-call
+     * boundary pattern (see test_ignore_grants_grant_exhausted_at_call_boundary)
+     * since included_credits is hard mode, which requires a grant to
+     * cover an overage in full or deny outright - no within-call partial
+     * coverage is possible.
+     */
+    fn test_overage_only_with_ignore_grants() {
+        const customer = self.create_customer('ovonly3', 'free');
+        self.give_grant('ovonly3', 'ai_credit', 5); // covers exactly 5 credits of overage
+
+        // ceiling in USD, overage_only AND ignore_grants together
+        const cap = self.add_customer_cap('ovonly3', 1.00, 'ov_ig_cap', 'rune', true, true, true);
+        assert_eq(cap.ignore_grants, true);
+        assert_eq(cap.overage_only, true);
+
+        // 10 credits against the 10-credit included_credits limit - exactly
+        // at the included amount, zero overage. Cap untouched regardless of
+        // the grant (nothing for the grant to even cover yet).
+        assert(self.allow('ovonly3', 'included_credits', 10));
+        assert_eq(cap.meter_value, 0);
+
+        // 5 more credits: this is overage (limit already at 10), and the
+        // grant covers it exactly (5 <= 5 remaining) - fully grant-covered
+        // overage. The cap sees zero consumption: it's overage, but the
+        // grant paid for all of it.
+        assert(self.allow('ovonly3', 'included_credits', 5));
+        assert_eq(cap.meter_value, 0);
+
+        // Grant now exhausted. 2 more credits: this is overage (limit
+        // already exceeded) with zero grant remaining - hard mode denies
+        // it outright (remaining 0 < overage 2), same as the
+        // ignore_grants-only case. Never reaches the cap.
+        assert_not(self.allow('ovonly3', 'included_credits', 2));
+        assert_eq(cap.meter_value, 0);
+    }
+
+
+    #[test]
+    /**
+     * A standing overage_only cap and a standing plain (not overage_only)
+     * cap on the same entitlement, at the same time: the plain cap sees
+     * every unit of consumption from the start, while the overage_only
+     * cap only engages once spending crosses into overage. Confirms the
+     * two flags are independent and don't interfere with each other's
+     * accounting on the same call.
+     *
+     * Uses included_soft_credits (soft mode, real 10-credit included
+     * amount): soft mode always allows the call through and still reports
+     * overage with zero grant involvement, which is what makes a true
+     * single-call divergence between the two caps reachable here. Hard
+     * mode entitlements can't show this - any overage there with no
+     * grant simply denies the call outright (see
+     * test_overage_only_with_ignore_grants).
+     */
+    fn test_overage_only_and_plain_cap_together() {
+        const customer = self.create_customer('ovonly4', 'free');
+        const plain_cap = self.add_customer_cap('ovonly4', 20, 'ov4_plain', 'ai_credit', false, false, false);
+        const overage_cap = self.add_customer_cap('ovonly4', 5, 'ov4_overage', 'ai_credit', false, false, true);
+
+        // 8 credits, within the 10-credit included amount - plain cap
+        // counts it, overage_only cap does not (zero overage occurred).
+        assert(self.allow('ovonly4', 'included_soft_credits', 8));
+        assert_eq(plain_cap.meter_value, 8);
+        assert_eq(overage_cap.meter_value, 0);
+
+        // 4 more credits: total 12, 2 of which are overage (past the
+        // 10-credit included amount). Soft mode allows this through with
+        // no grant needed. Plain cap sees the full 4; overage cap sees
+        // only the 2 that are genuinely overage.
+        assert(self.allow('ovonly4', 'included_soft_credits', 4));
+        assert_eq(plain_cap.meter_value, 12);
+        assert_eq(overage_cap.meter_value, 2);
+    }
+
+
+    // ── follow_decrements ───────────────────────────────────────────────────
+    //
+    // Caps default to a one-way ratchet: meter_value tracks cumulative spend
+    // and never goes back down on a decrement (giving back a held resource
+    // shouldn't un-spend money already attributed). follow_decrements is the
+    // opt-in for the opposite case - e.g. an end-of-month billing correction
+    // that needs to genuinely reduce recorded spend on the cap.
+
+    #[test]
+    /**
+     * Default behavior (follow_decrements: false): a decrement changes the
+     * entitlement meter but must NOT move the cap's meter_value at all -
+     * this is the existing ratchet behavior, confirmed unchanged by the
+     * follow_decrements addition. Mirrors test_decrement_does_not_touch_caps
+     * but explicit about the default flag value.
+     */
+    fn test_cap_without_follow_decrements_ignores_decrement() {
+        const customer = self.create_customer('nofollow', 'free');
+        const cap = self.add_customer_cap('nofollow', 10, 'nf_cap', 'ai_credit', false);
+        assert_eq(cap.follow_decrements, false);
+
+        assert(self.allow('nofollow', 'ai_credits', 6));
+        assert_eq(cap.meter_value, 6);
+
+        // Decrement: entitlement meter should reflect it, cap should not
+        assert(self.allow('nofollow', 'ai_credits', -4));
+        assert_eq(cap.meter_value, 6); // unchanged - decrements ignored by default
+    }
+
+
+    #[test]
+    /**
+     * Core case: a cap with follow_decrements: true moves its meter_value
+     * down in response to a decrement, by the converted amount, exactly
+     * symmetric with how it accumulates on a positive call.
+     */
+    fn test_cap_with_follow_decrements_reduces_on_decrement() {
+        const customer = self.create_customer('follow1', 'free');
+        const cap = self.add_customer_cap('follow1', 10, 'f1_cap', 'ai_credit', false, false, false, false, true);
+        assert_eq(cap.follow_decrements, true);
+
+        assert(self.allow('follow1', 'ai_credits', 6));
+        assert_eq(cap.meter_value, 6);
+
+        // Decrement by 4 - cap should move down by 4 too
+        assert(self.allow('follow1', 'ai_credits', -4));
+        assert_eq(cap.meter_value, 2);
+    }
+
+
+    #[test]
+    /**
+     * follow_decrements has no clamping - decrementing past a cap's
+     * accumulated meter_value drives it negative, exactly mirroring the
+     * unclamped accumulation on the positive side (no special-casing,
+     * meter_value = before + converted, full stop). A subsequent positive
+     * call has correspondingly more room as a result.
+     */
+    fn test_cap_with_follow_decrements_can_go_negative() {
+        const customer = self.create_customer('follow2', 'free');
+        const cap = self.add_customer_cap('follow2', 10, 'f2_cap', 'ai_credit', false, false, false, false, true);
+
+        assert(self.allow('follow2', 'ai_credits', 3));
+        assert_eq(cap.meter_value, 3);
+
+        // Decrement by 5 - more than was ever accumulated - goes negative
+        assert(self.allow('follow2', 'ai_credits', -5));
+        assert_eq(cap.meter_value, -2);
+
+        // With meter_value at -2, a 12-credit call lands at exactly the
+        // 10-credit ceiling (-2 + 12 = 10) - allowed
+        assert(self.allow('follow2', 'ai_credits', 12));
+        assert_eq(cap.meter_value, 10);
+
+        // Any further consumption denied, same as any other cap at ceiling
+        assert_not(self.allow('follow2', 'ai_credits', 0.01));
+    }
+
+
+    #[test]
+    /**
+     * Practical end-to-end scenario: a cap denies a call at its ceiling,
+     * a billing correction (decrement) reduces recorded spend, and the
+     * previously-denied amount now succeeds - confirming follow_decrements
+     * actually unblocks future consumption, not just an accounting detail.
+     */
+    fn test_follow_decrements_correction_unblocks_future_calls() {
+        const customer = self.create_customer('follow3', 'free');
+        const cap = self.add_customer_cap('follow3', 5, 'f3_cap', 'ai_credit', false, false, false, false, true);
+
+        assert(self.allow('follow3', 'ai_credits', 5)); // at ceiling
+        assert_eq(cap.meter_value, 5);
+        assert_not(self.allow('follow3', 'ai_credits', 1)); // denied - no room
+
+        // Billing correction: 2 credits of previously-recorded spend were
+        // over-counted and are being reversed.
+        assert(self.allow('follow3', 'ai_credits', -2));
+        assert_eq(cap.meter_value, 3);
+
+        // Room again - the previously-denied 1-credit call now succeeds,
+        // and there's still 1 more credit of headroom after that.
+        assert(self.allow('follow3', 'ai_credits', 1));
+        assert_eq(cap.meter_value, 4);
+        assert(self.allow('follow3', 'ai_credits', 1));
+        assert_eq(cap.meter_value, 5);
+        assert_not(self.allow('follow3', 'ai_credits', 1)); // back at ceiling
+    }
+
+
+    // ── combined-flag interactions ──────────────────────────────────────────
+
+    #[test]
+    /**
+     * overage_only + observe_only together: a pure "track only what's
+     * beyond the plan, never deny" spend monitor. Confirms the two
+     * conditionals (val = overage_only ? overage : value; and the
+     * observe_only ceiling-skip) are independent in BEHAVIOR, not just
+     * independent lines of code - in-plan usage must still be excluded
+     * even though nothing can ever deny, and a massive overage must still
+     * be measured by its overage amount, not the raw call value.
+     */
+    fn test_overage_only_and_observe_only_combined() {
+        const customer = self.create_customer('combo_ov_obs', 'free');
+        // Tiny 1-unit "ceiling" - if observe_only weren't truly independent,
+        // this would deny immediately on any real overage. It must not.
+        const cap = self.add_customer_cap('combo_ov_obs', 1, 'ov_obs_cap', 'ai_credit', false, false, true, true);
+        assert_eq(cap.overage_only, true);
+        assert_eq(cap.observe_only, true);
+
+        // 8 credits, entirely within the 10-credit included amount - zero
+        // overage. Must stay at 0 even with a 1-unit ceiling already
+        // nominally "exceeded" by the raw call value (8 > 1) - overage_only
+        // means raw value was never even the relevant number here.
+        assert(self.allow('combo_ov_obs', 'included_soft_credits', 8));
+        assert_eq(cap.meter_value, 0);
+
+        // 12 more credits: total 20, 10 of which are overage (past the
+        // 10-credit included amount). The cap must:
+        // - never deny (observe_only), despite 10 >> the 1-unit ceiling
+        // - measure only the 10 units of overage, not the raw call value of 12
+        assert(self.allow('combo_ov_obs', 'included_soft_credits', 12));
+        assert_eq(cap.meter_value, 10);
+    }
+
+
+    #[test]
+    /**
+     * Threshold-crossing events use the ADJUSTED commit value (post
+     * overage_only / ignore_grants), not the raw call value - the
+     * notification reflects what the cap actually measures, not what the
+     * customer literally requested. Combines overage_only + ignore_grants
+     * on the same cap, with a grant partially in play, using the soft-mode
+     * included entitlement so the within-call partial-overage trace stays
+     * simple (no hard-mode all-or-nothing grant gating to route around).
+     */
+    fn test_threshold_event_uses_adjusted_value_not_raw_value() {
+        const customer = self.create_customer('combo_thresh', 'free');
+        self.give_grant('combo_thresh', 'ai_credit', 5); // covers 5 credits of overage
+
+        // $5 ceiling/threshold, overage_only AND ignore_grants together.
+        // Sized so the post-grant-exhaustion charges below cross the
+        // threshold without any single call exceeding the ceiling outright
+        // (this cap still enforces - it's not observe_only - so a call
+        // whose adjusted charge alone exceeds the ceiling is correctly
+        // denied, same as any other cap).
+        const cap = self.add_customer_cap('combo_thresh', 5.00, 'thresh_combo_cap', 'rune', true, true, true);
+        assert_eq(cap.ignore_grants, true);
+        assert_eq(cap.overage_only, true);
+
+        assert_eq(self.threshold_crossings.get('combo_thresh'), null);
+
+        // 10 credits, entirely within the 10-credit included amount - zero
+        // overage, nothing for the grant to cover, no threshold activity.
+        assert(self.allow('combo_thresh', 'included_soft_credits', 10));
+        assert_eq(self.threshold_crossings.get('combo_thresh'), null);
+
+        // 5 more credits: all overage (limit already at 10), fully covered
+        // by the 5-credit grant. Raw call value is 5, but the ADJUSTED
+        // value (overage 5, minus grant_applied 5) is 0 - if the threshold
+        // event used the raw value instead, this would incorrectly cross
+        // the $5 threshold partway (5 credits = $2.00); it must not, since
+        // the customer's actual adjusted spend here is genuinely zero.
+        assert(self.allow('combo_thresh', 'included_soft_credits', 5));
+        assert_eq(cap.meter_value, 0);
+        assert_eq(self.threshold_crossings.get('combo_thresh'), null);
+
+        // 6 more credits: all overage, grant now fully exhausted - genuinely
+        // uncovered. 6 credits = $2.40 adjusted - within the $5 ceiling,
+        // no crossing yet (still based on the real adjusted amount, not
+        // the now-irrelevant raw call value).
+        assert(self.allow('combo_thresh', 'included_soft_credits', 6));
+        assert_eq(cap.meter_value.round(2), 2.40);
+        assert_eq(self.threshold_crossings.get('combo_thresh'), null);
+
+        // 6.5 more credits: also all overage, also fully uncovered (grant
+        // long gone). 6.5 credits = $2.60 more, bringing the cap to exactly
+        // $5.00 - lands exactly AT the ceiling (not over it, so this call
+        // still succeeds) and crosses the $5 threshold on this exact call,
+        // based on the cumulative adjusted (post-grant) amount.
+        assert(self.allow('combo_thresh', 'included_soft_credits', 6.5));
+        assert_eq(cap.meter_value.round(2), 5.00);
+        let bucket: list = self.threshold_crossings.get('combo_thresh');
+        assert(bucket != null);
+        assert_eq(bucket.len(), 1);
+        assert_eq(bucket[0], 'thresh_combo_cap');
     }
 }
