@@ -321,7 +321,7 @@ Customer: {
      * room. A cap with no Exchange path to entitlement_credit is skipped
      * (does not apply to this entitlement) rather than causing a failure.
      */
-    fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false) -> bool {
+    fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false) -> bool {
         const exchange: Exchange = policy.exchange;
     
         const check_one = (cap: Cap): bool => {
@@ -331,7 +331,7 @@ Customer: {
             if (!cap.exchangeable && entitlement_credit != cap.credit) return true;
 
             const val = cap.overage_only ? overage : value;
-            const converted = exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null;
+            const converted = cap.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null);
             if (converted == null) return true; // no exchange path - cap not applicable here
             if (cap.observe_only) return true; // never denies - accumulates only, see check_and_apply_caps
 
@@ -379,7 +379,7 @@ Customer: {
      * caller (Limitr.allow) uses this to fire a threshold-crossing event
      * per cap, exactly once per crossing rather than on every call past it.
      */
-    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float') -> list {
+    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float') -> list {
         const exchange: Exchange = policy.exchange;
         const now = Time.now();
     
@@ -397,7 +397,7 @@ Customer: {
     
             let val = cap.overage_only ? overage : value;
             if (cap.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            const converted = exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null;
+            const converted = cap.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null);
             if (converted == null || (!cap.follow_decrements && converted < 0)) continue; // not applicable to this entitlement/credit pair
     
             const ceiling = (cap.value as float).to_units(stof_units);
@@ -411,7 +411,7 @@ Customer: {
     
             let val = ext.overage_only ? overage : value;
             if (ext.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            const converted = exchange != null ? exchange.exchange(val, entitlement_credit, ext.credit) : null;
+            const converted = ext.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, ext.credit) : null);
             if (converted == null || (!ext.follow_decrements && converted < 0)) continue;
     
             const ceiling = (ext.value as float).to_units(stof_units);

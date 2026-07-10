@@ -39,6 +39,7 @@ Limitr TestCapPolicy: {
             stof_units: 'float'
             price: { amount: 0.10 }   // 1 compute_sec = $0.10
             resets: true
+            overhead_cost: 0.04
         }
     }
 
@@ -62,6 +63,16 @@ Limitr TestCapPolicy: {
                         credit: 'compute_sec'
                         mode: 'hard'
                         value: 100_000
+                        resets: true
+                        reset_inc: 30days
+                    }
+                }
+                compute_soft: {
+                    description: 'Compute usage (soft limit)'
+                    limit: {
+                        credit: 'compute_sec'
+                        mode: 'soft'
+                        value: 10_000
                         resets: true
                         reset_inc: 30days
                     }
@@ -306,7 +317,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_scope() {
         const customer = self.create_customer('scoped', 'free');
-        const cap = self.add_customer_cap('scoped', 1.00, 'scoped_cap', 'rune', true, false, false, false, false, ['ai_credits']);
+        const cap = self.add_customer_cap('scoped', 1.00, 'scoped_cap', 'rune', true, false, false, false, false, false, ['ai_credits']);
         assert(cap != null);
 
         // compute is NOT in scope - unrestricted by this cap regardless of USD value
@@ -389,7 +400,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_resets_with_period() {
         const customer = self.create_customer('capreset', 'free');
-        const cap = self.add_customer_cap('capreset', 5, 'reset_cap', 'ai_credit', false, false, false, false, false, null, true, 30days);
+        const cap = self.add_customer_cap('capreset', 5, 'reset_cap', 'ai_credit', false, false, false, false, false, false, null, true, 30days);
 
         assert(self.allow('capreset', 'ai_credits', 4));
         assert_eq(cap.meter_value, 4);
@@ -421,7 +432,7 @@ Limitr TestCapPolicy: {
     fn test_cap_resets_with_calendar_schedule() {
         const customer = self.create_customer('calreset', 'free');
         // resets=true, reset_inc=null, reset_sch='monthly:1' (1st of each month, UTC)
-        const cap = self.add_customer_cap('calreset', 5, 'cal_cap', 'ai_credit', false, false, false, false, false, null, true, null, 'monthly:1');
+        const cap = self.add_customer_cap('calreset', 5, 'cal_cap', 'ai_credit', false, false, false, false, false, false, null, true, null, 'monthly:1');
         assert(cap != null);
         assert_eq(cap.reset_sch, 'monthly:1');
 
@@ -455,7 +466,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_multi_period_catchup() {
         const customer = self.create_customer('multicatch', 'free');
-        const cap = self.add_customer_cap('multicatch', 5, 'mc_cap', 'ai_credit', false, false, false, false, false, null, true, 30days);
+        const cap = self.add_customer_cap('multicatch', 5, 'mc_cap', 'ai_credit', false, false, false, false, false, false, null, true, 30days);
 
         assert(self.allow('multicatch', 'ai_credits', 4));
         assert_eq(cap.meter_value, 4);
@@ -659,6 +670,37 @@ Limitr TestCapPolicy: {
         // Nonexistent cap id - both return false
         assert_not(self.reset_customer_cap('resetrm', 'no_such_cap'));
         assert_not(self.remove_customer_cap('resetrm', 'no_such_cap'));
+    }
+
+
+    // -- overhead_cost matrix ------------------------------------------------
+    //
+    // These are the cases that motivated overhead_cost: setting a cap on
+    // overhead instead of direct spend. Mainly for internal uses, to cap ops
+    // on vendor cost incurred.
+
+    #[test]
+    /**
+     * Core case: set a cap on overhead spend.
+     */
+    fn test_overhead_cost_cap() {
+        const customer = self.create_customer('cus_overhead', 'free');
+        const cap = self.add_customer_cap('cus_overhead', 1, 'overhead', 'rune', true, false, false, false, true);
+
+        assert(self.allow('cus_overhead', 'compute_soft', 10));
+        assert_eq(cap.meter_value, 0.4);
+
+        assert(self.allow('cus_overhead', 'compute_soft', 10));
+        assert_eq(cap.meter_value, 0.8);
+
+        assert_not(self.allow('cus_overhead', 'compute_soft', 10));
+        assert_eq(cap.meter_value, 0.8);
+
+        cap.value += 0.21;
+        assert(self.allow('cus_overhead', 'compute_soft', 10));
+        assert_eq(cap.meter_value.round(3), 1.2);
+
+        assert_not(self.check('cus_overhead', 'compute_soft', 1));
     }
 
 
@@ -1163,7 +1205,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_with_follow_decrements_reduces_on_decrement() {
         const customer = self.create_customer('follow1', 'free');
-        const cap = self.add_customer_cap('follow1', 10, 'f1_cap', 'ai_credit', false, false, false, false, true);
+        const cap = self.add_customer_cap('follow1', 10, 'f1_cap', 'ai_credit', false, false, false, false, false, true);
         assert_eq(cap.follow_decrements, true);
 
         assert(self.allow('follow1', 'ai_credits', 6));
@@ -1185,7 +1227,7 @@ Limitr TestCapPolicy: {
      */
     fn test_cap_with_follow_decrements_can_go_negative() {
         const customer = self.create_customer('follow2', 'free');
-        const cap = self.add_customer_cap('follow2', 10, 'f2_cap', 'ai_credit', false, false, false, false, true);
+        const cap = self.add_customer_cap('follow2', 10, 'f2_cap', 'ai_credit', false, false, false, false, false, true);
 
         assert(self.allow('follow2', 'ai_credits', 3));
         assert_eq(cap.meter_value, 3);
@@ -1213,7 +1255,7 @@ Limitr TestCapPolicy: {
      */
     fn test_follow_decrements_correction_unblocks_future_calls() {
         const customer = self.create_customer('follow3', 'free');
-        const cap = self.add_customer_cap('follow3', 5, 'f3_cap', 'ai_credit', false, false, false, false, true);
+        const cap = self.add_customer_cap('follow3', 5, 'f3_cap', 'ai_credit', false, false, false, false, false, true);
 
         assert(self.allow('follow3', 'ai_credits', 5)); // at ceiling
         assert_eq(cap.meter_value, 5);

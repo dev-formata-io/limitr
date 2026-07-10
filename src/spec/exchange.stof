@@ -70,14 +70,50 @@ Exchange: {
                     const credit = ?policy.credit(c);
                     if (credit != null) {
                         if (credit.pricing_model == 'flat' && credit.price != null) {
-                            v *= credit.price.amount; // already defined in runes
+                            v *= credit.price.amount;
                             c = 'rune';
                             credit_defined = true;
                         } else if (credit.tiers != null && credit.tiers.any()) {
-                            const first = credit.tiers.front();
-                            v *= first.price.amount; // already defined in runes
+                            let total = 0;
+                            if (credit.pricing_model == 'tiered') {
+                                // Graduated: each tier prices its own slice of v
+                                let remaining = v;
+                                let prev_up_to = 0;
+                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (remaining <= 0) break ^tiers_loop;
+                                    if (tier.up_to != null) {
+                                        const band = tier.up_to - prev_up_to;
+                                        prev_up_to = tier.up_to;
+                                        const slice = remaining >= band ? band : remaining;
+                                        total += slice * tier.price.amount;
+                                        remaining -= slice;
+                                    } else {
+                                        total += remaining * tier.price.amount;
+                                        remaining = 0;
+                                    }
+                                }
+                            } else if (credit.pricing_model == 'volume') {
+                                // Volume: find the tier v falls into, price ALL of v at that rate
+                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && v > tier.up_to) {
+                                        continue ^vol_loop;
+                                    }
+                                    total = v * tier.price.amount;
+                                    break ^vol_loop;
+                                }
+                            } else if (credit.pricing_model == 'stairstep') {
+                                // Stairstep: find the tier v falls into, pay that tier's flat fee
+                                ^step_loop for (const tier: PriceTier in credit.tiers) {
+                                    if (tier.up_to != null && v > tier.up_to) {
+                                        continue ^step_loop;
+                                    }
+                                    total = tier.price.amount;
+                                    break ^step_loop;
+                                }
+                            }
+                            v = total;
                             c = 'rune';
-                            credit_defined = v != null;
+                            credit_defined = true;
                         }
                     }
                 }
