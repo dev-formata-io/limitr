@@ -34,6 +34,15 @@ Limit: {
     /// "observe" - Never deny, only record (unlimited value).
     str! mode: 'hard';
 
+    #[schema((target: obj, target_val: bool): bool => {
+        target_val && target.mode != 'hard' ? <LimitrValidation>.error(`Limit hard_trailing can only be true when mode is 'hard'`) : true
+    })]
+    /// When mode is 'hard': deny based on the current meter value instead of
+    /// the projected post-operation value. Lets a single call cross the limit
+    /// if the meter was already under it beforehand, then hard-blocks every
+    /// call after that until the meter resets below the limit again.
+    bool! hard_trailing: false;
+
     /// Should grants be allowed to apply to this limit?
     /// Default true. Set to false on enforcement/governor entitlements where
     /// grants should never extend a rate ceiling, or on soft entitlements
@@ -119,10 +128,10 @@ Limit: {
     /**
      * Check this limit against a value.
      */
-    fn check(value: float = 0) -> bool {
-        if (value > (self.value as float) && self.mode != 'observe') {
-            return false; // delay the "soft" mode check for events in limitr.stof
-        }
+    fn check(new_value: float = 0, meter_value: float = 0) -> bool {
+        if (self.mode == 'observe' || new_value <= meter_value) return true; // decrements/no-ops never trip
+        if (self.hard_trailing && self.mode == 'hard') return meter_value < (self.value as float);
+        if (new_value > (self.value as float)) return false;
         true
     }
 }
@@ -147,14 +156,4 @@ Entitlement: {
 
     /// Hidden entitlement?
     bool hidden: false;
-
-
-    /**
-     * Check this entitlement.
-     */
-    fn check(value: float = 0, override?: Limit) -> bool {
-        let limit = override ?? self.limit;
-        if (limit != null) return limit.check(value);
-        true
-    }
 }

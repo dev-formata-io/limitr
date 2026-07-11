@@ -1275,7 +1275,7 @@ Limitr: {
             }
 
             // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
-            const meter_value = existing_meter ? existing_meter.value : 0;
+            const meter_value: float = existing_meter ? existing_meter.value : 0;
             let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
 
             // Cap gate: resolve any call-scoped ephemeral caps and check ALL
@@ -1343,7 +1343,7 @@ Limitr: {
             }
 
             // check to see if the new value is valid (bounded by limit)
-            let valid = ent.check(new_value, limit);
+            let valid = limit != null ? limit.check(new_value, meter_value) : true;
             
             if (limit != null && (valid || limit.mode == 'soft')) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
@@ -1586,7 +1586,7 @@ Limitr: {
 
             // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
             const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
-            const meter_value = existing_meter ? existing_meter.value : 0;
+            const meter_value: float = existing_meter ? existing_meter.value : 0;
             let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
 
             // Cap gate: resolve any call-scoped ephemeral caps and check ALL
@@ -1613,7 +1613,7 @@ Limitr: {
             }
 
             // check to see if the new value is valid (bounded by limit)
-            let valid = ent.check(new_value, limit);
+            let valid = limit != null ? limit.check(new_value, meter_value) : true;
             if (valid || (limit != null && limit.mode != 'hard')) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                 return true;

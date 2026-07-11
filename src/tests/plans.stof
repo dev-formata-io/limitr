@@ -40,6 +40,7 @@ Limitr TestPlansPolicy: {
                 seats: {
                     limit: {
                         credit: 'seat'
+                        hard_trailing: true
                         value: 5
                     }
                 }
@@ -59,6 +60,7 @@ Limitr TestPlansPolicy: {
                 seats: {
                     limit: {
                         credit: 'seat'
+                        hard_trailing: true
                         value: 2
                     }
                 }
@@ -138,5 +140,21 @@ Limitr TestPlansPolicy: {
         sleep(50ms);
         self.ensure_plan_subscription(self.base_user);
         assert_eq(self.value(self.base_user, sub_name), 1); // trial is up
+    }
+
+    
+    #[test]
+    fn hard_trailing_limits() {
+        const id = 'test_base_user';
+
+        self.create_customer(id, 'base', 'user', 'Base User');
+        assert(self.allow(id, 'seats', 5));
+        assert_not(self.increment(id, 'seats'));
+
+        assert(self.allow(id, 'seats', -1));
+        assert(self.allow(id, 'seats', 3));
+        assert_not(self.increment(id, 'seats'));
+        
+        assert_eq(self.remaining(id, 'seats'), -2);
     }
 }
