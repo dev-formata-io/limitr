@@ -428,12 +428,12 @@ Limitr: {
         }
 
         /// Change the value of a metered entitlement by a standard increment.
-        fn increment(id: str!, entitlement: str!, event: bool = true, cap: Cap | map = null) -> bool {
+        fn increment(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
             ?self.get().increment(id, entitlement, event, cap)
         }
 
         /// Change the value of a metered entitlement by removing a standard increment.
-        fn decrement(id: str!, entitlement: str!, event: bool = true, cap: Cap | map = null) -> bool {
+        fn decrement(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
             ?self.get().decrement(id, entitlement, event, cap)
         }
 
@@ -442,7 +442,7 @@ Limitr: {
         /// Changes a meter for this customer if true.
         /// `cap` is an optional call-scoped spend ceiling - a Cap object or a
         /// bare map of credit -> ceiling, e.g. map(('ai_credits', 2), ('usd', 5)).
-        fn allow(id: str!, entitlement: str!, value: float = 0, event: bool = true, cap: Cap | map = null) -> bool {
+        fn allow(id: str!, entitlement: str!, value: float = 0, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
             ?self.get().allow(id, entitlement, value, event, cap)
         }
 
@@ -561,8 +561,9 @@ Limitr: {
         /// Add a standing spend cap to a customer. See Limitr.add_customer_cap for
         /// the full explanation of credit/exchangeable/ignore_grants defaults.
         fn add_customer_cap(id: str!, value: float | str!, cap_id: str = '', credit: str! = 'rune',
-            exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
-            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, overhead_cost, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on)
+            exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms,
+            events: bool = true) -> Cap {
+            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, overhead_cost, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on, events)
         }
 
         /// Look up a customer's standing spend cap by id.
@@ -571,13 +572,13 @@ Limitr: {
         }
 
         /// Reset a customer's spend cap consumption to zero without removing it.
-        fn reset_customer_cap(id: str!, cap_id: str!) -> bool {
-            ?self.get().reset_customer_cap(id, cap_id)
+        fn reset_customer_cap(id: str!, cap_id: str!, events: bool = true) -> bool {
+            ?self.get().reset_customer_cap(id, cap_id, events)
         }
 
         /// Remove a standing spend cap from a customer entirely.
-        fn remove_customer_cap(id: str!, cap_id: str!) -> bool {
-            ?self.get().remove_customer_cap(id, cap_id)
+        fn remove_customer_cap(id: str!, cap_id: str!, events: bool = true) -> bool {
+            ?self.get().remove_customer_cap(id, cap_id, events)
         }
 
         /// Apply a plan topup to a customer.
@@ -1192,7 +1193,7 @@ Limitr: {
     /**
      * Change the value of a metered entitlement by a standard increment (defined in the Limit).
      */
-    fn increment(id: str!, entitlement: str!, event: bool = true, cap: Cap | map = null) -> bool {
+    fn increment(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
         const cost = self.cost(id, entitlement);
         cost != null ? self.allow(id, entitlement, cost, event, cap) : false
     }
@@ -1201,7 +1202,7 @@ Limitr: {
     /**
      * Change the value of a metered entitlement by removing a standard increment (defined in the limit).
      */
-    fn decrement(id: str!, entitlement: str!, event: bool = true, cap: Cap | map = null) -> bool {
+    fn decrement(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
         const cost = self.cost(id, entitlement);
         cost != null ? self.allow(id, entitlement, cost * -1, event, cap) : false
     }
@@ -1218,8 +1219,21 @@ Limitr: {
      * and call-scoped) must have room for this call to be allowed; caps only
      * restrict, they never grant extra room beyond the plan Limit.
      */
-    fn allow(id: str!, entitlement: str!, value: float | str = 0, event: bool = true, cap: Cap | map = null) -> bool {
+    fn allow(id: str!, entitlement: str!, value: float | str = 0, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
         if ((typeof value) == 'str') value = value as float; // takes units into consideration too
+
+        let event_data = null;
+        let drop_e_dta = false;
+        if ((typeof event) == 'str') {
+            event_data = new {};
+            try { parse(event, event_data, 'stof'); }
+            catch { drop(event_data); event_data = null; }
+            event = event.len() > 0;
+            drop_e_dta = true;
+        } else if ((typeof event) == 'obj') {
+            event_data = event;
+            event = true;
+        }
 
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
@@ -1287,6 +1301,7 @@ Limitr: {
             let cap_overage = 0.0;
             if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true)) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                if (drop_e_dta) drop(event_data);
                 return false;
             }
             if (limit != null && limit.grants_apply) {
@@ -1296,6 +1311,7 @@ Limitr: {
                     const diff_overage = max(0, overage - remaining);
                     if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
                         for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                        if (drop_e_dta) drop(event_data);
                         return false;
                     }
                 }
@@ -1323,6 +1339,7 @@ Limitr: {
                             entitlement,
                             plan,
                             credit,
+                            event_data,
                             governor: new {
                                 tokens: existing_meter.governor_tokens,
                                 capacity: limit.governor_capacity as float,
@@ -1335,6 +1352,7 @@ Limitr: {
                         drop(event_value);
                     }
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                    if (drop_e_dta) drop(event_data);
                     return false;
                 }
 
@@ -1367,6 +1385,7 @@ Limitr: {
                         plan,
                         credit,
                         remaining: limit_value - new_value,
+                        event_data,
                     };
                     let sent_overage = false;
                     if (!valid) {
@@ -1382,6 +1401,7 @@ Limitr: {
                                 existing_meter.value = existing_meter_reset ? 0 : old_value;
                                 drop(event_value);
                                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                                if (drop_e_dta) drop(event_data);
                                 return false;
                             }
 
@@ -1429,6 +1449,7 @@ Limitr: {
                     credit,
                     invalid_value: new_value,
                     overage,
+                    event_data,
                 };
                 
                 if (overage > 0 && limit.grants_apply) {
@@ -1455,6 +1476,7 @@ Limitr: {
                                 remaining: limit_value - new_value,
                                 grant_value_applied,
                                 overage,
+                                event_data,
                             };
 
                             if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
@@ -1513,9 +1535,10 @@ Limitr: {
                 }
             }
             for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
-
+            if (drop_e_dta) drop(event_data);
             return valid;
         }
+        if (drop_e_dta) drop(event_data);
         false
     }
 
@@ -2063,7 +2086,8 @@ Limitr: {
      * given doesn't resolve to a known credit/'rune'.
      */
     fn add_customer_cap(customer_id: str!, value: float | str!, id: str = '', credit: str! = 'rune',
-        exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms) -> Cap {
+        exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms,
+        events: bool = true) -> Cap {
         const customer = self.customer(customer_id);
         if (customer == null) return null;
         if (credit != 'rune' && self.credit(credit) == null) return null; // unknown credit, can't cap it
@@ -2097,7 +2121,10 @@ Limitr: {
         } on customer.caps;
         customer.caps.insert(id, cap);
 
-        await <Event>.send_tmp('customer-cap-added', new { customer, cap });
+        if (events) {
+            await <Event>.send_tmp('customer-cap-added', new { customer, cap });
+            await <Event>.send('customer-set', customer);
+        }
         cap
     }
 
@@ -2125,7 +2152,7 @@ Limitr: {
      *
      * Returns false if no cap with this id exists on this customer.
      */
-    fn reset_customer_cap(customer_id: str!, id: str!) -> bool {
+    fn reset_customer_cap(customer_id: str!, id: str!, events: bool = true) -> bool {
         const customer = self.customer(customer_id);
         if (customer == null) return false;
 
@@ -2136,7 +2163,10 @@ Limitr: {
         cap.started = Time.now();
         cap.last_reset = cap.reset_sch != null ? Time.now() : null;
 
-        await <Event>.send_tmp('customer-cap-reset', new { customer, cap });
+        if (events) {
+            await <Event>.send_tmp('customer-cap-reset', new { customer, cap });
+            await <Event>.send('customer-set', customer);
+        }
         true
     }
 
@@ -2152,12 +2182,15 @@ Limitr: {
      *
      * Returns false if no cap with this id exists on this customer.
      */
-    fn remove_customer_cap(customer_id: str!, id: str!) -> bool {
+    fn remove_customer_cap(customer_id: str!, id: str!, events: bool = true) -> bool {
         const customer = self.customer(customer_id);
         if (customer == null) return false;
 
         const removed = customer.caps.remove(id, shallow = false);
-        if (removed) await <Event>.send_tmp('customer-cap-removed', new { customer, id });
+        if (removed && events) {
+            await <Event>.send_tmp('customer-cap-removed', new { customer, id });
+            await <Event>.send('customer-set', customer);
+        }
         removed
     }
 

@@ -78,7 +78,7 @@ AppEvents: {
      * Called when a plan is being removed via Limitr.delete_plan.
      */
     fn app_plan_removed(value: Plan) {
-        if (lib('App')) ?App.plan_removed(stringify('json', value));
+        if (lib('App', 'plan_removed')) ?App.plan_removed(stringify('json', value));
     }
 
 
@@ -87,7 +87,7 @@ AppEvents: {
      * Called when a plan has just been set via Limitr.set_plan.
      */
     fn app_set_plan(value: Plan) {
-        if (lib('App')) ?App.plan_set(stringify('json', value));
+        if (lib('App', 'plan_set')) ?App.plan_set(stringify('json', value));
     }
 
 
@@ -102,7 +102,7 @@ AppEvents: {
      * Value includes meter (old & new values), customer, entitlement key, plan, and credit.
      */
     fn app_meter_changed(value: obj) {
-        if (lib('App')) ?App.meter_changed(stringify('json', value));
+        if (lib('App', 'meter_changed')) ?App.meter_changed(stringify('json', value));
     }
 
 
@@ -113,7 +113,7 @@ AppEvents: {
      * Equal to #[meter-changed], but only fires when the new value is over the defined limit.
      */
     fn app_meter_overage(value: obj) {
-        if (lib('App')) ?App.meter_overage(stringify('json', value));
+        if (lib('App', 'meter_overage')) ?App.meter_overage(stringify('json', value));
     }
 
 
@@ -123,7 +123,7 @@ AppEvents: {
      * Called whenever a "meter" event fails because of a Limit set on an entitlement.
      */
     fn app_meter_limit(value: obj) {
-        if (lib('App')) ?App.meter_limit(stringify('json', value));
+        if (lib('App', 'meter_limit')) ?App.meter_limit(stringify('json', value));
     }
 
 
@@ -134,7 +134,7 @@ AppEvents: {
      * Value includes meter state, customer, entitlement, plan, credit, and governor details.
      */
     fn app_meter_governed(value: obj) {
-        if (lib('App')) ?App.meter_governed(stringify('json', value));
+        if (lib('App', 'meter_governed')) ?App.meter_governed(stringify('json', value));
     }
 
 
@@ -147,7 +147,7 @@ AppEvents: {
      * Customer has been set/modified.
      */
     fn app_customer_set(customer: Customer) {
-        if (lib('App')) ?App.customer_set(stringify('json', customer));
+        if (lib('App', 'customer_set')) ?App.customer_set(stringify('json', customer));
     }
 
 
@@ -157,6 +157,6 @@ AppEvents: {
      * Called when <Limitr>.delete_customer is called.
      */
     fn app_customer_removing(customer: Customer) {
-        if (lib('App')) ?App.customer_removing(stringify('json', customer));
+        if (lib('App', 'customer_removing')) ?App.customer_removing(stringify('json', customer));
     }
 }

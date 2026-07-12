@@ -142,19 +142,33 @@ Limitr TestPlansPolicy: {
         assert_eq(self.value(self.base_user, sub_name), 1); // trial is up
     }
 
+
+    #[meter-changed]
+    fn meter_changing_events(context: obj) {
+        if (context.event_data.context == 'trailing_limits') ?context.event_data.op();
+    }
+
     
     #[test]
     fn hard_trailing_limits() {
         const id = 'test_base_user';
 
+        const ctx = new {
+            context: 'trailing_limits'
+            count: 0
+            op: () => { self.count += 1; }
+        };
+
         self.create_customer(id, 'base', 'user', 'Base User');
-        assert(self.allow(id, 'seats', 5));
+        assert(self.allow(id, 'seats', 5, ctx));
         assert_not(self.increment(id, 'seats'));
 
-        assert(self.allow(id, 'seats', -1));
-        assert(self.allow(id, 'seats', 3));
+        assert(self.allow(id, 'seats', -1, ctx));
+        assert(self.allow(id, 'seats', 3, ctx));
         assert_not(self.increment(id, 'seats'));
-        
         assert_eq(self.remaining(id, 'seats'), -2);
+
+        assert_eq(ctx.count, 3);
+        drop(ctx);
     }
 }
