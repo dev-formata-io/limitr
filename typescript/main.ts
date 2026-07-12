@@ -264,7 +264,7 @@ export class Limitr {
      * Credit exchange.
      * Convert some of one credit to another (if possible).
      */
-    async creditExchange(inCredit: string, outCredit: string, value: number = 1): Promise<number | null> {
+    async creditExchange(inCredit: string, outCredit: string = 'rune', value: number = 1): Promise<number | null> {
         return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.credit_exchange', inCredit, outCredit, value)) as number | null;
     }
 
@@ -603,6 +603,67 @@ export class Limitr {
      */
     async removeCustomerCap(id: string, cap_id: string, event: boolean = true): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_cap', id, cap_id, event)) as boolean;
+    }
+
+
+    /*****************************************************************************
+     * Margin measurement helpers (temporary, observe-only spend caps).
+     *****************************************************************************/
+    
+    /**
+     * Start margin measurement.
+     * Adds 2 observe-only spend caps (charged & overhead costs).
+     *
+     * Note: for the 'charged' measurement, overage_only and ignore_grants default to true.
+     * This is to reflect what the customer actually pays for (typically), as defined limits
+     * are typically included in plans, and grants are, too, or have already been paid for.
+     * 
+     * Overhead exists regardless of overage, etc. so this is not true for the 'costs' measurement.
+     */
+    async startMarginMeasurement(customerId: string, capId: string, overage_only: boolean = true, ignore_grants: boolean = true) {
+        await this.addCustomerCap(customerId, 0, {
+            cap_id: capId,
+            observe_only: true,
+            overage_only,
+            ignore_grants,
+            send_events: false,
+        });
+        await this.addCustomerCap(customerId, 0, {
+            cap_id: capId + '_costs',
+            overhead_cost: true,
+            observe_only: true,
+            send_events: false,
+        });
+    }
+
+
+    /**
+     * Capture margin measurement.
+     */
+    async captureMarginMeasurement(customerId: string, capId: string, stop: boolean = true): Promise<Record<string, unknown> | null> {
+        const charged = await this.customerCap(customerId, capId);
+        const costs = await this.customerCap(customerId, capId + '_costs');
+        let res: Record<string, unknown> | null = null;
+
+        if (charged && costs) {
+            const chargedUsd = charged.meter_value;
+            const costsUsd = costs.meter_value;
+            const margin = chargedUsd > 0 ? (chargedUsd - costsUsd)/chargedUsd : 0;
+            res = {
+                charged: Math.round(chargedUsd * 100) / 100,
+                costs: Math.round(costsUsd * 100) / 100,
+                rawMargin: margin,
+                margin: Math.round(margin * 10000) / 100,
+                chargedCap: charged,
+                costsCap: costs,
+            };
+        }
+
+        if (stop) {
+            await this.removeCustomerCap(customerId, capId, false);
+            await this.removeCustomerCap(customerId, capId + '_costs');
+        }
+        return res;
     }
 
 
