@@ -619,10 +619,17 @@ export class Limitr {
      * are typically included in plans, and grants are, too, or have already been paid for.
      * 
      * Overhead exists regardless of overage, etc. so this is not true for the 'costs' measurement.
+     *
+     * The internal base currency `rune` is by default set to equal $1 USD. If supporting multiple
+     * currencies, use the exchange table and pass your desired currency in as `credit`.
      */
-    async startMarginMeasurement(customerId: string, capId: string, overage_only: boolean = true, ignore_grants: boolean = true) {
+    async startMarginMeasurement(customerId: string, capId: string,
+        overage_only: boolean = true, ignore_grants: boolean = true,
+        credit: string = 'rune', exchangeable: boolean = true) {
         await this.addCustomerCap(customerId, 0, {
             cap_id: capId,
+            credit,
+            exchangeable,
             observe_only: true,
             overage_only,
             ignore_grants,
@@ -630,6 +637,8 @@ export class Limitr {
         });
         await this.addCustomerCap(customerId, 0, {
             cap_id: capId + '_costs',
+            credit,
+            exchangeable,
             overhead_cost: true,
             observe_only: true,
             send_events: false,
