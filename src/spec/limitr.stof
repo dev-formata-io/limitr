@@ -626,7 +626,7 @@ Limitr: {
         for (const pair in self.exchange.fields()) {
             const key = pair[0];
             const val = pair[1];
-            if ((typeof val) == 'obj' && key != 'rune') {
+            if ((typeof val) == 'obj' && key != 'rune' && !val.exchange_only) {
                 val as ExchangePair;
                 if (!<ExchangePair>.schemafy(val)) return false;
                 if (self.credit(key) == null) return <LimitrValidation>.error(`A credit named "${key}" does not exist in this policy for use in credit exchange`);
@@ -2090,7 +2090,7 @@ Limitr: {
         events: bool = true) -> Cap {
         const customer = self.customer(customer_id);
         if (customer == null) return null;
-        if (credit != 'rune' && self.credit(credit) == null) return null; // unknown credit, can't cap it
+        if (credit != 'rune' && self.credit(credit) == null && ?self.exchange.get_pair(credit) == null) return null; // unknown credit, can't cap it
 
         id = id.len() > 0 ? id : nanoid();
         if (customer.caps.get(id) != null) return null; // id collision - caller should reset/remove first
@@ -2098,7 +2098,9 @@ Limitr: {
         // Infer exchangeable when not explicitly given:
         // - 'rune' (the umbrella/default case) -> true, or the cap would never match anything
         // - a specific named credit -> false, since naming one credit usually means "just this one"
-        if (exchangeable == null) exchangeable = credit == 'rune';
+        if (exchangeable == null) {
+            exchangeable = credit == 'rune' || self.credit(credit) == null;
+        }
         if (reset_inc != null && reset_sch != null) return null; // mutually exclusive, mirrors Limit/Grant validation
 
         const cap = new Cap {

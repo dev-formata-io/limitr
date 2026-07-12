@@ -331,7 +331,11 @@ Customer: {
             if (!cap.exchangeable && entitlement_credit != cap.credit) return true;
 
             const val = cap.overage_only ? overage : value;
-            const converted = cap.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null);
+            let converted = null;
+            if (exchange != null) {
+                if (cap.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', cap.credit);
+                else converted = exchange.exchange(val, entitlement_credit, cap.credit);
+            }
             if (converted == null) return true; // no exchange path - cap not applicable here
             if (cap.observe_only) return true; // never denies - accumulates only, see check_and_apply_caps
 
@@ -397,7 +401,11 @@ Customer: {
     
             let val = cap.overage_only ? overage : value;
             if (cap.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            const converted = cap.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, cap.credit) : null);
+            let converted = null;
+            if (exchange != null) {
+                if (cap.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', cap.credit);
+                else converted = exchange.exchange(val, entitlement_credit, cap.credit);
+            }
             if (converted == null || (!cap.follow_decrements && converted < 0)) continue; // not applicable to this entitlement/credit pair
     
             const ceiling = (cap.value as float).to_units(stof_units);
@@ -411,7 +419,11 @@ Customer: {
     
             let val = ext.overage_only ? overage : value;
             if (ext.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            const converted = ext.overhead_cost ? val * credit_overhead : (exchange != null ? exchange.exchange(val, entitlement_credit, ext.credit) : null);
+            let converted = null;
+            if (exchange != null) {
+                if (ext.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', ext.credit);
+                else converted = exchange.exchange(val, entitlement_credit, ext.credit);
+            }
             if (converted == null || (!ext.follow_decrements && converted < 0)) continue;
     
             const ceiling = (ext.value as float).to_units(stof_units);

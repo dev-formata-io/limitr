@@ -24,6 +24,9 @@ ExchangePair: {
     #[schema((target_val: str): bool => target_val.len() > 0 ? true : <LimitrValidation>.error('Credit exchange mapping must contain a valid currency'))]
     /// Currency of this exchange pair.
     str! currency: 'usd'
+
+    /// Exchange only (not required to also be a defined credit)?
+    bool exchange_only: false
 }
 
 
@@ -48,6 +51,15 @@ Exchange: {
 
 
     /**
+     * Lookup exchange pair.
+     * Pulled out of to_runes in case you'd like to replace with real-time rates.
+     */
+    fn get_pair(c: str!) -> ExchangePair {
+        self.get(c)
+    }
+
+
+    /**
      * To runes.
      */
     fn to_runes(v: float!, c: str!) -> float {
@@ -62,7 +74,7 @@ Exchange: {
             if (visited.contains(c)) return null; // cycle detected
             visited.insert(c);
 
-            const def: ExchangePair = self.get(c);
+            const def: ExchangePair = self.get_pair(c);
             let credit_defined = false;
             if (def == null) {
                 if (policy != null) {
