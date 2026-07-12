@@ -566,8 +566,9 @@ export class Limitr {
             '<Limitr>.api.add_customer_cap',
             id, value, options.cap_id ?? '', options.credit ?? 'rune',
             options.exchangeable ?? null, options.ignore_grants ?? false, options.overage_only ?? false,
-            options.observe_only ?? false, options.follow_decrements ?? false, options.scope ?? null,
+            options.observe_only ?? false, options.overhead_cost ?? false, options.follow_decrements ?? false, options.scope ?? null,
             options.resets ?? false, options.reset_inc ?? null, options.reset_sch ?? null, options.expires_on ?? null,
+            options.send_events ?? true
         ));
         if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return null;
@@ -590,8 +591,8 @@ export class Limitr {
      * or changing its ceiling/credit/scope/schedule. Also restarts its reset-period clock.
      * Returns false if no cap with this id exists on the customer.
      */
-    async resetCustomerCap(id: string, cap_id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.reset_customer_cap', id, cap_id)) as boolean;
+    async resetCustomerCap(id: string, cap_id: string, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.reset_customer_cap', id, cap_id, event)) as boolean;
     }
 
 
@@ -600,8 +601,8 @@ export class Limitr {
      * any future calls. Distinct from resetCustomerCap, which keeps the cap active.
      * Returns false if no cap with this id exists on the customer.
      */
-    async removeCustomerCap(id: string, cap_id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_cap', id, cap_id)) as boolean;
+    async removeCustomerCap(id: string, cap_id: string, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_cap', id, cap_id, event)) as boolean;
     }
 
 
@@ -822,9 +823,13 @@ export class Limitr {
      * Returns true if changed and the limit was not hit, otherwise false and App.meter_limit lib func will be called (if present).
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async increment(customer: string, entitlement: string, event: boolean = true): Promise<boolean> {
+    async increment(customer: string, entitlement: string, event: boolean | string | Record<string, unknown> = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement, event)) as boolean;
+        let ev: string | boolean = true;
+        if (typeof event === 'string') ev = event;
+        else if (typeof event === 'boolean') ev = event;
+        else ev = JSON.stringify(event);
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement, ev)) as boolean;
     }
 
 
@@ -833,9 +838,13 @@ export class Limitr {
      * This is the same as using "meter" with the negative "cost" of a standard increment for this entitlement.
      * Can use a string value for units in entitlement.limit.increment (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async decrement(customer: string, entitlement: string, event: boolean = true): Promise<boolean> {
+    async decrement(customer: string, entitlement: string, event: boolean | string | Record<string, unknown> = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement, event)) as boolean;
+        let ev: string | boolean = true;
+        if (typeof event === 'string') ev = event;
+        else if (typeof event === 'boolean') ev = event;
+        else ev = JSON.stringify(event);
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement, ev)) as boolean;
     }
 
 
@@ -845,9 +854,13 @@ export class Limitr {
      * Changes a meter for this customer if true.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      */
-    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean = true): Promise<boolean> {
+    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean | string | Record<string, unknown> = true): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, event)) as boolean;
+        let ev: string | boolean = true;
+        if (typeof event === 'string') ev = event;
+        else if (typeof event === 'boolean') ev = event;
+        else ev = JSON.stringify(event);
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, ev)) as boolean;
     }
 
 

@@ -47,6 +47,7 @@ export interface LimitrCap {
     ignore_grants: boolean;
     overage_only: boolean;
     observe_only: boolean;
+    overhead_cost: boolean;
     follow_decrements: boolean;
     scope: string[] | null;
     meter_value: number;
@@ -83,6 +84,8 @@ export interface LimitrCapOptions {
     overage_only?: boolean;
     /** When true, this cap never denies a call - it still accumulates meter_value, purely as a spend tracker. `value` still serves as a notification threshold either way. */
     observe_only?: boolean;
+    /** When true, meter_value will be incremented according to the credit's overhead cost. */
+    overhead_cost?: boolean;
     /** When true, a decrement (negative allow value) reduces this cap's meter_value too, rather than being ignored. Useful for end-of-month billing corrections. */
     follow_decrements?: boolean;
     /** Restrict this cap to specific entitlement names. Omit (or leave undefined) to apply wherever Exchange-convertible. */
@@ -95,4 +98,10 @@ export interface LimitrCapOptions {
     reset_sch?: string;
     /** Timestamp (ms) after which this cap expires and is removed. */
     expires_on?: number;
+
+    /**
+     * If true (default), set-customer & customer-cap-added events will fire when creating the spend Cap.
+     * Set to false for temporary spend caps (per pipeline, etc.).
+     */
+    send_events?: boolean;
 }
