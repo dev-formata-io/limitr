@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.6.19",
+    "version": "0.6.20",
     "type": "module",
     "main": "./dist/main.js",
     "types": "./dist/main.d.ts",
@@ -35,6 +35,19 @@
         "typescript": "^5.3.3"
     },
     "keywords": [
-        "limitr"
+        "limitr",
+        "pricing",
+        "usage-based-pricing",
+        "metering",
+        "billing",
+        "rate-limiting",
+        "entitlements",
+        "feature-flags",
+        "wasm",
+        "webassembly",
+        "cost-tracking",
+        "margin",
+        "ai-cost-management",
+        "stof"
     ]
 }
