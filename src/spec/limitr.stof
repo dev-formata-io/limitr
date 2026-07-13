@@ -626,11 +626,9 @@ Limitr: {
         for (const pair in self.exchange.fields()) {
             const key = pair[0];
             const val = pair[1];
-            if ((typeof val) == 'obj' && key != 'rune' && !val.exchange_only) {
+            if ((typeof val) == 'obj' && key != 'rune') {
                 val as ExchangePair;
                 if (!<ExchangePair>.schemafy(val)) return false;
-                if (self.credit(key) == null) return <LimitrValidation>.error(`A credit named "${key}" does not exist in this policy for use in credit exchange`);
-                if (val.currency != 'rune' && self.credit(val.currency) == null) return <LimitrValidation>.error(`A credit named "${val.currency}" does not exist in this policy for use in credit exchange`);
                 if (self.exchange.to_runes(1, val.currency) == null) return <LimitrValidation>.error(`Credit "${key}" exchange "${val.currency}" currency does not map to Limitr runes (broken conversions)`);
             }
         }

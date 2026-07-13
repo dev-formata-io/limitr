@@ -43,6 +43,11 @@ Limitr TestCapPolicy: {
         }
     }
 
+    exchange: {
+        // 1 Euro = 1.14 USD
+        euro: { value: 1.14, currency: 'usd' }
+    }
+
     plans: {
         free: {
             label: 'Free'
@@ -685,7 +690,8 @@ Limitr TestCapPolicy: {
      */
     fn test_overhead_cost_cap() {
         const customer = self.create_customer('cus_overhead', 'free');
-        const cap = self.add_customer_cap('cus_overhead', 1, 'overhead', 'rune', true, false, false, false, true);
+        const cap = self.add_customer_cap('cus_overhead', 1, 'overhead', 'usd', true, false, false, false, true);
+        const euro_cap = self.add_customer_cap('cus_overhead', 5, 'overhead_euro', 'euro', true, false, false, false, true);
 
         assert(self.allow('cus_overhead', 'compute_soft', 10));
         assert_eq(cap.meter_value, 0.4);
@@ -701,6 +707,7 @@ Limitr TestCapPolicy: {
         assert_eq(cap.meter_value.round(3), 1.2);
 
         assert_not(self.check('cus_overhead', 'compute_soft', 1));
+        assert_eq(cap.meter_value / 1.14, euro_cap.meter_value);
     }
 
 

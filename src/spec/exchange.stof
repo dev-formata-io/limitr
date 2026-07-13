@@ -24,9 +24,6 @@ ExchangePair: {
     #[schema((target_val: str): bool => target_val.len() > 0 ? true : <LimitrValidation>.error('Credit exchange mapping must contain a valid currency'))]
     /// Currency of this exchange pair.
     str! currency: 'usd'
-
-    /// Exchange only (not required to also be a defined credit)?
-    bool exchange_only: false
 }
 
 
@@ -46,8 +43,11 @@ Exchange: {
     /// 'valuable_first' - Choose the highest rune value per unit
     str! grant_strategy: 'expires_first';
 
-    /// Limitr Rune ("rune") currency mapping.
+    /// Limitr Rune for an abstract, common exchange unit.
+    /// Defined as $1 USD by default, don't change unless needed.
+    /// Add currencies: Ex. euro: { value: 1.14, currency: 'usd' }
     ExchangePair! rune: {};
+    ExchangePair! usd: { value: 1, currency: 'rune' };
 
 
     /**
