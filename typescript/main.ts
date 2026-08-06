@@ -265,7 +265,7 @@ export class Limitr {
      * Convert some of one credit to another (if possible).
      */
     async creditExchange(inCredit: string, outCredit: string = 'rune', value: number = 1): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.credit_exchange', inCredit, outCredit, value)) as number | null;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.credit_exchange', inCredit, outCredit, value)) as number | null;
     }
 
 
