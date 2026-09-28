@@ -341,7 +341,7 @@ Limitr: {
 
         /// Plan trial period in ms (optional).
         fn plan_trial_period(id: str!) -> ms {
-            ?self.get().plan_trial_period()
+            ?self.get().plan_trial_period(id)
         }
 
         /// Plan subscription entitlement name.
@@ -509,7 +509,7 @@ Limitr: {
         }
 
         /// Change a customer's plan ID.
-        fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = true) -> bool {
+        fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
             ?self.get().set_customer_plan(id, plan, overwrite_meters)
         }
 
@@ -734,9 +734,10 @@ Limitr: {
 
 
     /**
-     * Plan trial period (optional).
+     * Plan trial period in ms (optional).
+     * Accepts a plan ID or customer ID. Unitless trial_period values are treated as ms.
      */
-    fn plan_trial_period(id: str!) -> float {
+    fn plan_trial_period(id: str!) -> ms {
         const plan = self.plan(id);
         plan != null && plan.trial_period != null ? (plan.trial_period as float) : null
     }
@@ -1779,7 +1780,7 @@ Limitr: {
 
             await <Event>.send('customer-set', sub);
             await <Event>.send_tmp('customer-plan-changed', new {
-                previous_plan: prev.id ?? 'default',
+                previous_plan: prev != null ? prev.name : null,
                 new_plan: plan,
                 customer: sub,
             });

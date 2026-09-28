@@ -1,0 +1,327 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Customer & plan lifecycle regression tests.
+//
+// Covers: topup grants adapting to plan changes (removed topups, scope changes),
+// plan trial periods through the static api, plan-change events, and
+// customer deletion cleanup.
+//
+Limitr TestLifecyclePolicy: {
+    credits: {
+        ai_credit: {
+            description: 'AI credit'
+            price: { amount: 0.01 }
+        }
+        seat: {
+            description: 'Seat'
+            price: { amount: 20 }
+        }
+    }
+
+    plans: {
+        team: {
+            label: 'Team'
+            trial_period: 14days
+            entitlements: {
+                subscription: {
+                    limit: { credit: 'seat', mode: 'soft' }
+                }
+                ai: {
+                    limit: {
+                        credit: 'ai_credit'
+                        mode: 'soft'
+                        value: 0 // every unit is overage, so grants engage immediately
+                    }
+                }
+            }
+            topups: {
+                // included for every customer type
+                monthly_credits: {
+                    credit: 'ai_credit'
+                    value: 100
+                    included: true
+                }
+                // included only for orgs
+                org_bonus: {
+                    credit: 'ai_credit'
+                    value: 50
+                    included: true
+                    included_scopes: ['org']
+                }
+                // purchasable (not included)
+                extra_pack: {
+                    credit: 'ai_credit'
+                    value: 500
+                }
+                // purchasable packs that individual tests retire from the plan
+                retired_pack_a: { credit: 'ai_credit', value: 500 }
+                retired_pack_b: { credit: 'ai_credit', value: 500 }
+            }
+        }
+        solo: {
+            label: 'Solo'
+            entitlements: {
+                ai: {
+                    limit: { credit: 'ai_credit', mode: 'soft', value: 0 }
+                }
+            }
+        }
+    }
+
+    // customer id -> list of previous_plan values seen on customer-plan-changed
+    map plan_changes: map();
+
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Grants on a customer that came from a given topup name.
+    fn topup_grants(customer_id: str!, topup: str!) -> list {
+        const out = [];
+        const customer = self.customer(customer_id);
+        if (customer == null) return out;
+        for (const pair in customer.grants.fields()) {
+            if (pair[1].topup == topup) out.push_back(pair[1]);
+        }
+        out
+    }
+
+
+    #[customer-plan-changed]
+    fn record_plan_change(event: obj) {
+        const policy = event.customer.parent().parent();
+        if (policy != self) return; // only this test policy
+        const id = event.customer.id;
+        let seen = self.plan_changes.get(id);
+        if (seen == null) {
+            seen = [];
+            self.plan_changes.insert(id, seen);
+        }
+        seen.push_back(event.previous_plan);
+    }
+
+
+    // ── Topup grants follow the plan ──────────────────────────────────────────
+
+    #[test]
+    /**
+     * Included topups are granted on create, scoped by customer type.
+     */
+    fn test_included_topups_scoped_on_create() {
+        self.create_customer('lc_user', 'team', 'user');
+        self.create_customer('lc_org', 'team', 'org');
+
+        assert_eq(self.topup_grants('lc_user', 'monthly_credits').len(), 1);
+        assert_eq(self.topup_grants('lc_user', 'org_bonus').len(), 0);
+
+        assert_eq(self.topup_grants('lc_org', 'monthly_credits').len(), 1);
+        assert_eq(self.topup_grants('lc_org', 'org_bonus').len(), 1);
+    }
+
+
+    #[test]
+    /**
+     * A grant whose topup was deleted from the plan is removed the next time
+     * grants are reconciled - without throwing.
+     */
+    fn test_removed_topup_grant_is_dropped() {
+        const id = 'lc_removed_topup';
+        self.create_customer(id, 'team', 'user');
+        assert(self.apply_customer_topup(id, 'retired_pack_a'));
+        assert_eq(self.topup_grants(id, 'retired_pack_a').len(), 1);
+        const grant = self.topup_grants(id, 'retired_pack_a')[0];
+
+        // Topup is no longer offered on the plan
+        self.plans.team.topups.remove('retired_pack_a', shallow = false);
+
+        let threw = false;
+        try { self.ensure_included_topups(id, false); }
+        catch { threw = true; }
+
+        assert_not(threw);
+        assert_eq(self.topup_grants(id, 'retired_pack_a').len(), 0);
+        assert_not(grant.exists());
+
+        // Included grants untouched
+        assert_eq(self.topup_grants(id, 'monthly_credits').len(), 1);
+    }
+
+
+    #[test]
+    /**
+     * An included, scoped grant is removed when the customer's type falls
+     * out of the topup's included_scopes.
+     */
+    fn test_out_of_scope_included_grant_is_dropped() {
+        const id = 'lc_scope_change';
+        self.create_customer(id, 'team', 'org');
+        assert_eq(self.topup_grants(id, 'org_bonus').len(), 1);
+
+        // Org becomes a plain user - no longer in org_bonus scope
+        const customer = self.customer(id);
+        customer.type = 'user';
+
+        let threw = false;
+        try { self.ensure_included_topups(id, false); }
+        catch { threw = true; }
+        assert_not(threw);
+
+        assert_eq(self.topup_grants(id, 'org_bonus').len(), 0);
+        assert_eq(self.topup_grants(id, 'monthly_credits').len(), 1);
+    }
+
+
+    #[test]
+    /**
+     * Reconciliation also runs inside allow() via overage grant application -
+     * a stale grant must not make allow() throw.
+     */
+    fn test_allow_with_stale_topup_grant() {
+        const id = 'lc_allow_stale';
+        self.create_customer(id, 'team', 'user');
+        assert(self.apply_customer_topup(id, 'retired_pack_b'));
+        self.plans.team.topups.remove('retired_pack_b', shallow = false);
+
+        let allowed = false;
+        let threw = false;
+        try { allowed = self.allow(id, 'ai', 10, false); }
+        catch { threw = true; }
+
+        assert_not(threw);
+        assert(allowed);
+        assert_eq(self.topup_grants(id, 'retired_pack_b').len(), 0);
+        // monthly_credits (100) covered the 10 overage
+        assert_eq(self.credit_remaining(id, 'ai_credit'), 90);
+    }
+
+
+    // ── Plan trial period ─────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * Trial period resolves by plan ID or customer ID, returned in ms.
+     */
+    fn test_plan_trial_period() {
+        self.create_customer('lc_trial', 'team');
+        assert_eq(self.plan_trial_period('team'), 14days);
+        assert_eq(self.plan_trial_period('lc_trial'), 14days);
+        assert_eq(typename self.plan_trial_period('team'), 'ms');
+        assert_eq(self.plan_trial_period('solo'), null);
+    }
+
+
+    // ── Plan change events ────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * customer-plan-changed reports the actual previous plan name.
+     */
+    fn test_plan_change_event_previous_plan() {
+        const id = 'lc_plan_change';
+        self.create_customer(id, 'team');
+        assert(self.set_customer_plan(id, 'solo'));
+        assert(self.set_customer_plan(id, 'team'));
+
+        const seen = self.plan_changes.get(id);
+        assert_eq(seen, ['team', 'solo']);
+    }
+
+
+    #[test]
+    /**
+     * Plan change keeps existing meters by default (no usage wipe).
+     */
+    fn test_plan_change_keeps_meters_by_default() {
+        const id = 'lc_keep_meters';
+        self.create_customer(id, 'team');
+        assert(self.allow(id, 'ai', 5, false));
+        assert(self.set_customer_plan(id, 'solo'));
+        assert_eq(self.value(id, 'ai'), 5);
+
+        // explicit overwrite resets
+        assert(self.set_customer_plan(id, 'team', true));
+        assert_eq(self.value(id, 'ai'), 0);
+    }
+
+
+    // ── Customer deletion ─────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * Deleting a customer removes its whole subtree (meters, grants, caps)
+     * and its alt ID mappings.
+     */
+    fn test_delete_customer_cleans_up() {
+        const id = 'lc_delete_me';
+        const customer = self.create_customer(id, 'team', alts = ['lc_delete_alt']);
+        assert(self.allow(id, 'ai', 1, false));
+        assert(self.add_customer_cap(id, 10, 'cap', events = false));
+
+        const meter = customer.meters.ai;
+        const grants = customer.grants;
+        const cap = customer.caps.cap;
+        assert(meter.exists());
+
+        assert(self.delete_customer('lc_delete_alt')); // delete via alt id
+        assert_eq(self.customer(id), null);
+        assert_eq(self.customer('lc_delete_alt'), null);
+        assert_not(customer.exists());
+        assert_not(meter.exists());
+        assert_not(grants.exists());
+        assert_not(cap.exists());
+    }
+
+
+    #[test]
+    /**
+     * A customer loaded through set_customer (cloud/state restore path) is
+     * cleaned up the same way.
+     */
+    fn test_delete_loaded_customer_cleans_up() {
+        const loaded = self.set_customer(r#"
+            id: 'lc_loaded'
+            plan: 'team'
+            meters: { ai: { credit: 'ai_credit', value: 3 } }
+        "#, false);
+        assert(loaded);
+        const meter = loaded.meters.ai;
+        assert(self.delete_customer('lc_loaded'));
+        assert_not(loaded.exists());
+        assert_not(meter.exists());
+    }
+}
+
+
+// ── Static api (root.policy) ──────────────────────────────────────────────────
+
+#[test]
+/**
+ * <Limitr>.api.plan_trial_period forwards the id (root.policy is the mod.stof policy).
+ */
+fn api_plan_trial_period() {
+    const plan = root.policy.plans.paid;
+    assert_eq(<Limitr>.api.plan_trial_period('paid'), null);
+
+    plan.trial_period = 7days; // no await between set and restore - safe with async tests
+    const by_plan = <Limitr>.api.plan_trial_period('paid');
+    const by_customer = <Limitr>.api.plan_trial_period('cj');
+    plan.trial_period = null;
+
+    assert_eq(by_plan, 7days);
+    assert_eq(by_customer, 7days);
+}

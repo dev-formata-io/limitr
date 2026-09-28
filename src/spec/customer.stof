@@ -170,12 +170,13 @@ Customer: {
 
         let set_topup_names = set();
         for (const pair in self.grants.fields()) {
+            const grant_id = pair[0];
             const grant: Grant = pair[1];
             const top: Topup = grant.topup != null ? plan.topups.get(grant.topup) : null;
             if (top != null) {
                 if (top.included && top.included_scopes != null && !top.included_scopes.contains(self.type)) {
                     // was included by default with the plan, now no longer applies to this customer
-                    self.grants.remove(id, shallow = false);
+                    self.grants.remove(grant_id, shallow = false);
                 } else {
                     set_topup_names.insert(grant.topup);
                     grant.credit = top.credit;
@@ -193,7 +194,7 @@ Customer: {
                 }
             } else if (grant.topup != null) {
                 // this grant was defined via a topup, and the topup no longer exists, so remove the grant too
-                self.grants.remove(id, shallow = false);
+                self.grants.remove(grant_id, shallow = false);
             }
         }
 
@@ -461,6 +462,8 @@ Customer: {
      * Caller owns the returned object(s) and is responsible for drop()
      * on each once the call completes - these are never inserted into any
      * customer.caps map.
+     *
+     * TODO: allow other customer caps to be passed in as args, too! (shared caps)
      */
     fn caps_from_arg(arg: Cap | map = null) -> list {
         const out = [];
