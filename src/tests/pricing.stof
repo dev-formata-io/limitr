@@ -68,6 +68,7 @@ Limitr TestPricingPolicy: {
                 tiered_hard: { limit: { credit: 'tiered_tok', mode: 'hard', value: 0 } }
                 volume: { limit: { credit: 'volume_tok', mode: 'soft', value: 0 } }
                 step: { limit: { credit: 'step_tok', mode: 'soft', value: 0 } }
+                step_hard: { limit: { credit: 'step_tok', mode: 'hard', value: 0 } }
             }
         }
     }
@@ -158,7 +159,9 @@ Limitr TestPricingPolicy: {
         assert_eq(c.quantity_for(5), 100);        // first band fee covers the band
         assert_eq(c.quantity_for(10, 100), 0);    // can't afford the next step (15)
         assert_eq(c.quantity_for(15, 100), 1000 - 100);
-        assert_eq(c.quantity_for(100, 1000), null); // top band - unlimited for a fee
+        assert_eq(c.quantity_for(100, 1000), <Credit>.UNBOUNDED_QUANTITY); // top band - unlimited for a fee (finite, JSON-safe)
+        assert_not(c.contains('UNBOUNDED_QUANTITY')); // prototype-only constant, not copied onto credits
+        assert_eq(stringify('json', new { q: c.quantity_for(100, 1000) }), '{"q":1000000000000000.0}');
     }
 
 
@@ -275,8 +278,9 @@ Limitr TestPricingPolicy: {
 
     #[test]
     /**
-     * Volume pricing through a cap: crossing into a cheaper band doesn't
-     * reduce a cap that doesn't follow decrements.
+     * Volume pricing through an observe-only cap: crossing into a cheaper band
+     * lowers the cap to the true total even without follow_decrements
+     * (it's more consumption, not a decrement).
      */
     fn test_volume_cap_band_crossing() {
         const id = 'pricing_volume';
@@ -286,10 +290,10 @@ Limitr TestPricingPolicy: {
 
         assert(self.allow(id, 'volume', 100, false)); // 1.0
         assert(self.close(cap.meter_value, 1.0));
-        assert(self.allow(id, 'volume', 1, false));   // marginal -0.495, ignored
-        assert(self.close(cap.meter_value, 1.0));
+        assert(self.allow(id, 'volume', 1, false));   // marginal -0.495
+        assert(self.close(cap.meter_value, 0.505));
         assert(self.allow(id, 'volume', 100, false)); // 0.5
-        assert(self.close(cap.meter_value, 1.5));
+        assert(self.close(cap.meter_value, 1.005));
     }
 
 
@@ -309,5 +313,157 @@ Limitr TestPricingPolicy: {
         assert_eq(cap.meter_value, 5);
         assert(self.allow(id, 'step', 20, false)); // into 20 band
         assert_eq(cap.meter_value, 20);
+    }
+
+    // ── Volume band crossings & balances (negative marginal prices) ───────────
+
+    #[test]
+    /**
+     * A reprice into a cheaper volume band never credits a grant back -
+     * even one that didn't pay for the earlier units.
+     */
+    fn test_volume_reprice_never_credits_grant() {
+        const id = 'pricing_vol_grant';
+        self.create_customer(id, 'metered');
+        assert(self.allow(id, 'volume', 100, false)); // billed out of pocket, no grants yet
+        const grant = self.usd_grant(id, 1.0);
+        assert(self.allow(id, 'volume', 1, false));    // marginal -0.495
+        assert(self.close(grant.value, 1.0));
+        assert(self.allow(id, 'volume', 10, false));   // 10 @ .005 at position 101
+        assert(self.close(grant.value, 0.95));
+    }
+
+
+    #[test]
+    /**
+     * A reprice into a cheaper volume band never adds to a voucher's spend balance.
+     */
+    fn test_volume_reprice_never_credits_voucher() {
+        const id = 'pricing_vol_voucher';
+        self.create_customer(id, 'metered', metadata = new {
+            limitr_voucher: 'v_test',
+            limitr_voucher_expires: Time.now() + 1day,
+            limitr_voucher_runes: 1.0,
+        });
+        const meta = self.customer_metadata(id);
+        assert(self.allow(id, 'volume', 100, false));
+        assert(self.close(meta.limitr_voucher_runes, 0));
+        assert(self.allow(id, 'volume', 1, false));
+        assert(self.close(meta.limitr_voucher_runes, 0));
+        assert_not(self.allow(id, 'volume', 10, false)); // voucher is spent
+    }
+
+
+    #[test]
+    /**
+     * A cap tracks the true volume total through a band crossing (the negative
+     * marginal is consumption, not a decrement), so it doesn't block the
+     * customer from reaching the cheaper band.
+     */
+    fn test_volume_cap_tracks_true_total() {
+        const id = 'pricing_vol_cap_true';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 1, 'one_dollar', events = false));
+        const cap = self.customer_cap(id, 'one_dollar');
+
+        assert(self.allow(id, 'volume', 100, false));
+        assert(self.close(cap.meter_value, 1.0));
+        assert(self.allow(id, 'volume', 1, false));   // true total now $0.505
+        assert(self.close(cap.meter_value, 0.505));
+        assert(self.allow(id, 'volume', 90, false));  // $0.955
+        assert(self.close(cap.meter_value, 0.955));
+        assert_not(self.allow(id, 'volume', 10, false)); // would be $1.005
+    }
+
+
+    #[test]
+    /**
+     * In-plan usage still never lowers an overage_only cap, and real
+     * decrements still only move follow_decrements caps.
+     */
+    fn test_negative_overage_is_not_a_reprice() {
+        const id = 'pricing_neg_overage';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 100, 'over', overage_only = true, observe_only = true, events = false));
+        assert(self.add_customer_cap(id, 100, 'plain', observe_only = true, events = false));
+        const over = self.customer_cap(id, 'over');
+        const plain = self.customer_cap(id, 'plain');
+
+        assert(self.allow(id, 'tiered_included', 20, false)); // in plan: overage -30
+        assert(self.close(over.meter_value, 0));
+        assert(self.allow(id, 'tiered_included', 40, false)); // 30 in plan + 10 billable
+        assert(self.close(over.meter_value, 0.1));
+        assert(self.allow(id, 'tiered_included', -40, false)); // real decrement
+        assert(self.close(over.meter_value, 0.1));
+        assert(self.close(plain.meter_value, 0.6));
+    }
+
+
+    // ── Stairstep top band ────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A grant that can afford the stairstep top band covers any quantity
+     * (unlimited units for the fee) instead of being ignored.
+     */
+    fn test_stairstep_top_band_grant_coverage() {
+        const id = 'pricing_step_top';
+        self.create_customer(id, 'metered');
+        const grant = self.usd_grant(id, 60);
+
+        assert(self.check(id, 'step_hard', 5000));  // $50 from position 0
+        assert(self.limit(id, 'step_hard') > 1_000_000);
+        assert_eq(self.remaining(id, 'step_hard', true), 100);
+        assert_eq(self.value(id, 'step_hard', true), 0);
+        assert_eq(self.projected_exhaustion(id, 'step_hard'), null);
+
+        assert(self.allow(id, 'step_hard', 5000, false));
+        assert(self.close(grant.value, 10));
+        assert_eq(self.value(id, 'step_hard'), 5000);
+    }
+
+
+    #[test]
+    /**
+     * Below the top band, stairstep coverage stays finite.
+     */
+    fn test_stairstep_grant_coverage_finite() {
+        const id = 'pricing_step_finite';
+        self.create_customer(id, 'metered');
+        self.usd_grant(id, 30);
+        assert(self.close(self.limit(id, 'step_hard'), 1000));
+        assert(self.check(id, 'step_hard', 500));
+        assert_not(self.check(id, 'step_hard', 1001));
+    }
+
+    // ── Grant selection ───────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A resetting grant drained to exactly zero must not stall allow().
+     * (Grant selection used to keep picking the empty grant forever.)
+     */
+    fn test_drained_resetting_grant_does_not_hang() {
+        const id = 'pricing_drained';
+        self.create_customer(id, 'metered');
+        const customer = self.customer(id);
+        const grant = new Grant {
+            id: 'drained',
+            credit: 'usd',
+            starting_value: 1,
+            value: 1,
+            resets: true,
+            reset_inc: 30days,
+            created_on: Time.now(),
+            granted_on: Time.now(),
+        } on customer.grants;
+        customer.grants.insert('drained', grant);
+
+        assert(self.allow(id, 'tiered', 100, false)); // $1.00 - drains the grant exactly
+        assert_eq(grant.value, 0);
+        assert(grant.exists()); // resetting grants stay (they refill next period)
+
+        assert(self.allow(id, 'tiered', 10, false)); // soft overage, nothing left to cover it
+        assert_eq(grant.value, 0);
     }
 }

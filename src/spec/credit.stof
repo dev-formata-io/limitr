@@ -91,6 +91,14 @@ Credit: {
      * breakdowns) goes through these functions.
      *****************************************************************************/
 
+    #[no-export]
+    #[type_ignore]
+    /// Prototype-only constant (not copied onto instances) - reference as <Credit>.UNBOUNDED_QUANTITY.
+    /// "Unlimited" quantity for quantity_for (e.g. a stairstep top band, where the fee covers
+    /// every further unit). A large finite number rather than inf, which isn't JSON-safe.
+    const float UNBOUNDED_QUANTITY: 1e15;
+
+
     /// Does this credit have a price (flat price or pricing tiers)?
     fn priced() -> bool {
         if (self.pricing_model == 'flat') return self.price != null;
@@ -187,7 +195,9 @@ Credit: {
     /**
      * Inverse of price_of: how many units `runes` buys starting at billable position `offset`.
      * Walks forward band by band, stopping where the budget runs out (a band whose entry
-     * cost can't be afforded is not entered). Returns null if this credit has no price.
+     * cost can't be afforded is not entered). Returns null if this credit has no price, and
+     * UNBOUNDED_QUANTITY when the budget reaches a band with no per-unit price and no upper
+     * bound (stairstep top band) - every further unit is already paid for.
      * Negative runes are converted linearly at the first unit rate.
      */
     fn quantity_for(runes: float, offset: float = 0) -> float {
@@ -241,7 +251,10 @@ Credit: {
                 if (next == null || reach <= next) return reach - offset;
                 spent += (next - cur) * slope;
             } else if (next == null) {
-                return null; // unlimited units for a fixed fee (stairstep top band) - no finite answer
+                // unlimited units for a fixed fee (stairstep top band, or a free last tier)
+                // Finite on purpose: inf panics Stof's JSON export (events, customer-set), see UNBOUNDED_QUANTITY.
+                // TODO(stof runtime): make JSON export of inf/NaN safe, then revisit using real infinity.
+                return <Credit>.UNBOUNDED_QUANTITY;
             }
             cur = next;
         }
