@@ -20,6 +20,7 @@ import './burndown' as TestBurndown;
 import './governor' as TestGovernor;
 import './spend_caps' as TestSpendCaps;
 import './lifecycle' as TestLifecycle;
+import './pricing' as TestPricing;
 
 
 Limitr policy: {

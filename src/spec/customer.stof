@@ -220,14 +220,27 @@ Customer: {
 
     /**
      * Get the remaining amount of a credit from this customer's grants.
+     * `position` is the billable position (units past the included amount) the grants would
+     * start covering from - it only matters for tier-priced credits. Grants in the same credit
+     * count unit for unit; other grants are pooled in runes and converted from there.
      */
-    fn remaining_grant_credit(policy: Limitr, credit: str!) -> float {
+    fn remaining_grant_credit(policy: Limitr, credit: str!, position: float = 0) -> float {
         const exchange: Exchange = policy.exchange;
         if (exchange == null) return null;
-        let total: float = 0;
+        let exact: float = 0;
+        let runes: float = 0;
         for (const field in self.grants.fields()) {
             const grant: Grant = field[1];
-            const converted = exchange.exchange(grant.value, grant.credit, credit);
+            if (grant.credit == credit) {
+                exact += grant.value.remove_units();
+            } else {
+                const r = exchange.to_runes(grant.value.remove_units(), grant.credit);
+                if (r != null) runes += r;
+            }
+        }
+        let total: float = exact;
+        if (runes > 0) {
+            const converted = exchange.from_runes(runes, credit, max(0, position) + exact);
             if (converted != null) total += converted;
         }
         total
@@ -238,7 +251,7 @@ Customer: {
      * Try using a grant on this customer before sending meter-overage.
      * Returns true if there is still overage to be applied to the customers account (grants were used up/not there).
      */
-    fn apply_overage_grants(policy: Limitr, plan: Plan, credit: str!, event_value: obj!, stof_units: str!) -> bool {
+    fn apply_overage_grants(policy: Limitr, plan: Plan, credit: str!, event_value: obj!, stof_units: str!, position: float = 0) -> bool {
         const fields = self.grants.fields();
         if (fields.empty()) return true; // no grants present, send overage event
 
@@ -250,21 +263,25 @@ Customer: {
         self.update_topup_plan_grants(policy, plan);
 
         // while overage, take from grants
+        // pos tracks where on the credit's tier curve the next uncovered unit sits
         const exchange: Exchange = policy.exchange;
         let grant_value_applied = 0;
+        let pos = max(0, position);
         while (overage > 0) {
             const grant: Grant = self.best_grant(credit, exchange, stof_units);
             if (grant != null) {
                 // get overage in terms of the grant itself
-                let grant_overage = exchange != null ? exchange.exchange(overage, credit, grant.credit) ?? overage : overage;
+                let grant_overage = exchange != null ? exchange.exchange(overage, credit, grant.credit, pos) ?? overage : overage;
                 if (grant_overage < grant.value) {
                     grant.value -= grant_overage;
                     grant_value_applied += overage; // in "credit"
+                    pos += overage;
                     overage = 0;
                 } else {
-                    let credit_grant_value = exchange != null ? exchange.exchange(grant.value, grant.credit, credit) ?? grant.value : grant.value;
+                    let credit_grant_value = exchange != null ? exchange.exchange(grant.value, grant.credit, credit, 0, pos) ?? grant.value : grant.value;
                     overage -= credit_grant_value;
                     grant_value_applied += credit_grant_value;
+                    pos += credit_grant_value;
                     grant.value = 0;
 
                     // if grant doesn't reset, then remove completely
@@ -284,13 +301,15 @@ Customer: {
      * Ensure voucher max spend (for local allow only - max spend hard enforced remotely for customers).
      * If self.metadata.limitr_voucher_runes < overage, prevent the allow to protect provider (your) costs!
      */
-    fn ensure_voucher(credit: str!, event_value: obj!, exchange: Exchange) -> bool {
+    fn ensure_voucher(credit: str!, event_value: obj!, exchange: Exchange, position: float = 0) -> bool {
         if (self.metadata.limitr_voucher != null && self.metadata.limitr_voucher_expires != null) {
             if (self.metadata.limitr_voucher_runes != null) {
                 if (exchange == null) return false;
 
+                // remaining overage starts after whatever grants covered (tier position)
                 const overage = event_value.overage ?? 0;
-                const overage_runes = exchange.to_runes(overage, credit);
+                const overage_from = max(0, position) + (event_value.grant_value_applied ?? 0);
+                const overage_runes = exchange.to_runes(overage, credit, overage_from);
                 if (overage_runes == null) return false;
 
                 const res = Time.now() < self.metadata.limitr_voucher_expires && self.metadata.limitr_voucher_runes >= overage_runes;
@@ -309,6 +328,72 @@ Customer: {
      *****************************************************************************/
     
     /**
+     * Standing caps that are current (expired ones are removed), followed by any
+     * current ephemeral (`extra`) caps.
+     */
+    fn current_caps(extra: list = []) -> list {
+        const out = [];
+        for (const pair in self.caps.fields()) {
+            const cap: Cap = pair[1];
+            if (!cap.ensure_current()) {
+                self.caps.remove(pair[0], shallow = false);
+                continue;
+            }
+            out.push_back(cap);
+        }
+        for (const ext: Cap in extra) {
+            if (ext.ensure_current()) out.push_back(ext);
+        }
+        out
+    }
+
+
+    /**
+     * Convert `units` of entitlement_credit (starting at tier position `offset`) into
+     * the cap's credit. Overhead caps convert the overhead cost (runes) instead.
+     * Null if there is no exchange path (cap doesn't apply).
+     */
+    fn cap_convert(exchange: Exchange, cap: Cap!, entitlement_credit: str!, credit_overhead: float!, units: float!, offset: float = 0) -> float {
+        if (exchange == null) return null;
+        if (cap.overhead_cost) return exchange.exchange(units * credit_overhead, 'rune', cap.credit);
+        exchange.exchange(units, entitlement_credit, cap.credit, offset)
+    }
+
+
+    /**
+     * How much of `cap` a change consumes, in the cap's credit.
+     * Null if the cap doesn't apply to this entitlement/credit.
+     *
+     * `position` is the signed billable position of the change's first unit
+     * (meter - limit before the call; negative = inside the included amount).
+     * `overage_position` is where the overage portion starts (defaults to max(0, position)).
+     * `grant_applied` (units of entitlement_credit already covered by grants) is removed
+     * for ignore_grants caps - grants cover overage from its first unit.
+     */
+    fn cap_consumption(policy: Limitr!, cap: Cap!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!,
+        value: float!, overage: float!, grant_applied: float = 0, position: float = 0, overage_position: float = null) -> float {
+        if (!cap.applies_to(entitlement)) return null;
+        if (!cap.exchangeable && entitlement_credit != cap.credit) return null;
+
+        const exchange: Exchange = policy.exchange;
+        const opos = overage_position ?? max(0, position);
+        const ignore = cap.ignore_grants && grant_applied > 0;
+
+        if (cap.overage_only) {
+            const units = ignore ? max(0, overage - grant_applied) : overage;
+            return self.cap_convert(exchange, cap, entitlement_credit, credit_overhead, units, ignore ? opos + grant_applied : opos);
+        }
+
+        let converted = self.cap_convert(exchange, cap, entitlement_credit, credit_overhead, value, position);
+        if (converted != null && ignore) {
+            const covered = self.cap_convert(exchange, cap, entitlement_credit, credit_overhead, grant_applied, opos);
+            if (covered != null) converted = max(0, converted - covered);
+        }
+        converted
+    }
+
+
+    /**
      * Check whether a proposed change to an entitlement (denominated in
      * entitlement_credit) would be allowed under every standing cap on
      * this customer that applies to `entitlement` and has a valid Exchange
@@ -321,46 +406,24 @@ Customer: {
      * Returns true if every applicable, enforcing cap has enough remaining
      * room. A cap with no Exchange path to entitlement_credit is skipped
      * (does not apply to this entitlement) rather than causing a failure.
+     *
+     * See cap_consumption for `position` / `overage_position`.
      */
-    fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false) -> bool {
-        const exchange: Exchange = policy.exchange;
-    
-        const check_one = (cap: Cap): bool => {
-            if (cap == null) return true;
-            if (!cap.applies_to(entitlement)) return true;
-            if (non_ignore_grants_only && cap.ignore_grants) return true;
-            if (!cap.exchangeable && entitlement_credit != cap.credit) return true;
+    fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false, position: float = 0, overage_position: float = null) -> bool {
+        for (const cap: Cap in self.current_caps(extra)) {
+            if (non_ignore_grants_only && cap.ignore_grants) continue;
+            if (cap.observe_only) continue; // never denies - accumulates only, see check_and_apply_caps
 
-            const val = cap.overage_only ? overage : value;
-            let converted = null;
-            if (exchange != null) {
-                if (cap.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', cap.credit);
-                else converted = exchange.exchange(val, entitlement_credit, cap.credit);
-            }
-            if (converted == null) return true; // no exchange path - cap not applicable here
-            if (cap.observe_only) return true; // never denies - accumulates only, see check_and_apply_caps
+            const converted = self.cap_consumption(policy, cap, entitlement, entitlement_credit, credit_overhead, value, overage, 0, position, overage_position);
+            if (converted == null) continue; // no exchange path - cap not applicable here
 
             const ceiling = (cap.value as float).to_units(stof_units);
-            const existing = cap.meter_value ?? 0;
-            existing + converted <= ceiling
-        };
-    
-        for (const pair in self.caps.fields()) {
-            const cap: Cap = pair[1];
-            if (!cap.ensure_current()) {
-                self.caps.remove(pair[0], shallow = false);
-                continue;
-            }
-            if (!check_one(cap)) return false;
+            if ((cap.meter_value ?? 0) + converted > ceiling) return false;
         }
-        for (const cap: Cap in extra) {
-            if (cap.ensure_current() && !check_one(cap)) return false;
-        }
-    
         true
     }
-    
-    
+
+
     /**
      * Like check_caps, but on success also commits: advances every
      * applicable standing cap's meter_value by the converted amount, and
@@ -383,55 +446,21 @@ Customer: {
      * meter_value was below value, post-commit is at or above) - the
      * caller (Limitr.allow) uses this to fire a threshold-crossing event
      * per cap, exactly once per crossing rather than on every call past it.
+     *
+     * See cap_consumption for `position`.
      */
-    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float') -> list {
-        const exchange: Exchange = policy.exchange;
-        const now = Time.now();
-    
+    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0) -> list {
         // Pass 1: roll forward resets, drop expired, and verify - mutate nothing yet.
         const applicable = [];
-        for (const pair in self.caps.fields()) {
-            const id = pair[0];
-            const cap: Cap = pair[1];
-            if (!cap.ensure_current()) {
-                self.caps.remove(id, shallow = false);
-                continue;
-            }
-            if (!cap.applies_to(entitlement)) continue;
-            if (!cap.exchangeable && entitlement_credit != cap.credit) continue;
-    
-            let val = cap.overage_only ? overage : value;
-            if (cap.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            let converted = null;
-            if (exchange != null) {
-                if (cap.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', cap.credit);
-                else converted = exchange.exchange(val, entitlement_credit, cap.credit);
-            }
+        for (const cap: Cap in self.current_caps(extra)) {
+            const converted = self.cap_consumption(policy, cap, entitlement, entitlement_credit, credit_overhead, value, overage, grant_applied, position);
             if (converted == null || (!cap.follow_decrements && converted < 0)) continue; // not applicable to this entitlement/credit pair
-    
+
             const ceiling = (cap.value as float).to_units(stof_units);
             if (!cap.observe_only && (cap.meter_value ?? 0) + converted > ceiling) return null;
             applicable.push_back((cap, converted, ceiling));
         }
-    
-        for (const ext: Cap in extra) {
-            if (!ext.ensure_current() || !ext.applies_to(entitlement)) continue;
-            if (!ext.exchangeable && entitlement_credit != ext.credit) continue;
-    
-            let val = ext.overage_only ? overage : value;
-            if (ext.ignore_grants && grant_applied > 0) val = max(0, val - grant_applied);
-            let converted = null;
-            if (exchange != null) {
-                if (ext.overhead_cost) converted = exchange.exchange(val * credit_overhead, 'rune', ext.credit);
-                else converted = exchange.exchange(val, entitlement_credit, ext.credit);
-            }
-            if (converted == null || (!ext.follow_decrements && converted < 0)) continue;
-    
-            const ceiling = (ext.value as float).to_units(stof_units);
-            if (!ext.observe_only && (ext.meter_value ?? 0) + converted > ceiling) return null;
-            applicable.push_back((ext, converted, ceiling));
-        }
-    
+
         // Pass 2: every applicable cap had room (or is observe_only) - commit,
         // tracking any cap that crosses its threshold on this exact call.
         const crossings = [];
@@ -444,11 +473,11 @@ Customer: {
             cap.meter_value = after;
             if (before < ceiling && after >= ceiling) crossings.push_back(cap);
         }
-    
+
         crossings
     }
-    
-    
+
+
     /**
      * Build a list of transient, unattached Cap objects from either a
      * single Cap (returned as a one-element list) or a bare map shorthand

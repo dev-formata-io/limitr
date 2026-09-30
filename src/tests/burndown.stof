@@ -164,4 +164,48 @@ Limitr TestBurndownPolicy: {
         assert_eq(self.credit_remaining('burndown', 'ai_input_token').round(), 0);
         assert_eq(self.credit_remaining('burndown', 'mb_storage').round(), 0);
     }
+
+
+    #[test]
+    /**
+     * Grant-covered calls on a hard limit record consumption history,
+     * so rate / EWMA / projected exhaustion see them.
+     */
+    fn grant_covered_calls_record_history() {
+        self.create_customer('burndown_history', 'base');
+        assert(self.allow('burndown_history', 'ai_input', 1_000));
+        assert(self.allow('burndown_history', 'ai_input', 2_000));
+        assert(self.allow('burndown_history', 'ai_input', 3_000));
+
+        const meter: Meter = self.meter_obj('burndown_history', 'ai_input');
+        assert_eq(meter.value, 6_000);
+        assert_eq(meter.history.len(), 3);
+        assert_eq(meter.history[2].delta, 3_000);
+        assert(meter.ewma_rate != null);
+    }
+
+
+    #[test]
+    /**
+     * After a period reset, usage on a grant-backed hard limit (limit 0)
+     * still draws down grants - it must not ride on the previous period's
+     * meter value as if it were a decrement.
+     */
+    fn grants_consumed_after_meter_reset() {
+        assert(self.valid()); // fills the default reset_inc (30days), as Limitr.new does
+        self.create_customer('burndown_reset', 'base');
+        assert(self.allow('burndown_reset', 'ai_input', 200_000));
+        const before = self.credit_remaining('burndown_reset', 'abstract');
+
+        const meter: Meter = self.meter_obj('burndown_reset', 'ai_input');
+        meter.started = Time.now() - 31days;
+
+        assert(self.check('burndown_reset', 'ai_input', 10_000));
+        assert(self.allow('burndown_reset', 'ai_input', 10_000));
+        assert_eq(meter.value, 10_000);
+
+        // 10k input tokens = 10k * 0.000006 * 1.25 abstract = 0.075 abstract
+        const after = self.credit_remaining('burndown_reset', 'abstract');
+        assert_eq((before - after).round(6), 0.075);
+    }
 }

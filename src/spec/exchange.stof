@@ -60,94 +60,79 @@ Exchange: {
 
 
     /**
-     * To runes.
+     * Resolve a currency to runes.
+     * Returns [factor, credit]: one unit of `c` is `factor` units of `credit`, which prices
+     * itself into runes (flat price or tiers). If credit is null, `factor` is the rune value.
+     * Exchange pairs take precedence over credit pricing. Null if there is no path (or a cycle).
      */
-    fn to_runes(v: float!, c: str!) -> float {
-        const visited = set();
-        
+    fn resolve(c: str!) -> list {
         let policy = self.parent();
         if (policy != null && ((typeof policy) != 'obj' || !policy.instance_of('Limitr'))) {
             policy = null;
         }
 
+        const visited = set();
+        let factor = 1.0;
         while (c != 'rune') {
             if (visited.contains(c)) return null; // cycle detected
             visited.insert(c);
 
             const def: ExchangePair = self.get_pair(c);
-            let credit_defined = false;
             if (def == null) {
-                if (policy != null) {
-                    // try auto pricing in runes for this credit
-                    const credit = ?policy.credit(c);
-                    if (credit != null) {
-                        if (credit.pricing_model == 'flat' && credit.price != null) {
-                            v *= credit.price.amount;
-                            c = 'rune';
-                            credit_defined = true;
-                        } else if (credit.tiers != null && credit.tiers.any()) {
-                            let total = 0;
-                            if (credit.pricing_model == 'tiered') {
-                                // Graduated: each tier prices its own slice of v
-                                let remaining = v;
-                                let prev_up_to = 0;
-                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (remaining <= 0) break ^tiers_loop;
-                                    if (tier.up_to != null) {
-                                        const band = tier.up_to - prev_up_to;
-                                        prev_up_to = tier.up_to;
-                                        const slice = remaining >= band ? band : remaining;
-                                        total += slice * tier.price.amount;
-                                        remaining -= slice;
-                                    } else {
-                                        total += remaining * tier.price.amount;
-                                        remaining = 0;
-                                    }
-                                }
-                            } else if (credit.pricing_model == 'volume') {
-                                // Volume: find the tier v falls into, price ALL of v at that rate
-                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && v > tier.up_to) {
-                                        continue ^vol_loop;
-                                    }
-                                    total = v * tier.price.amount;
-                                    break ^vol_loop;
-                                }
-                            } else if (credit.pricing_model == 'stairstep') {
-                                // Stairstep: find the tier v falls into, pay that tier's flat fee
-                                ^step_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && v > tier.up_to) {
-                                        continue ^step_loop;
-                                    }
-                                    total = tier.price.amount;
-                                    break ^step_loop;
-                                }
-                            }
-                            v = total;
-                            c = 'rune';
-                            credit_defined = true;
-                        }
-                    }
-                }
-                if (!credit_defined) return null; // no-can-do
+                const credit = policy != null ? ?policy.credit(c) : null;
+                if (credit != null && credit.priced()) return [factor, credit];
+                return null; // no-can-do
             }
-            if (!credit_defined) {
-                v *= def.value;
-                c = def.currency;
-            }
+            factor *= def.value;
+            c = def.currency;
         }
-        v
+        [factor, null]
+    }
+
+
+    /**
+     * To runes.
+     * `offset` is the billable position the value starts at (in units of `c`), which only
+     * matters for tiered/volume/stairstep credits - see Credit.price_of.
+     */
+    fn to_runes(v: float!, c: str!, offset: float = 0) -> float {
+        const res = self.resolve(c);
+        if (res == null) return null;
+        const factor = res[0];
+        const credit: Credit = res[1];
+        if (credit == null) return v * factor;
+        const qty = v * factor;
+        const pos = offset * factor;
+        credit.price_of(qty, pos)
+    }
+
+
+    /**
+     * From runes: how many units of `c` a rune amount buys, starting at billable position
+     * `offset` (in units of `c`). Inverse of to_runes.
+     */
+    fn from_runes(runes: float!, c: str!, offset: float = 0) -> float {
+        const res = self.resolve(c);
+        if (res == null) return null;
+        const factor = res[0];
+        if (factor <= 0) return null;
+        const credit: Credit = res[1];
+        if (credit == null) return runes / factor;
+        const pos = offset * factor;
+        const qty = credit.quantity_for(runes, pos);
+        qty == null ? null : qty / factor
     }
 
 
     /**
      * Exchange one currency for another.
+     * `in_offset` / `out_offset` are billable positions for tier-priced credits on either side
+     * (e.g. how far into its tiers a customer already is this period). Both default to 0.
      */
-    fn exchange(value: float!, in_currency: str!, out_currency: str!) -> float {
+    fn exchange(value: float!, in_currency: str!, out_currency: str!, in_offset: float = 0, out_offset: float = 0) -> float {
         value = value.remove_units();
         if (in_currency == out_currency) return value;
-        const val_runes = self.to_runes(value, in_currency);
-        const exc_runes = self.to_runes(1, out_currency);
-        (val_runes != null && exc_runes != null && exc_runes > 0) ? val_runes / exc_runes : null
+        const runes = self.to_runes(value, in_currency, in_offset);
+        runes == null ? null : self.from_runes(runes, out_currency, out_offset)
     }
 }

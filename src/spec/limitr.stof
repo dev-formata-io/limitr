@@ -984,7 +984,9 @@ Limitr: {
 
             if (grants && pair != null) {
                 const customer = pair[0];
-                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                const meter: Meter = customer.meters.get(entitlement);
+                const billable = meter != null ? max(0, (meter.value - val).remove_units()) : 0;
+                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) val += remaining;
             }
             return val;
@@ -1012,7 +1014,7 @@ Limitr: {
         const stof_units = credit != null ? credit.stof_units : 'float';
         let limit_val = (limit.value as float).to_units(stof_units);
         if (grants) {
-            const remaining = customer.remaining_grant_credit(self, limit.credit);
+            const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (meter.value - limit_val).remove_units()));
             if (remaining != null && remaining > 0) limit_val = max(meter.value, limit_val) + remaining;
         }
         meter.projected_exhaustion(limit_val, smoothed)
@@ -1095,7 +1097,7 @@ Limitr: {
                 let lval = (limit.value as float).to_units(stof_units);
 
                 if (grants) {
-                    const remaining = customer.remaining_grant_credit(self, limit.credit);
+                    const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (mval - lval).remove_units()));
                     if (remaining != null && remaining > 0) lval = max(mval, lval) + remaining;
                 }
 
@@ -1288,8 +1290,14 @@ Limitr: {
             }
 
             // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
-            const meter_value: float = existing_meter ? existing_meter.value : 0;
+            // After a period reset, the period starts from zero - the old value is only kept for events
+            const prior_value: float = existing_meter ? existing_meter.value : 0;
+            const meter_value: float = existing_meter && !existing_meter_reset ? existing_meter.value : 0;
             let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+
+            // Where this call starts on the credit's tier curve (billable units = past the limit)
+            const position = (meter_value - limit_value).remove_units();
+            const billable = max(0, position);
 
             // Cap gate: resolve any call-scoped ephemeral caps and check ALL
             // applicable caps (standing + ephemeral) BEFORE any mutation -
@@ -1298,17 +1306,20 @@ Limitr: {
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
             let cap_grant_applied = 0.0;
             let cap_overage = 0.0;
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true)) {
+            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true, position)) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                 if (drop_e_dta) drop(event_data);
                 return false;
             }
             if (limit != null && limit.grants_apply) {
-                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
                     const diff = max(0, value - remaining);
                     const diff_overage = max(0, overage - remaining);
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
+                    // uncovered units are the tail of the call (grants cover from the first overage unit)
+                    const diff_position = position + (value - diff);
+                    const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
+                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
                         for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                         if (drop_e_dta) drop(event_data);
                         return false;
@@ -1333,7 +1344,7 @@ Limitr: {
                     existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                     if (event) {
                         const event_value = new {
-                            meter: new { value: existing_meter.value, limit: limit_value },
+                            meter: new { value: meter_value, limit: limit_value },
                             customer,
                             entitlement,
                             plan,
@@ -1364,7 +1375,7 @@ Limitr: {
             
             if (limit != null && (valid || limit.mode == 'soft')) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
-                const old_value = meter_value;
+                const old_value = prior_value; // events report the value before this call (pre-reset on a reset)
                 const changed = new_value != old_value;
                 existing_meter.credit = limit.credit;
                 existing_meter.value = new_value;
@@ -1392,12 +1403,12 @@ Limitr: {
                         // grants will modify event_value.overage for appropriate aggregation in the correct units
                         event_value.overage = overage;
                         cap_overage += overage; // before grants applied to overage of course
-                        if (!limit.grants_apply || customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
+                        if (!limit.grants_apply || customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units, billable)) {
                             // intercept here with voucher mode to protect your costs if using a voucher with max spend
                             // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
-                            if (!customer.ensure_voucher(limit.credit, event_value, self.exchange)) {
-                                // if meter was reset, this should go to 0, not to the old value
-                                existing_meter.value = existing_meter_reset ? 0 : old_value;
+                            if (!customer.ensure_voucher(limit.credit, event_value, self.exchange, billable)) {
+                                // if meter was reset, this goes to 0 (meter_value), not to the old value
+                                existing_meter.value = meter_value;
                                 drop(event_value);
                                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                                 if (drop_e_dta) drop(event_data);
@@ -1437,7 +1448,7 @@ Limitr: {
             } else if (limit != null && !valid) {
                 let event_value = new {
                     meter: new {
-                        value: meter_value,
+                        value: prior_value,
                         limit: limit_value,
                         invalid: new_value,
                         diff: value,
@@ -1452,10 +1463,10 @@ Limitr: {
                 };
                 
                 if (overage > 0 && limit.grants_apply) {
-                    const remaining = customer.remaining_grant_credit(self, limit.credit);
+                    const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                     if (remaining != null && remaining >= overage) {
                         cap_overage += overage; // for spend caps that are overage only
-                        if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units)) {
+                        if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units, billable)) {
                             valid = true; // we're now valid
                             
                             const grant_value_applied = event_value.grant_value_applied;
@@ -1463,7 +1474,7 @@ Limitr: {
                             drop(event_value);
                             event_value = new {
                                 meter: new {
-                                    old: meter_value,
+                                    old: prior_value,
                                     value: new_value,
                                     limit: limit_value,
                                     diff: value,
@@ -1481,6 +1492,7 @@ Limitr: {
                             if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
                             existing_meter.credit = limit.credit;
                             existing_meter.value = new_value;
+                            existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                             customer.meters.insert(entitlement, existing_meter);
                         }
 
@@ -1519,7 +1531,7 @@ Limitr: {
             // governor deny) must not consume cap room for a call that
             // never went through.
             if (valid && credit_name != null) {
-                const crossings = customer.check_and_apply_caps(self, entitlement, credit_name, credit_overhead, value, cap_overage, cap_grant_applied, ephemeral_caps, stof_units);
+                const crossings = customer.check_and_apply_caps(self, entitlement, credit_name, credit_overhead, value, cap_overage, cap_grant_applied, ephemeral_caps, stof_units, position);
                 if (crossings != null && event) {
                     for (const crossed: Cap in crossings) {
                         const threshold_event = new {
@@ -1585,17 +1597,17 @@ Limitr: {
             value = value.to_units(stof_units);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
-            // should the meter be reset?
+            // should the meter be reset? (allow() would reset it - evaluate against a fresh period)
+            let reset_pending = false;
             if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets) {
                 const cnow = Time.now();
                 if (limit.reset_sch != null) {
                     const period_start = Time.start_of_period(cnow, limit.reset_sch);
-                    if (period_start != null && existing_meter.started < period_start) {
-                        new_value = value;
-                    }
+                    reset_pending = period_start != null && existing_meter.started < period_start;
                 } else if (limit.reset_inc != null && limit.reset_inc > 0 && (cnow - existing_meter.started) > limit.reset_inc) {
-                    new_value = value;
+                    reset_pending = true;
                 }
+                if (reset_pending) new_value = value;
             }
 
             // is the new value below a defined minimum?
@@ -1608,29 +1620,44 @@ Limitr: {
 
             // Calculate overage from new and existing values (okay to do here now that new_value is locked in)
             const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
-            const meter_value: float = existing_meter ? existing_meter.value : 0;
+            const meter_value: float = existing_meter && !reset_pending ? existing_meter.value : 0;
             let overage = new_value > meter_value ? new_value - max(meter_value, limit_value) : new_value - limit_value;
+
+            // Where this call starts on the credit's tier curve (billable units = past the limit)
+            const position = (meter_value - limit_value).remove_units();
+            const billable = max(0, position);
 
             // Cap gate: resolve any call-scoped ephemeral caps and check ALL
             // applicable caps (standing + ephemeral) BEFORE any mutation -
             // governor tokens, meters, and grants are all untouched at this
             // point, so a cap denial here is a clean no-op deny.
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
-            let cap_grant_applied = 0.0;
-            let cap_overage = 0.0;
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true)) {
+            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true, position)) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                 return false;
             }
             if (limit != null && limit.grants_apply) {
-                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
                     const diff = max(0, value - remaining);
                     const diff_overage = max(0, overage - remaining);
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units)) { // will be overage even in the case of fully used grants
+                    const diff_position = position + (value - diff);
+                    const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
+                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
                         for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                         return false;
                     }
+                }
+            }
+
+            // Governor gate: same rate ceiling allow() applies, evaluated without consuming or refilling.
+            // A pending period reset clears governor state in allow(), so that's a full bucket here.
+            if (value > 0 && limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
+                const capacity = limit.governor_capacity as float;
+                const available = existing_meter == null || reset_pending ? capacity : existing_meter.governor_available(capacity, limit.governor_refill_rate);
+                if (value > available) {
+                    for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
+                    return false;
                 }
             }
 
@@ -1643,7 +1670,7 @@ Limitr: {
 
             // if we have a hard limit, lets check against credit grants to see if we're good
             if (limit != null && limit.mode == 'hard' && limit.grants_apply && overage > 0) {
-                const remaining = customer.remaining_grant_credit(self, limit.credit);
+                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null && remaining >= overage) {
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                     return true;
@@ -2271,46 +2298,7 @@ Limitr: {
                     let ent_rev = 0;
                     if (current > limit_value) {
                         const overage = (current - limit_value).remove_units();
-                        if (credit.pricing_model == 'flat' && credit.price != null) {
-                            ent_rev = overage * credit.price.amount;
-                        } else if (credit.tiers != null && credit.tiers.any()) {
-                            if (credit.pricing_model == 'tiered') {
-                                // Graduated: each tier prices its own slice
-                                let remaining = overage;
-                                let prev_up_to = 0;
-                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (remaining <= 0) break ^tiers_loop;
-                                    if (tier.up_to != null) {
-                                        const band = tier.up_to - prev_up_to;
-                                        prev_up_to = tier.up_to;
-                                        const slice = remaining >= band ? band : remaining;
-                                        ent_rev += slice * tier.price.amount;
-                                        remaining -= slice;
-                                    } else {
-                                        ent_rev += remaining * tier.price.amount;
-                                        remaining = 0;
-                                    }
-                                }
-                            } else if (credit.pricing_model == 'volume') {
-                                // Volume: find the tier overage falls into, price ALL units at that rate
-                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && overage > tier.up_to) {
-                                        continue ^vol_loop;
-                                    }
-                                    ent_rev += overage * tier.price.amount;
-                                    break ^vol_loop;
-                                }
-                            } else if (credit.pricing_model == 'stairstep') {
-                                // Stairstep: find the tier overage falls into, pay that tier's flat fee
-                                ^step_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && overage > tier.up_to) {
-                                        continue ^step_loop;
-                                    }
-                                    ent_rev += tier.price.amount;
-                                    break ^step_loop;
-                                }
-                            }
-                        }
+                        ent_rev = credit.price_of(overage) ?? 0; // billable units, from the first tier
                     }
                     
                     revenue += ent_rev;
@@ -2400,46 +2388,7 @@ Limitr: {
                     let ent_rev = 0;
                     if (current > limit_value) {
                         const overage = (current - limit_value).remove_units();
-                        if (credit.pricing_model == 'flat' && credit.price != null) {
-                            ent_rev = overage * credit.price.amount;
-                        } else if (credit.tiers != null && credit.tiers.any()) {
-                            if (credit.pricing_model == 'tiered') {
-                                // Graduated: each tier prices its own slice
-                                let remaining = overage;
-                                let prev_up_to = 0;
-                                ^tiers_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (remaining <= 0) break ^tiers_loop;
-                                    if (tier.up_to != null) {
-                                        const band = tier.up_to - prev_up_to;
-                                        prev_up_to = tier.up_to;
-                                        const slice = remaining >= band ? band : remaining;
-                                        ent_rev += slice * tier.price.amount;
-                                        remaining -= slice;
-                                    } else {
-                                        ent_rev += remaining * tier.price.amount;
-                                        remaining = 0;
-                                    }
-                                }
-                            } else if (credit.pricing_model == 'volume') {
-                                // Volume: find the tier overage falls into, price ALL units at that rate
-                                ^vol_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && overage > tier.up_to) {
-                                        continue ^vol_loop;
-                                    }
-                                    ent_rev += overage * tier.price.amount;
-                                    break ^vol_loop;
-                                }
-                            } else if (credit.pricing_model == 'stairstep') {
-                                // Stairstep: find the tier overage falls into, pay that tier's flat fee
-                                ^step_loop for (const tier: PriceTier in credit.tiers) {
-                                    if (tier.up_to != null && overage > tier.up_to) {
-                                        continue ^step_loop;
-                                    }
-                                    ent_rev += tier.price.amount;
-                                    break ^step_loop;
-                                }
-                            }
-                        }
+                        ent_rev = credit.price_of(overage) ?? 0; // billable units, from the first tier
                     }
                     
                     revenue += ent_rev;

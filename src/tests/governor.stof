@@ -494,4 +494,103 @@ Limitr TestGovernorPolicy: {
         // Meter value reflects fresh period — only the new call
         assert_eq(meter.value, 10_000);
     }
+
+
+    // ── check() parity with allow() ───────────────────────────────────────────
+
+    #[test]
+    /**
+     * check() applies the governor exactly like allow() would, without
+     * consuming tokens or advancing the refill clock.
+     */
+    fn test_check_respects_governor() {
+        const customer = self.create_customer('check_gov', 'enterprise');
+        assert(self.allow('check_gov', 'ai_tokens', 50_000)); // drain the bucket
+
+        const meter: Meter = self.meter_obj('check_gov', 'ai_tokens');
+
+        // Hard limit has 950k headroom, but the governor doesn't
+        assert_not(self.check('check_gov', 'ai_tokens', 10_000));
+        assert_not(self.allow('check_gov', 'ai_tokens', 10_000));
+
+        // Simulate 10s of refill (0.5/ms -> 5k tokens)
+        self.backdate_governor('check_gov', 'ai_tokens', 10_000);
+        const tokens_snapshot = meter.governor_tokens;
+        const refill_snapshot = meter.governor_last_refill;
+        assert(self.check('check_gov', 'ai_tokens', 4_000));
+        assert_not(self.check('check_gov', 'ai_tokens', 6_000));
+
+        // check() is read-only: governor state untouched
+        assert_eq(meter.governor_tokens, tokens_snapshot);
+        assert_eq(meter.governor_last_refill, refill_snapshot);
+
+        // and allow agrees with check
+        assert(self.allow('check_gov', 'ai_tokens', 4_000));
+    }
+
+
+    #[test]
+    /**
+     * A fresh customer's governor is evaluated at full capacity by check()
+     * (the lazy init allow() would do), without creating governor state.
+     */
+    fn test_check_fresh_governor() {
+        const customer = self.create_customer('check_gov_fresh', 'enterprise');
+        assert(self.check('check_gov_fresh', 'ai_tokens', 50_000));
+        assert_not(self.check('check_gov_fresh', 'ai_tokens', 50_001));
+
+        const meter: Meter = self.meter_obj('check_gov_fresh', 'ai_tokens');
+        assert_eq(meter.governor_tokens, null);
+    }
+
+
+    #[test]
+    /**
+     * check() treats a pending period reset as a full governor bucket,
+     * matching allow() (which clears governor state on reset).
+     */
+    fn test_check_governor_after_period_reset() {
+        const customer = self.create_customer('check_gov_reset', 'enterprise');
+        assert(self.allow('check_gov_reset', 'ai_tokens', 50_000));
+        assert_not(self.check('check_gov_reset', 'ai_tokens', 40_000));
+
+        const meter: Meter = self.meter_obj('check_gov_reset', 'ai_tokens');
+        meter.started = Time.now() - 31days;
+
+        assert(self.check('check_gov_reset', 'ai_tokens', 40_000));
+        assert(self.allow('check_gov_reset', 'ai_tokens', 40_000));
+    }
+
+
+    #[test]
+    /**
+     * Decrements are never governed (check or allow).
+     */
+    fn test_check_decrement_not_governed() {
+        const customer = self.create_customer('check_gov_dec', 'enterprise');
+        assert(self.allow('check_gov_dec', 'ai_tokens', 50_000));
+        assert(self.check('check_gov_dec', 'ai_tokens', -10_000));
+        assert(self.allow('check_gov_dec', 'ai_tokens', -10_000));
+    }
+
+
+    // ── Period reset uses a fresh meter ───────────────────────────────────────
+
+    #[test]
+    /**
+     * After a period reset, a hard limit is enforced against the fresh period,
+     * not the stale pre-reset meter value.
+     */
+    fn test_hard_limit_after_reset_uses_fresh_meter() {
+        const customer = self.create_customer('reset_fresh', 'baseline');
+        assert(self.allow('reset_fresh', 'ai_tokens', 900_000));
+
+        const meter: Meter = self.meter_obj('reset_fresh', 'ai_tokens');
+        meter.started = Time.now() - 31days;
+
+        assert_not(self.check('reset_fresh', 'ai_tokens', 1_000_001));
+        assert(self.check('reset_fresh', 'ai_tokens', 1_000_000));
+        assert(self.allow('reset_fresh', 'ai_tokens', 1_000));
+        assert_eq(meter.value, 1_000);
+    }
 }

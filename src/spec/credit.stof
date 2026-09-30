@@ -75,4 +75,176 @@ Credit: {
     /// Default is 'float', which will not perform casts on values.
     /// Entitlement limit values do not get cast automatically, so set to the units you'd like.
     str! stof_units: 'float';
+
+
+    /*****************************************************************************
+     * Pricing.
+     *
+     * Tiers are defined over billable units - the units past whatever a plan
+     * includes. A "position" is where a quantity starts on that curve: 0 is the
+     * first billable unit, negative positions are still inside the included
+     * amount. Included units are priced linearly at the first tier's unit rate
+     * (tiered/volume) or free (stairstep), so a cap counting raw consumption
+     * still sees them.
+     *
+     * Every place that turns credits into runes (Exchange, caps, grants, margin
+     * breakdowns) goes through these functions.
+     *****************************************************************************/
+
+    /// Does this credit have a price (flat price or pricing tiers)?
+    fn priced() -> bool {
+        if (self.pricing_model == 'flat') return self.price != null;
+        self.tiers != null && self.tiers.any()
+    }
+
+
+    /**
+     * Runes for a cumulative billable quantity `n` (total from position 0 up to n).
+     * Returns null if this credit has no price.
+     * Assumes tiers are sorted (valid() sorts & validates them).
+     */
+    fn total_price(n: float) -> float {
+        n = n.remove_units();
+        if (self.pricing_model == 'flat') return self.price != null ? n * self.price.amount : null;
+        if (self.tiers == null || self.tiers.empty()) return null;
+
+        const model = self.pricing_model;
+        if (n <= 0) return model == 'stairstep' ? 0 : n * self.tiers.front().price.amount;
+
+        if (model == 'tiered') {
+            // Graduated: each band's units at that band's rate
+            let total = 0;
+            let prev = 0;
+            for (const tier: PriceTier in self.tiers) {
+                if (tier.up_to == null || n <= tier.up_to) return total + (n - prev) * tier.price.amount;
+                total += (tier.up_to - prev) * tier.price.amount;
+                prev = tier.up_to;
+            }
+            return total;
+        }
+
+        // Volume & stairstep: the band n falls into decides the price
+        const tier: PriceTier = self.band(n);
+        model == 'volume' ? n * tier.price.amount : tier.price.amount
+    }
+
+
+    /// Tier containing billable quantity n (n > 0), bands are (previous up_to, up_to].
+    fn band(n: float) -> PriceTier {
+        for (const tier: PriceTier in self.tiers) {
+            if (tier.up_to == null || n <= tier.up_to) return tier;
+        }
+        self.tiers.back()
+    }
+
+
+    /**
+     * Runes for `quantity` units starting at billable position `offset`.
+     * Marginal: total_price(offset + quantity) - total_price(offset).
+     * Negative quantities are refunds at the same position (decrements).
+     * Note: for volume pricing, crossing into a cheaper band can make this negative.
+     */
+    fn price_of(quantity: float, offset: float = 0) -> float {
+        quantity = quantity.remove_units();
+        offset = offset.remove_units();
+        if (!self.priced()) return null;
+        if (self.pricing_model == 'flat') return quantity * self.price.amount;
+        if (self.pricing_model == 'tiered') {
+            // walk the bands directly (exact slices, no large-total subtraction)
+            if (quantity < 0) {
+                // locals on purpose: Stof binds earlier params before evaluating later args,
+                // so `self.price_of(-quantity, offset + quantity)` would see the new quantity
+                const refund_qty = 0 - quantity;
+                const refund_from = offset + quantity;
+                return 0 - self.price_of(refund_qty, refund_from);
+            }
+            let total = 0;
+            let cur = offset;
+            const end = offset + quantity;
+            if (cur < 0) {
+                const included = min(end, 0) - cur;
+                total += included * self.tiers.front().price.amount;
+                cur = min(end, 0);
+            }
+            let prev = 0;
+            for (const tier: PriceTier in self.tiers) {
+                if (cur >= end) break;
+                const top = tier.up_to;
+                if (top == null || cur < top) {
+                    const slice_end = top == null ? end : min(end, top);
+                    total += (slice_end - max(cur, prev)) * tier.price.amount;
+                    cur = slice_end;
+                }
+                if (top != null) prev = top;
+            }
+            return total;
+        }
+        // volume & stairstep price on the total, so the marginal is a difference of totals
+        self.total_price(offset + quantity) - self.total_price(offset)
+    }
+
+
+    /**
+     * Inverse of price_of: how many units `runes` buys starting at billable position `offset`.
+     * Walks forward band by band, stopping where the budget runs out (a band whose entry
+     * cost can't be afforded is not entered). Returns null if this credit has no price.
+     * Negative runes are converted linearly at the first unit rate.
+     */
+    fn quantity_for(runes: float, offset: float = 0) -> float {
+        runes = runes.remove_units();
+        offset = offset.remove_units();
+        if (!self.priced()) return null;
+        if (self.pricing_model == 'flat') return self.price.amount > 0 ? runes / self.price.amount : null;
+        if (runes == 0) return 0;
+
+        const model = self.pricing_model;
+        if (runes < 0) {
+            const rate = self.tiers.front().price.amount;
+            return model != 'stairstep' && rate > 0 ? runes / rate : null;
+        }
+
+        let cur = offset;
+        let spent = 0;
+        loop {
+            // next breakpoint above cur: 0 (end of included units), then each tier's up_to
+            let next = null;
+            if (cur < 0) {
+                next = 0;
+            } else {
+                for (const tier: PriceTier in self.tiers) {
+                    if (tier.up_to != null && tier.up_to > cur) { next = tier.up_to; break; }
+                }
+            }
+
+            // cost structure of the segment (cur, next]: entry jump + unit slope
+            let slope = 0;
+            let entry = 0;
+            if (cur < 0) {
+                slope = model == 'stairstep' ? 0 : self.tiers.front().price.amount;
+            } else {
+                const tier: PriceTier = self.band(next ?? (cur + 1));
+                if (model == 'tiered') {
+                    slope = tier.price.amount;
+                } else if (model == 'volume') {
+                    slope = tier.price.amount;
+                    entry = cur * tier.price.amount - self.total_price(cur); // reprice everything so far
+                } else {
+                    entry = tier.price.amount - self.total_price(cur); // pay this band's flat fee
+                }
+            }
+
+            if (spent + entry > runes) return cur - offset; // can't afford to enter this band
+            spent += entry;
+
+            if (slope > 0) {
+                const reach = cur + (runes - spent) / slope;
+                if (next == null || reach <= next) return reach - offset;
+                spent += (next - cur) * slope;
+            } else if (next == null) {
+                return null; // unlimited units for a fixed fee (stairstep top band) - no finite answer
+            }
+            cur = next;
+        }
+        null
+    }
 }

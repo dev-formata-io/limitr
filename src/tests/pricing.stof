@@ -1,0 +1,313 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Tier pricing tests.
+//
+// Tiers are priced over billable units (past a plan's included amount), and a
+// conversion starts at the customer's current position on that curve - not at
+// the first tier on every call.
+//
+Limitr TestPricingPolicy: {
+    credits: {
+        // 0-100 @ 0.01, 100-1000 @ 0.005, 1000+ @ 0.001
+        tiered_tok: {
+            pricing_model: 'tiered'
+            tiers: [
+                { up_to: 100, price: { amount: 0.01 } },
+                { up_to: 1000, price: { amount: 0.005 } },
+                { price: { amount: 0.001 } },
+            ]
+        }
+        // all units at the rate of the band the total falls in
+        volume_tok: {
+            pricing_model: 'volume'
+            tiers: [
+                { up_to: 100, price: { amount: 0.01 } },
+                { up_to: 1000, price: { amount: 0.005 } },
+                { price: { amount: 0.001 } },
+            ]
+        }
+        // flat fee for the band the total falls in
+        step_tok: {
+            pricing_model: 'stairstep'
+            tiers: [
+                { up_to: 100, price: { amount: 5 } },
+                { up_to: 1000, price: { amount: 20 } },
+                { price: { amount: 50 } },
+            ]
+        }
+        flat_tok: {
+            price: { amount: 0.01 }
+        }
+    }
+
+    plans: {
+        metered: {
+            label: 'Metered'
+            entitlements: {
+                // everything is billable
+                tiered: { limit: { credit: 'tiered_tok', mode: 'soft', value: 0 } }
+                // 50 included, then billable
+                tiered_included: { limit: { credit: 'tiered_tok', mode: 'soft', value: 50 } }
+                // grant-backed hard limit
+                tiered_hard: { limit: { credit: 'tiered_tok', mode: 'hard', value: 0 } }
+                volume: { limit: { credit: 'volume_tok', mode: 'soft', value: 0 } }
+                step: { limit: { credit: 'step_tok', mode: 'soft', value: 0 } }
+            }
+        }
+    }
+
+
+    #[init]
+    fn validate_policy() {
+        assert(self.valid());
+    }
+
+
+    fn close(a: float, b: float, eps: float = 1e-9) -> bool {
+        (a - b).abs() < eps
+    }
+
+
+    fn usd_grant(customer_id: str!, value: float!) -> Grant {
+        const customer = self.customer(customer_id);
+        const grant = new Grant {
+            id: `grant-usd-${nanoid(6)}`,
+            credit: 'usd',
+            starting_value: value,
+            value,
+            created_on: Time.now(),
+            granted_on: Time.now(),
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        grant
+    }
+
+
+    // ── Curve math (Credit) ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_tiered_curve() {
+        const c: Credit = self.credit('tiered_tok');
+        assert(self.close(c.total_price(100), 1.0));
+        assert(self.close(c.total_price(1000), 5.5));
+        assert(self.close(c.total_price(2000), 6.5));
+
+        // marginal price depends on where you start
+        assert(self.close(c.price_of(100), 1.0));
+        assert(self.close(c.price_of(100, 100), 0.5));
+        assert(self.close(c.price_of(50, 75), 0.375));   // 25 @ .01 + 25 @ .005
+        assert(self.close(c.price_of(-5, 100), -0.05));  // refund at the position
+
+        // included units (negative position) at the first unit rate
+        assert(self.close(c.price_of(10, -5), 0.1));
+
+        // inverse
+        assert(self.close(c.quantity_for(0.375, 75), 50));
+        assert(self.close(c.quantity_for(1.0), 100));
+        assert(self.close(c.quantity_for(1.5), 200));
+        assert(self.close(c.quantity_for(6.5), 2000));
+        assert(self.close(c.quantity_for(0.1, -5), 10));
+    }
+
+
+    #[test]
+    fn test_volume_curve() {
+        const c: Credit = self.credit('volume_tok');
+        assert(self.close(c.total_price(100), 1.0));
+        assert(self.close(c.total_price(101), 0.505));
+        assert(self.close(c.total_price(1001), 1.001));
+
+        // crossing into a cheaper band reprices everything - marginal can be negative
+        assert(self.close(c.price_of(1, 100), -0.495));
+        assert(self.close(c.price_of(10, 200), 0.05));
+
+        // inverse walks forward, entry jumps included
+        assert(self.close(c.quantity_for(0.5), 50));
+        assert(self.close(c.quantity_for(0.05, 200), 10));
+    }
+
+
+    #[test]
+    fn test_stairstep_curve() {
+        const c: Credit = self.credit('step_tok');
+        assert_eq(c.total_price(0), 0);
+        assert_eq(c.total_price(1), 5);
+        assert_eq(c.total_price(100), 5);
+        assert_eq(c.total_price(101), 20);
+
+        assert_eq(c.price_of(50, 10), 0);   // same band - already paid
+        assert_eq(c.price_of(1, 100), 15);  // step up
+        assert_eq(c.price_of(10, -5), 5);   // included units free, then the first band's fee
+
+        assert_eq(c.quantity_for(5), 100);        // first band fee covers the band
+        assert_eq(c.quantity_for(10, 100), 0);    // can't afford the next step (15)
+        assert_eq(c.quantity_for(15, 100), 1000 - 100);
+        assert_eq(c.quantity_for(100, 1000), null); // top band - unlimited for a fee
+    }
+
+
+    #[test]
+    fn test_flat_curve() {
+        const c: Credit = self.credit('flat_tok');
+        assert(self.close(c.price_of(100, 5000), 1.0)); // position doesn't matter
+        assert(self.close(c.quantity_for(1.0, 5000), 100));
+    }
+
+
+    #[test]
+    fn test_exchange_offsets() {
+        const ex = self.exchange;
+        assert(self.close(ex.exchange(100, 'tiered_tok', 'rune'), 1.0));
+        assert(self.close(ex.exchange(100, 'tiered_tok', 'rune', 100), 0.5));
+        assert(self.close(ex.exchange(0.5, 'usd', 'tiered_tok', 0, 100), 100));
+        assert(self.close(ex.exchange(1.5, 'usd', 'tiered_tok'), 200));
+
+        // tiered -> tiered through runes
+        assert(self.close(ex.exchange(100, 'tiered_tok', 'volume_tok', 100, 200), 100)); // 0.5 runes -> 100 @ .005
+    }
+
+
+    // ── Position-aware conversions in allow() ─────────────────────────────────
+
+    #[test]
+    /**
+     * A rune spend cap tracks marginal tier pricing across calls,
+     * instead of pricing every call from the first tier.
+     */
+    fn test_cap_follows_tier_position() {
+        const id = 'pricing_cap';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 100, 'spend', observe_only = true, events = false));
+        const cap = self.customer_cap(id, 'spend');
+
+        assert(self.allow(id, 'tiered', 100, false));
+        assert(self.close(cap.meter_value, 1.0));
+        assert(self.allow(id, 'tiered', 100, false)); // now in the 0.005 band
+        assert(self.close(cap.meter_value, 1.5));
+        assert(self.allow(id, 'tiered', 1000, false)); // 800 @ .005 + 200 @ .001
+        assert(self.close(cap.meter_value, 5.7));
+    }
+
+
+    #[test]
+    /**
+     * Included units count at the first rate for a plain cap and not at all for
+     * an overage_only cap; billable units start at the first tier either way.
+     */
+    fn test_cap_included_units() {
+        const id = 'pricing_included';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 100, 'plain', observe_only = true, events = false));
+        assert(self.add_customer_cap(id, 100, 'over', observe_only = true, overage_only = true, events = false));
+        const plain = self.customer_cap(id, 'plain');
+        const over = self.customer_cap(id, 'over');
+
+        // 50 included + 10 billable
+        assert(self.allow(id, 'tiered_included', 60, false));
+        assert(self.close(plain.meter_value, 0.6));
+        assert(self.close(over.meter_value, 0.1));
+
+        // billable position 10 -> 90 @ .01 + 10 @ .005
+        assert(self.allow(id, 'tiered_included', 100, false));
+        assert(self.close(plain.meter_value, 1.55));
+        assert(self.close(over.meter_value, 1.05));
+    }
+
+
+    #[test]
+    /**
+     * An enforcing cap denies based on the marginal price at the current position.
+     */
+    fn test_enforcing_cap_uses_position() {
+        const id = 'pricing_enforce';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 1.5, 'limit', events = false));
+
+        assert(self.allow(id, 'tiered', 100, false)); // 1.0
+        // Priced from tier 1 this would be 1.0 more (denied); at position 100 it's 0.5
+        assert(self.check(id, 'tiered', 100));
+        assert(self.allow(id, 'tiered', 100, false));
+        assert_not(self.check(id, 'tiered', 1));
+        assert_not(self.allow(id, 'tiered', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * Grants convert into tiered units at the customer's position - both for
+     * coverage checks (limit/remaining) and for draw-down.
+     */
+    fn test_grant_coverage_follows_tier_position() {
+        const id = 'pricing_grant';
+        self.create_customer(id, 'metered');
+        const grant = self.usd_grant(id, 1.5);
+
+        // $1.50 buys 100 @ .01 + 100 @ .005
+        assert(self.close(self.limit(id, 'tiered_hard'), 200));
+        assert(self.close(self.remaining(id, 'tiered_hard'), 200));
+
+        assert(self.allow(id, 'tiered_hard', 150, false)); // costs 1.0 + 0.25
+        assert(self.close(grant.value, 0.25));
+        assert(self.close(self.remaining(id, 'tiered_hard'), 50)); // 0.25 @ .005 from position 150
+
+        assert_not(self.check(id, 'tiered_hard', 51));
+        assert(self.check(id, 'tiered_hard', 50));
+        assert(self.allow(id, 'tiered_hard', 50, false));
+        assert_not(grant.exists()); // used up exactly, non-resetting grant removed
+    }
+
+
+    #[test]
+    /**
+     * Volume pricing through a cap: crossing into a cheaper band doesn't
+     * reduce a cap that doesn't follow decrements.
+     */
+    fn test_volume_cap_band_crossing() {
+        const id = 'pricing_volume';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 100, 'spend', observe_only = true, events = false));
+        const cap = self.customer_cap(id, 'spend');
+
+        assert(self.allow(id, 'volume', 100, false)); // 1.0
+        assert(self.close(cap.meter_value, 1.0));
+        assert(self.allow(id, 'volume', 1, false));   // marginal -0.495, ignored
+        assert(self.close(cap.meter_value, 1.0));
+        assert(self.allow(id, 'volume', 100, false)); // 0.5
+        assert(self.close(cap.meter_value, 1.5));
+    }
+
+
+    #[test]
+    /**
+     * Stairstep through a cap: pay a band's fee once when entering it.
+     */
+    fn test_stairstep_cap() {
+        const id = 'pricing_step';
+        self.create_customer(id, 'metered');
+        assert(self.add_customer_cap(id, 1000, 'spend', observe_only = true, events = false));
+        const cap = self.customer_cap(id, 'spend');
+
+        assert(self.allow(id, 'step', 10, false));
+        assert_eq(cap.meter_value, 5);
+        assert(self.allow(id, 'step', 80, false)); // same band
+        assert_eq(cap.meter_value, 5);
+        assert(self.allow(id, 'step', 20, false)); // into 20 band
+        assert_eq(cap.meter_value, 20);
+    }
+}

@@ -94,6 +94,19 @@ Meter: {
 
 
     /**
+     * Governor tokens available right now, without changing any state.
+     * Uninitialized governor state (fresh meter) means a full bucket.
+     * Used by check() so it agrees with allow() without consuming or refilling.
+     */
+    fn governor_available(capacity: float, refill_rate: float) -> float {
+        if (self.governor_tokens == null || self.governor_last_refill == null) return capacity;
+        const elapsed = (Time.now() - self.governor_last_refill).remove_units();
+        if (elapsed <= 0 || refill_rate == null) return min(capacity, self.governor_tokens);
+        min(capacity, self.governor_tokens + (elapsed * refill_rate))
+    }
+
+
+    /**
      * Refill governor tokens based on elapsed time since last refill.
      * No-op if governor fields not present on this meter.
      */
