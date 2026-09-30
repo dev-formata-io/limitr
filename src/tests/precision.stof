@@ -36,6 +36,7 @@ Limitr TestPrecisionPolicy: {
             entitlements: {
                 frac_hard: { limit: { credit: 'frac', mode: 'hard', value: 0.3 } }
                 frac_soft: { limit: { credit: 'frac', mode: 'soft', value: 0 } }
+                frac_gov: { limit: { credit: 'frac', mode: 'hard', value: 1, governor_enabled: true, governor_capacity: 1, governor_refill_rate: 1 } }
                 tok_hard: { limit: { credit: 'tok', mode: 'hard', value: 100 } }
                 tok_grant: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
                 tok_soft: { limit: { credit: 'tok', mode: 'soft', value: 0 } }
@@ -196,5 +197,20 @@ Limitr TestPrecisionPolicy: {
         const seen = self.changed_values.get(id);
         assert_eq(seen.len(), 2);
         assert_eq(str(seen[1]), '0.3');
+    }
+
+
+    #[test]
+    /**
+     * Sub-nano amounts through a governed entitlement still reach caps at full precision
+     * (decision rounding must never modify the call's value).
+     */
+    fn test_sub_nano_amounts_governed() {
+        const id = 'prec_subnano_gov';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 1, 'tracker', credit = 'frac', observe_only = true, events = false));
+        const cap = self.customer_cap(id, 'tracker');
+        for (const _ in 100) assert(self.allow(id, 'frac_gov', 1.5e-10, false));
+        assert(cap.meter_value > 1.4e-8 && cap.meter_value < 1.6e-8);
     }
 }

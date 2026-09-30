@@ -33,6 +33,14 @@ Limitr TestCapPolicy: {
             price: { amount: 0.40 }   // 1 ai_credit = $0.40
             resets: true
         }
+        step_credit: {
+            label: 'Stairstep credit'
+            pricing_model: 'stairstep'
+            tiers: [
+                { up_to: 100, price: { amount: 5 } },
+                { price: { amount: 50 } },
+            ]
+        }
         compute_sec: {
             label: 'Compute Second'
             description: 'Compute time in seconds'
@@ -1490,5 +1498,44 @@ Limitr TestCapPolicy: {
         assert(self.allow(id, 'included_soft_credits', 5, false));  // $2.00 overage, cap was at 0
         assert_eq(cap.meter_value.round(6), 2);
         assert_not(self.allow(id, 'included_soft_credits', 1, false));
+    }
+
+
+    // ── Cap validation ────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * An exchangeable cap denominated in a stairstep-priced credit is rejected: converting
+     * other spend into stairstep units has no finite answer once the top band is reached
+     * (every further unit is covered by the fee).
+     */
+    fn test_exchangeable_stairstep_cap_rejected() {
+        const id = 'cap_guard_stairstep';
+        self.create_customer(id, 'free');
+        assert_eq(self.add_customer_cap(id, 10, 'step', credit = 'step_credit', exchangeable = true, events = false), null);
+        assert_eq(self.customer_cap(id, 'step'), null);
+
+        // exact-credit (the default for a named credit) is fine - no conversion happens
+        assert(self.add_customer_cap(id, 10, 'step_exact', credit = 'step_credit', events = false));
+    }
+
+
+    #[test]
+    /**
+     * A stairstep cap that arrives some other way (customer state from Cloud, set_customer)
+     * is treated as not applicable to other credits instead of accruing an unbounded amount.
+     */
+    fn test_exchangeable_stairstep_cap_never_accrues_unbounded() {
+        const id = 'cap_guard_stairstep_loaded';
+        self.create_customer(id, 'free');
+        const customer = self.customer(id);
+        const cap = new Cap {
+            id: 'loaded', credit: 'step_credit', exchangeable: true, value: 10,
+            created_on: Time.now(), started: Time.now(),
+        } on customer.caps;
+        customer.caps.insert('loaded', cap);
+
+        assert(self.allow(id, 'ai_credits', 10_000, false)); // $4,000 of ai_credit - past the $50 top band
+        assert_eq(cap.meter_value, 0);
     }
 }

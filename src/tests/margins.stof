@@ -138,4 +138,28 @@ Limitr TestMarginsPolicy: {
         assert_eq(breakdown.get('margin'), 37.93);
         drop(breakdown);
     }
+
+
+    #[test]
+    /**
+     * The customer breakdown reflects the current period - after a period boundary it
+     * starts from zero (same as value()/remaining()), without modifying the meter.
+     */
+    fn test_customer_margins_current_period() {
+        const id = 'margin_period_customer';
+        self.create_customer(id, 'pro');
+        self.allow(id, 'tokens', 2_300_000);
+        const before = self.customer_local_margin_breakdown(id);
+        const tokens_before = before.get('entitlements').get('tokens');
+        assert(tokens_before.get('revenue') > 0);
+        assert(tokens_before.get('cost') > 0);
+
+        const meter: Meter = self.meter_obj(id, 'tokens');
+        meter.started = Time.now() - 2days; // tokens reset daily
+        const after = self.customer_local_margin_breakdown(id);
+        const tokens_after = after.get('entitlements').get('tokens');
+        assert_eq(tokens_after.get('revenue'), 0);
+        assert_eq(tokens_after.get('cost'), 0);
+        assert_eq(meter.value, 2_300_000); // read-only - allow() performs the reset
+    }
 }
