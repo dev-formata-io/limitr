@@ -22,6 +22,7 @@ import './spend_caps' as TestSpendCaps;
 import './lifecycle' as TestLifecycle;
 import './pricing' as TestPricing;
 import './periods' as TestPeriods;
+import './precision' as TestPrecision;
 
 
 Limitr policy: {
@@ -400,7 +401,9 @@ fn unlimited_spend() {
 #[test]
 fn usage_units() {
     // paid plan usage test
-    assert_eq(self.policy.limit('cj', 'usage'), 2GB);
+    // 2000MB, not 2GB: Stof's GB->MB conversion drifts (1999.9999999999998MB) and cross-unit == is exact,
+    // so the exactly-rounded read no longer equals the drifted literal (Stof runtime issue, see engine-map)
+    assert_eq(self.policy.limit('cj', 'usage'), 2000MB);
     assert_eq(typename self.policy.limit('cj', 'usage'), 'MB'); // return in credit's units
 
     assert(self.policy.allow('cj', 'usage', 3)); // default is credit units (MB)

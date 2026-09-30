@@ -169,12 +169,16 @@ Limit: {
 
     /**
      * Check this limit against a value.
+     * Compares at 1e-9 so float drift can't flip the decision (0.1 + 0.2 reaches a 0.3 limit);
+     * the values themselves are never rounded.
      */
     fn check(new_value: float = 0, meter_value: float = 0) -> bool {
-        if (self.mode == 'observe' || new_value <= meter_value) return true; // decrements/no-ops never trip
-        if (self.hard_trailing && self.mode == 'hard') return meter_value < (self.value as float);
-        if (new_value > (self.value as float)) return false;
-        true
+        const next = new_value.round(9);
+        const current = meter_value.round(9);
+        const lim = (self.value as float).round(9);
+        if (self.mode == 'observe' || next <= current) return true; // decrements/no-ops never trip
+        if (self.hard_trailing && self.mode == 'hard') return current < lim;
+        next <= lim
     }
 }
 

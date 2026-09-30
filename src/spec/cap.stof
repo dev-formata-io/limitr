@@ -202,8 +202,9 @@ Cap: {
     fn has_room(converted: float, ceiling: float) -> bool {
         if (self.observe_only) return true;
         const current = self.meter_value ?? 0;
-        if (self.hard_trailing) return converted <= 0 || current < ceiling;
-        current + converted <= ceiling
+        // compare at 1e-9 (float drift can't flip it); meter_value itself stays full precision
+        if (self.hard_trailing) return converted <= 0 || current.round(9) < ceiling.round(9);
+        (current + converted).round(9) <= ceiling.round(9)
     }
 
 

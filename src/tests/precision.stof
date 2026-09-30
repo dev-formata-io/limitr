@@ -1,0 +1,200 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Precision tests.
+//
+// Decisions (limit checks, cap ceilings, grant coverage, vouchers) compare at
+// 1e-9 so float drift can't flip them; running totals stay at full precision
+// so sub-nano amounts still accumulate; numbers in events go out rounded to 1e-9.
+//
+// Drift fixtures: 6 * 0.4 = 2.4000000000000004, 2.4 / 0.4 = 5.999999999999999,
+// 0.1 + 0.2 = 0.30000000000000004, 0.7 + 0.1 = 0.7999999999999999.
+//
+Limitr TestPrecisionPolicy: {
+    credits: {
+        tok: { price: { amount: 0.4 } }
+        frac: {}
+    }
+
+    plans: {
+        p: {
+            entitlements: {
+                frac_hard: { limit: { credit: 'frac', mode: 'hard', value: 0.3 } }
+                frac_soft: { limit: { credit: 'frac', mode: 'soft', value: 0 } }
+                tok_hard: { limit: { credit: 'tok', mode: 'hard', value: 100 } }
+                tok_grant: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
+                tok_soft: { limit: { credit: 'tok', mode: 'soft', value: 0 } }
+            }
+        }
+    }
+
+    // customer id -> meter.value of each meter-changed event seen
+    map changed_values: map();
+
+    // customer id -> cap ids that crossed their threshold
+    map crossings: map();
+
+
+    #[cap-threshold-crossed]
+    fn record_crossing(event: obj) {
+        const policy = event.customer.parent().parent();
+        if (policy != self) return;
+        const id = event.customer.id;
+        let seen = self.crossings.get(id);
+        if (seen == null) {
+            seen = [];
+            self.crossings.insert(id, seen);
+        }
+        seen.push_back(event.cap.id);
+    }
+
+
+    #[meter-changed]
+    fn record_changed(event: obj) {
+        const policy = event.customer.parent().parent();
+        if (policy != self) return;
+        const id = event.customer.id;
+        let seen = self.changed_values.get(id);
+        if (seen == null) {
+            seen = [];
+            self.changed_values.insert(id, seen);
+        }
+        seen.push_back(event.meter.value);
+    }
+
+
+    fn usd_grant(customer_id: str!, value: float!) -> Grant {
+        const customer = self.customer(customer_id);
+        const grant = new Grant {
+            id: 'grant-usd',
+            credit: 'usd',
+            starting_value: value,
+            value,
+            created_on: Time.now(),
+            granted_on: Time.now(),
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        grant
+    }
+
+
+    #[test]
+    /**
+     * A hard limit reached exactly through fractional usage is allowed (0.1 + 0.2 = 0.3).
+     */
+    fn test_limit_exact_after_drift() {
+        const id = 'prec_limit';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'frac_hard', 0.1, false));
+        assert(self.check(id, 'frac_hard', 0.2));
+        assert(self.allow(id, 'frac_hard', 0.2, false));
+        assert_not(self.allow(id, 'frac_hard', 0.000001, false));
+    }
+
+
+    #[test]
+    /**
+     * A cap landing exactly on its ceiling is allowed ($0.40 x 6 = $2.40).
+     */
+    fn test_cap_exact_ceiling() {
+        const id = 'prec_cap';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 2.4, 'cap', events = false));
+        assert(self.check(id, 'tok_hard', 6));
+        assert(self.allow(id, 'tok_hard', 6, false));
+        assert_not(self.allow(id, 'tok_hard', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * A cap threshold is crossed when the total lands exactly on it (0.7 + 0.1 = 0.8).
+     */
+    fn test_cap_threshold_exact_after_drift() {
+        const id = 'prec_threshold';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 0.8, 'tracker', credit = 'frac', observe_only = true, events = false));
+        assert(self.allow(id, 'frac_soft', 0.7, true));
+        assert_eq(self.crossings.get(id), null);
+        assert(self.allow(id, 'frac_soft', 0.1, true));
+        assert_eq(self.crossings.get(id), ['tracker']);
+    }
+
+
+    #[test]
+    /**
+     * A grant that exactly covers a call covers it ($2.40 grant, 6 x $0.40),
+     * on both the check and the allow path, and is drained exactly.
+     */
+    fn test_grant_exact_coverage() {
+        const id = 'prec_grant';
+        self.create_customer(id, 'p');
+        const grant = self.usd_grant(id, 2.4);
+        assert_eq(self.limit(id, 'tok_grant'), 6);
+        assert(self.check(id, 'tok_grant', 6));
+        assert(self.allow(id, 'tok_grant', 6, false));
+        assert_not(grant.exists()); // drained exactly, non-resetting grant removed
+        assert_not(self.allow(id, 'tok_grant', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * A voucher balance that exactly covers the overage allows it.
+     */
+    fn test_voucher_exact_coverage() {
+        const id = 'prec_voucher';
+        self.create_customer(id, 'p', metadata = new {
+            limitr_voucher: 'v_prec',
+            limitr_voucher_expires: Time.now() + 1day,
+            limitr_voucher_runes: 2.4,
+        });
+        assert(self.allow(id, 'tok_soft', 6, false));
+        assert_not(self.allow(id, 'tok_soft', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * Sub-nano amounts still accumulate - running totals are never rounded.
+     */
+    fn test_sub_nano_amounts_accumulate() {
+        const id = 'prec_subnano';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 1, 'tracker', credit = 'frac', observe_only = true, events = false));
+        const cap = self.customer_cap(id, 'tracker');
+        for (const _ in 100) assert(self.allow(id, 'frac_soft', 1.5e-10, false));
+        assert(cap.meter_value > 1.4e-8 && cap.meter_value < 1.6e-8);
+        assert(self.value(id, 'frac_soft') > 1.4e-8);
+    }
+
+
+    #[test]
+    /**
+     * Event numbers go out rounded to 1e-9 (no 0.30000000000000004).
+     */
+    fn test_event_numbers_rounded() {
+        const id = 'prec_events';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'frac_hard', 0.1, true));
+        assert(self.allow(id, 'frac_hard', 0.2, true));
+        const seen = self.changed_values.get(id);
+        assert_eq(seen.len(), 2);
+        assert_eq(str(seen[1]), '0.3');
+    }
+}

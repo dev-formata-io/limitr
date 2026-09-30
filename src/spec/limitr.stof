@@ -949,6 +949,21 @@ Limitr: {
 
 
     /**
+     * Round an outgoing event's numbers to 1e-9 (top level, plus its `meter` and `governor`
+     * objects). Storage keeps full precision so sub-nano amounts still accumulate; this only
+     * keeps drift like 0.30000000000000004 out of notifications, host handlers, and Cloud.
+     */
+    fn round_event(event: obj) {
+        for (const target in [event, event.meter, event.governor]) {
+            if ((typeof target) != 'obj') continue;
+            for (const pair in target.fields()) {
+                if ((typeof pair[1]) == 'float') target.insert(pair[0], pair[1].round(9));
+            }
+        }
+    }
+
+
+    /**
      * Customer meter object.
      * Resolved to the correct customer given the entitlement scope.
      */
@@ -1008,7 +1023,7 @@ Limitr: {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) val += remaining;
             }
-            return val;
+            return val.round(9); // outgoing read: 1e-9 (storage keeps full precision)
         }
         null
     }
@@ -1096,7 +1111,7 @@ Limitr: {
                 const meter: Meter = pair[0].meters.get(entitlement);
                 if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter)) {
                     const available = meter.governor_available(limit.governor_capacity as float, limit.governor_refill_rate);
-                    return min(available, period_remaining);
+                    return min(available, period_remaining).round(9);
                 }
             }
         }
@@ -1130,7 +1145,7 @@ Limitr: {
                 if (percent) {
                     res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
                 }
-                return res;
+                return res.round(9); // outgoing read: 1e-9 (storage keeps full precision)
             }
         }
         null
@@ -1148,7 +1163,7 @@ Limitr: {
             const customer = pair[0];
             const meter: Meter = customer.meters.get(entitlement);
             const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-            return self.period_value(limit, meter);
+            return self.period_value(limit, meter).round(9); // outgoing read: 1e-9
         }
         null
     }
@@ -1333,8 +1348,8 @@ Limitr: {
             if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
-                    const diff = max(0, value - remaining);
-                    const diff_overage = max(0, overage - remaining);
+                    const diff = max(0, (value - remaining).round(9)); // at 1e-9: float residue isn't uncovered usage
+                    const diff_overage = max(0, (overage - remaining).round(9));
                     // uncovered units are the tail of the call (grants cover from the first overage unit)
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
@@ -1358,7 +1373,7 @@ Limitr: {
                 }
                 existing_meter.refill_governor(limit.governor_capacity as float, limit.governor_refill_rate);
 
-                if (value > 0 && value > existing_meter.governor_tokens) {
+                if (value > 0 && value.round(9) > existing_meter.governor_tokens.round(9)) {
                     // Governor deny — fire new event, record history, return false
                     existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                     if (event) {
@@ -1376,6 +1391,7 @@ Limitr: {
                             },
                         };
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-governed', event_value);
                         await <Event>.send('meter-governed', event_value);
                         drop(event_value);
@@ -1439,6 +1455,7 @@ Limitr: {
                             if (event) {
                                 // Internal notifications first for any matching
                                 const notes: Notifications = self.notifications;
+                                self.round_event(event_value);
                                 await notes.handle_event('meter-overage', event_value);
                                 await <Event>.send('meter-overage', event_value);
                             }
@@ -1451,12 +1468,14 @@ Limitr: {
                     }
                     if (existing_meter_reset && event) {
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-reset', event_value);
                         await <Event>.send('meter-reset', event_value);
                     }
                     if (!sent_overage && event) {
                         // Internal notifications first for any matching
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-changed', event_value);
                         await <Event>.send('meter-changed', event_value);
                     }
@@ -1483,7 +1502,7 @@ Limitr: {
                 
                 if (overage > 0 && limit.grants_apply) {
                     const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
-                    if (remaining != null && remaining >= overage) {
+                    if (remaining != null && remaining.round(9) >= overage.round(9)) {
                         cap_overage += overage; // for spend caps that are overage only
                         if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units, billable)) {
                             valid = true; // we're now valid
@@ -1525,17 +1544,20 @@ Limitr: {
                 if (event) {
                     if (existing_meter_reset) {
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-reset', event_value);
                         await <Event>.send('meter-reset', event_value);
                     }
                     if (valid) {
                         // Internal notifications first for any matching
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-changed', event_value);
                         await <Event>.send('meter-changed', event_value);
                     } else {
                         // Internal notifications first for any matching
                         const notes: Notifications = self.notifications;
+                        self.round_event(event_value);
                         await notes.handle_event('meter-limit', event_value);
                         await <Event>.send('meter-limit', event_value);
                     }
@@ -1559,6 +1581,7 @@ Limitr: {
                             cap: crossed,
                         };
                         const notes: Notifications = self.notifications;
+                        self.round_event(threshold_event);
                         await notes.handle_event('cap-threshold-crossed', threshold_event);
                         await <Event>.send_tmp('cap-threshold-crossed', threshold_event);
                     }
@@ -1649,8 +1672,8 @@ Limitr: {
             if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
-                    const diff = max(0, value - remaining);
-                    const diff_overage = max(0, overage - remaining);
+                    const diff = max(0, (value - remaining).round(9)); // at 1e-9: float residue isn't uncovered usage
+                    const diff_overage = max(0, (overage - remaining).round(9));
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
                     if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
@@ -1665,7 +1688,7 @@ Limitr: {
             if (value > 0 && limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
                 const capacity = limit.governor_capacity as float;
                 const available = existing_meter == null || reset_pending ? capacity : existing_meter.governor_available(capacity, limit.governor_refill_rate);
-                if (value > available) {
+                if (value.round(9) > available.round(9)) {
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                     return false;
                 }
@@ -1681,7 +1704,7 @@ Limitr: {
             // if we have a hard limit, lets check against credit grants to see if we're good
             if (limit != null && limit.mode == 'hard' && limit.grants_apply && overage > 0) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
-                if (remaining != null && remaining >= overage) {
+                if (remaining != null && remaining.round(9) >= overage.round(9)) {
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                     return true;
                 }
@@ -2271,7 +2294,8 @@ Limitr: {
      */
     fn credit_remaining(customer_id: str!, credit: str!) -> float {
         const customer = self.customer(customer_id);
-        customer != null ? customer.remaining_grant_credit(self, credit) : null
+        const remaining = customer != null ? customer.remaining_grant_credit(self, credit) : null;
+        remaining != null ? remaining.round(9) : null // outgoing read: 1e-9
     }
 
 
