@@ -558,6 +558,8 @@ export class Limitr {
      *   track cumulative spend as a one-way ratchet.
      * - "hard_trailing" lets the call that crosses the ceiling through (the cap was under
      *   before it) and blocks every call after - for costs only known after the call.
+     * - "shared" applies the cap to every customer referencing this one (directly or through
+     *   a ref chain), e.g. an org-wide USD budget; "shared_with" limits it to caller types.
      *
      * Returns the created Cap, or null if a cap with options.cap_id already exists on
      * the customer (reset or remove it first) or options.credit doesn't resolve to a
@@ -570,7 +572,8 @@ export class Limitr {
             options.exchangeable ?? null, options.ignore_grants ?? false, options.overage_only ?? false,
             options.observe_only ?? false, options.overhead_cost ?? false, options.follow_decrements ?? false, options.scope ?? null,
             options.resets ?? false, options.reset_inc ?? null, options.reset_sch ?? null, options.expires_on ?? null,
-            options.send_events ?? true, options.hard_trailing ?? false
+            options.send_events ?? true, options.hard_trailing ?? false,
+            options.shared ?? false, options.shared_with ?? null
         ));
         if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return null;

@@ -71,6 +71,16 @@ Cap: {
     /// Useful when the real cost isn't known until after the call (e.g. LLM output).
     bool! hard_trailing: false;
 
+    /// Shared with customers that reference this one (directly or through a ref chain)?
+    /// A shared cap on an org applies to calls made by its teams and users - every customer
+    /// whose refs lead to the org - in addition to the org's own calls.
+    /// Unshared caps only apply to calls made as the customer that holds them.
+    bool! shared: false;
+
+    /// Optional filter for shared caps: caller customer types this cap applies to
+    /// (e.g. ['user']). Null or empty = every referencing customer.
+    list shared_with: null;
+
     /// Optional scope: entitlement names this cap restricts.
     /// Null (default) = applies to every entitlement with a valid
     /// Exchange path from the entitlement's credit to this cap's credit.

@@ -443,9 +443,10 @@ Customer: {
      * caller (Limitr.allow) uses this to fire a threshold-crossing event
      * per cap, exactly once per crossing rather than on every call past it.
      *
-     * See cap_consumption for `position`.
+     * See cap_consumption for `position`. `changed` (optional) collects every cap whose
+     * meter_value moved, so the caller can sync the customers holding them.
      */
-    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0) -> list {
+    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0, changed: list = null) -> list {
         // Pass 1: roll forward resets, drop expired, and verify - mutate nothing yet.
         const applicable = [];
         for (const cap: Cap in self.current_caps(extra)) {
@@ -473,6 +474,7 @@ Customer: {
             const before = cap.meter_value ?? 0;
             const after = before + converted;
             cap.meter_value = after;
+            if (changed != null && converted != 0) changed.push_back(cap); // caller syncs the holders
             if (before.round(9) < ceiling.round(9) && after.round(9) >= ceiling.round(9)) crossings.push_back(cap); // at 1e-9
         }
 
@@ -493,8 +495,6 @@ Customer: {
      * Caller owns the returned object(s) and is responsible for drop()
      * on each once the call completes - these are never inserted into any
      * customer.caps map.
-     *
-     * TODO: allow other customer caps to be passed in as args, too! (shared caps)
      */
     fn caps_from_arg(arg: Cap | map = null) -> list {
         const out = [];

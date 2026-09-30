@@ -23,6 +23,7 @@ import './lifecycle' as TestLifecycle;
 import './pricing' as TestPricing;
 import './periods' as TestPeriods;
 import './precision' as TestPrecision;
+import './shared_caps' as TestSharedCaps;
 
 
 Limitr policy: {

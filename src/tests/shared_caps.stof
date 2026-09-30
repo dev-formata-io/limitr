@@ -1,0 +1,447 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Shared caps & scope resolution through ref chains.
+//
+// Hierarchy (refs):  alice -> team -> org,  bob -> team -> org,  carol -> org
+//
+// Caps checked on a call: the caller's own caps + shared caps on every customer
+// reachable through the caller's refs (transitively). Entitlement scope resolves
+// through the same chain (nearest customer of the scope type).
+//
+Limitr TestSharedCapsPolicy: {
+    credits: {
+        tok: { price: { amount: 1 } } // 1 tok = $1
+        ohd: { price: { amount: 1 }, overhead_cost: 0.25 } // $1 price, $0.25 provider overhead
+        tier_tok: { pricing_model: 'tiered', tiers: [ { up_to: 10, price: { amount: 1 } }, { price: { amount: 0.5 } } ] }
+    }
+
+    plans: {
+        team: {
+            default: true
+            entitlements: {
+                personal: { limit: { credit: 'tok', mode: 'soft', value: 0 } }
+                org_pool: { scope: 'org', limit: { credit: 'tok', mode: 'soft', value: 0 } }
+                team_pool: { scope: 'team', limit: { credit: 'tok', mode: 'soft', value: 0 } }
+                // option coverage
+                personal_incl: { limit: { credit: 'tok', mode: 'soft', value: 10 } }        // 10 included
+                org_incl: { scope: 'org', limit: { credit: 'tok', mode: 'soft', value: 10 } } // 10 included, pooled
+                personal_hard: { limit: { credit: 'tok', mode: 'hard', value: 0 } }         // grant-backed
+                overhead: { limit: { credit: 'ohd', mode: 'soft', value: 0 } }
+                tier_pool: { scope: 'org', limit: { credit: 'tier_tok', mode: 'soft', value: 0 } }
+            }
+        }
+    }
+
+    // customer id -> number of customer-set events seen during a test window
+    map customer_sets: map();
+    // customer id -> cap ids crossed
+    map crossings: map();
+
+
+    #[customer-set]
+    fn record_customer_set(customer: obj) {
+        if (customer.parent().parent() != self) return;
+        const id = customer.id;
+        self.customer_sets.insert(id, (self.customer_sets.get(id) ?? 0) + 1);
+    }
+
+
+    #[cap-threshold-crossed]
+    fn record_crossing(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        const id = event.customer.id;
+        let seen = self.crossings.get(id);
+        if (seen == null) {
+            seen = [];
+            self.crossings.insert(id, seen);
+        }
+        seen.push_back(event.cap.id);
+    }
+
+
+    /// Build an isolated hierarchy with a name prefix (tests run async & interleave).
+    fn hierarchy(p: str!) {
+        self.create_customer(`${p}_org`, 'team', 'org', 'Org');
+        self.create_customer(`${p}_team`, '', 'team', 'Team', refs = [`${p}_org`]);
+        self.create_customer(`${p}_alice`, '', 'user', 'Alice', refs = [`${p}_team`]);
+        self.create_customer(`${p}_bob`, '', 'user', 'Bob', refs = [`${p}_team`]);
+        self.create_customer(`${p}_carol`, '', 'user', 'Carol', refs = [`${p}_org`]);
+    }
+
+
+    // ── Entitlement scope through chains ──────────────────────────────────────
+
+    #[test]
+    fn test_scope_resolves_through_chain() {
+        self.hierarchy('sc');
+        assert(self.allow('sc_alice', 'org_pool', 3, false));   // alice -> team -> org
+        assert(self.allow('sc_carol', 'org_pool', 2, false));   // carol -> org (direct)
+        assert(self.allow('sc_alice', 'team_pool', 4, false));  // alice -> team
+        assert_eq(self.value('sc_org', 'org_pool'), 5);
+        assert_eq(self.value('sc_team', 'team_pool'), 4);
+        assert_eq(self.value('sc_alice', 'org_pool'), 5);       // reads resolve the same way
+        const alice = self.customer('sc_alice');
+        assert_eq(alice.meters.get('org_pool').value, 0);       // nothing metered on alice herself
+    }
+
+
+    #[test]
+    /**
+     * No customer of the scope type anywhere in the chain -> denied (not metered on the caller).
+     */
+    fn test_scope_without_match_denies() {
+        self.create_customer('sc_loner', 'team', 'user', 'Loner');
+        assert_not(self.allow('sc_loner', 'org_pool', 1, false));
+        assert_not(self.check('sc_loner', 'org_pool', 1));
+        assert_eq(self.value('sc_loner', 'org_pool'), null);
+        assert(self.allow('sc_loner', 'personal', 1, false));
+
+        // refs exist but the chain never reaches an 'org' (used to fall back to the caller's own meter)
+        self.create_customer('sc_orphan_team', '', 'team', 'Team');
+        self.create_customer('sc_orphan', 'team', 'user', refs = ['sc_orphan_team']);
+        assert_not(self.allow('sc_orphan', 'org_pool', 1, false));
+        const orphan = self.customer('sc_orphan');
+        assert_eq(orphan.meters.get('org_pool').value, 0);
+    }
+
+
+    #[test]
+    fn test_scope_cycle_terminates() {
+        self.create_customer('cy_org', 'team', 'org', refs = ['cy_team']);
+        self.create_customer('cy_team', '', 'team', refs = ['cy_org']);
+        self.create_customer('cy_user', '', 'user', refs = ['cy_team']);
+        assert(self.allow('cy_user', 'org_pool', 1, false));
+        assert_eq(self.value('cy_org', 'org_pool'), 1);
+        // a cycle with no match terminates and denies
+        self.create_customer('cy_a', '', 'team', refs = ['cy_b']);
+        self.create_customer('cy_b', 'team', 'team', refs = ['cy_a']);
+        self.create_customer('cy_lost', '', 'user', refs = ['cy_a']);
+        assert_not(self.allow('cy_lost', 'org_pool', 1, false));
+    }
+
+
+    // ── Which caps apply ──────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A user's own caps apply even when the entitlement resolves to the org.
+     */
+    fn test_personal_caps_apply_on_scoped_entitlement() {
+        self.hierarchy('pc');
+        assert(self.add_customer_cap('pc_alice', 5, 'alice_cap', events = false));
+        assert_not(self.check('pc_alice', 'org_pool', 10));
+        assert_not(self.allow('pc_alice', 'org_pool', 10, false));
+        assert(self.allow('pc_alice', 'org_pool', 5, false));
+        assert_eq(self.customer_cap('pc_alice', 'alice_cap').meter_value, 5);
+        assert_eq(self.value('pc_org', 'org_pool'), 5);
+    }
+
+
+    #[test]
+    /**
+     * A shared org cap applies to every call from customers under the org -
+     * through the team chain or directly, on scoped and personal entitlements.
+     */
+    fn test_shared_org_cap_applies_to_all_members() {
+        self.hierarchy('sh');
+        assert(self.add_customer_cap('sh_org', 20, 'org_budget', shared = true, events = false));
+        const cap = self.customer_cap('sh_org', 'org_budget');
+
+        assert(self.allow('sh_alice', 'personal', 12, false));  // via team -> org
+        assert(self.allow('sh_bob', 'org_pool', 5, false));     // via team -> org
+        assert(self.allow('sh_carol', 'personal', 3, false));   // direct org ref
+        assert_eq(cap.meter_value, 20);
+
+        assert_not(self.check('sh_bob', 'personal', 1));
+        assert_not(self.allow('sh_bob', 'personal', 1, false));
+        assert_not(self.allow('sh_team', 'team_pool', 1, false)); // team's own calls too
+        assert_eq(cap.meter_value, 20);
+    }
+
+
+    #[test]
+    /**
+     * An org cap that isn't shared only applies to the org's own calls.
+     */
+    fn test_unshared_org_cap_only_for_org() {
+        self.hierarchy('us');
+        assert(self.add_customer_cap('us_org', 5, 'org_only', events = false));
+        assert(self.allow('us_alice', 'org_pool', 10, false)); // not shared -> doesn't apply
+        assert_eq(self.customer_cap('us_org', 'org_only').meter_value, 0);
+        assert_not(self.allow('us_org', 'org_pool', 10, false)); // the org's own call
+        assert(self.allow('us_org', 'org_pool', 5, false));
+    }
+
+
+    #[test]
+    fn test_shared_with_filters_caller_type() {
+        self.hierarchy('sw');
+        assert(self.add_customer_cap('sw_org', 5, 'teams_only', shared = true, shared_with = ['team'], events = false));
+        assert(self.allow('sw_alice', 'personal', 10, false));      // users not covered
+        assert_not(self.allow('sw_team', 'team_pool', 10, false));  // teams are
+        assert(self.allow('sw_team', 'team_pool', 5, false));
+    }
+
+
+    #[test]
+    /**
+     * Layered budgets: team and org shared caps both enforce, all-or-nothing.
+     */
+    fn test_layered_shared_caps() {
+        self.hierarchy('ly');
+        assert(self.add_customer_cap('ly_team', 5, 'team_budget', shared = true, events = false));
+        assert(self.add_customer_cap('ly_org', 100, 'org_budget', shared = true, events = false));
+
+        assert_not(self.allow('ly_alice', 'personal', 6, false)); // team budget binds
+        assert_eq(self.customer_cap('ly_org', 'org_budget').meter_value, 0); // nothing committed
+        assert(self.allow('ly_alice', 'personal', 5, false));
+        assert(self.allow('ly_carol', 'personal', 6, false));      // carol isn't under the team
+        assert_eq(self.customer_cap('ly_team', 'team_budget').meter_value, 5);
+        assert_eq(self.customer_cap('ly_org', 'org_budget').meter_value, 11);
+    }
+
+
+    #[test]
+    fn test_shared_cap_counted_once_with_cycles() {
+        self.create_customer('cc_org', 'team', 'org', refs = ['cc_team']);
+        self.create_customer('cc_team', '', 'team', refs = ['cc_org']);
+        self.create_customer('cc_user', '', 'user', refs = ['cc_team', 'cc_org']);
+        assert(self.add_customer_cap('cc_org', 100, 'org_budget', shared = true, events = false));
+        assert(self.allow('cc_user', 'personal', 3, false));
+        assert_eq(self.customer_cap('cc_org', 'org_budget').meter_value, 3);
+    }
+
+
+    // ── Sync & events ─────────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * Customers whose caps moved (other than the meter owner, which the meter
+     * event already carries) get a customer-set, once per call.
+     */
+    fn test_customer_set_for_changed_cap_holders() {
+        self.hierarchy('cs');
+        assert(self.add_customer_cap('cs_org', 100, 'org_budget', shared = true, events = false));
+        assert(self.add_customer_cap('cs_alice', 100, 'alice_cap', events = false));
+        self.customer_sets.clear();
+
+        // personal call: owner alice (meter event), org's shared cap moved -> customer-set for org only
+        assert(self.allow('cs_alice', 'personal', 1, true));
+        assert_eq(self.customer_sets.get('cs_org'), 1);
+        assert_eq(self.customer_sets.get('cs_alice'), null);
+
+        // org-scoped call: owner org (meter event), alice's personal cap moved -> customer-set for alice
+        assert(self.allow('cs_alice', 'org_pool', 1, true));
+        assert_eq(self.customer_sets.get('cs_alice'), 1);
+        assert_eq(self.customer_sets.get('cs_org'), 1);
+
+        // events off -> no sync events either
+        assert(self.allow('cs_alice', 'personal', 1, false));
+        assert_eq(self.customer_sets.get('cs_org'), 1);
+    }
+
+
+    #[test]
+    fn test_shared_cap_threshold_event_names_holder() {
+        self.hierarchy('te');
+        assert(self.add_customer_cap('te_org', 5, 'org_budget', shared = true, observe_only = true, events = false));
+        assert(self.allow('te_alice', 'personal', 6, true));
+        assert_eq(self.crossings.get('te_org'), ['org_budget']);
+    }
+
+
+    // ── Cap options on shared caps (called by a user through team -> org) ─────
+
+    fn usd_grant(customer_id: str!, value: float!) -> Grant {
+        const customer = self.customer(customer_id);
+        const grant = new Grant {
+            id: 'grant-usd', credit: 'usd', starting_value: value, value,
+            created_on: Time.now(), granted_on: Time.now(),
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        grant
+    }
+
+
+    #[test]
+    /**
+     * overage_only: in-plan usage never counts - on the caller's own entitlement
+     * (included amount from the caller's meter) and on an org-pooled one (the org's meter).
+     */
+    fn test_shared_overage_only() {
+        self.hierarchy('oo');
+        assert(self.add_customer_cap('oo_org', 5, 'over', shared = true, overage_only = true, events = false));
+        const cap = self.customer_cap('oo_org', 'over');
+
+        assert(self.allow('oo_alice', 'personal_incl', 10, false)); // included
+        assert_eq(cap.meter_value, 0);
+        assert(self.allow('oo_alice', 'personal_incl', 3, false));  // 3 overage
+        assert_eq(cap.meter_value, 3);
+
+        assert(self.allow('oo_bob', 'org_incl', 8, false));         // pooled: 8 of the org's 10 included
+        assert(self.allow('oo_carol', 'org_incl', 3, false));       // 2 included + 1 overage (org's meter)
+        assert_eq(cap.meter_value, 4);
+        assert_not(self.check('oo_bob', 'org_incl', 2));            // 4 + 2 > 5
+        assert_not(self.allow('oo_bob', 'org_incl', 2, false));
+        assert(self.allow('oo_bob', 'org_incl', 1, false));
+        assert_eq(cap.meter_value, 5);
+    }
+
+
+    #[test]
+    /**
+     * overhead_cost: the shared cap tracks provider overhead (units x overhead), not price.
+     */
+    fn test_shared_overhead_cost() {
+        self.hierarchy('oh');
+        assert(self.add_customer_cap('oh_org', 2, 'overhead', shared = true, overhead_cost = true, events = false));
+        const cap = self.customer_cap('oh_org', 'overhead');
+        assert(self.allow('oh_alice', 'overhead', 4, false)); // $1.00 overhead
+        assert_eq(cap.meter_value, 1);
+        assert(self.allow('oh_carol', 'overhead', 4, false)); // $2.00
+        assert_not(self.check('oh_bob', 'overhead', 1));
+        assert_not(self.allow('oh_bob', 'overhead', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * ignore_grants: spend the caller's grants cover doesn't count against the shared cap.
+     */
+    fn test_shared_ignore_grants() {
+        self.hierarchy('ig');
+        assert(self.add_customer_cap('ig_org', 3, 'out_of_pocket', shared = true, ignore_grants = true, events = false));
+        assert(self.add_customer_cap('ig_org', 100, 'gross', shared = true, observe_only = true, events = false));
+        const cap = self.customer_cap('ig_org', 'out_of_pocket');
+        const gross = self.customer_cap('ig_org', 'gross');
+        self.usd_grant('ig_alice', 4);
+
+        assert(self.allow('ig_alice', 'personal', 4, false)); // soft overage, fully covered by alice's grant
+        assert_eq(cap.meter_value, 0);
+        assert_eq(gross.meter_value, 4);                      // plain cap still sees gross spend
+        assert(self.allow('ig_alice', 'personal', 2, false)); // grant spent -> out of pocket
+        assert_eq(cap.meter_value, 2);
+        assert_not(self.check('ig_bob', 'personal', 2));      // 2 + 2 > 3
+        assert_not(self.allow('ig_bob', 'personal', 2, false));
+        assert(self.allow('ig_bob', 'personal', 1, false));
+        assert_eq(cap.meter_value, 3);
+    }
+
+
+    #[test]
+    /**
+     * hard_trailing: the call that crosses the shared ceiling goes through, then all members are blocked.
+     */
+    fn test_shared_hard_trailing() {
+        self.hierarchy('ht');
+        assert(self.add_customer_cap('ht_org', 5, 'budget', shared = true, hard_trailing = true, events = false));
+        assert(self.allow('ht_alice', 'personal', 4, false));
+        assert(self.check('ht_bob', 'personal', 3));
+        assert(self.allow('ht_bob', 'personal', 3, false)); // crosses: 7
+        assert_eq(self.customer_cap('ht_org', 'budget').meter_value, 7);
+        assert_not(self.check('ht_carol', 'personal', 1));
+        assert_not(self.allow('ht_alice', 'personal', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * follow_decrements: a member's decrement moves the shared cap back down.
+     */
+    fn test_shared_follow_decrements() {
+        self.hierarchy('fd');
+        assert(self.add_customer_cap('fd_org', 5, 'budget', shared = true, follow_decrements = true, events = false));
+        assert(self.add_customer_cap('fd_org', 5, 'ratchet', shared = true, events = false));
+        assert(self.allow('fd_alice', 'personal', 5, false));
+        assert(self.allow('fd_alice', 'personal', -2, false));
+        assert_eq(self.customer_cap('fd_org', 'budget').meter_value, 3);
+        assert_eq(self.customer_cap('fd_org', 'ratchet').meter_value, 5);
+    }
+
+
+    #[test]
+    /**
+     * Credit matching and entitlement scope on shared caps.
+     */
+    fn test_shared_credit_and_entitlement_scope() {
+        self.hierarchy('cr');
+        // exact-credit cap (not exchangeable): only 'ohd' usage counts
+        assert(self.add_customer_cap('cr_org', 3, 'ohd_only', credit = 'ohd', shared = true, events = false));
+        // entitlement-scoped cap: only 'team_pool' counts
+        assert(self.add_customer_cap('cr_org', 2, 'pool_only', shared = true, scope = ['team_pool'], events = false));
+
+        assert(self.allow('cr_alice', 'personal', 10, false));    // neither applies
+        assert_eq(self.customer_cap('cr_org', 'ohd_only').meter_value, 0);
+        assert_eq(self.customer_cap('cr_org', 'pool_only').meter_value, 0);
+        assert(self.allow('cr_alice', 'overhead', 3, false));     // ohd_only: 3 ohd
+        assert_not(self.allow('cr_bob', 'overhead', 1, false));
+        assert(self.allow('cr_alice', 'team_pool', 2, false));    // pool_only
+        assert_not(self.allow('cr_bob', 'team_pool', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * observe_only shared caps never deny but still track.
+     */
+    fn test_shared_observe_only() {
+        self.hierarchy('ob');
+        assert(self.add_customer_cap('ob_org', 1, 'tracker', shared = true, observe_only = true, events = false));
+        assert(self.allow('ob_alice', 'personal', 5, false));
+        assert(self.allow('ob_carol', 'personal', 5, false));
+        assert_eq(self.customer_cap('ob_org', 'tracker').meter_value, 10);
+    }
+
+
+    #[test]
+    /**
+     * Resetting and expiring shared caps roll forward / are removed from their holder
+     * when a member's call finds them.
+     */
+    fn test_shared_resets_and_expiry() {
+        self.hierarchy('rx');
+        const resetting = self.add_customer_cap('rx_org', 5, 'monthly', shared = true, resets = true, events = false);
+        const expiring = self.add_customer_cap('rx_org', 1, 'promo', shared = true, expires_on = Time.now() + 1day, events = false);
+        assert(self.allow('rx_alice', 'personal', 1, false));
+        assert_not(self.allow('rx_alice', 'personal', 1, false)); // promo cap binds
+
+        expiring.expires_on = Time.now() - 1s;
+        assert(self.allow('rx_alice', 'personal', 4, false));     // promo gone, monthly at 5
+        assert_eq(self.customer_cap('rx_org', 'promo'), null);
+        assert_not(self.allow('rx_bob', 'personal', 1, false));
+
+        resetting.started = Time.now() - 31days;                 // new period (30-day default)
+        assert(self.allow('rx_bob', 'personal', 1, false));
+        assert_eq(self.customer_cap('rx_org', 'monthly').meter_value, 1);
+    }
+
+
+    #[test]
+    /**
+     * Shared caps with tier-priced credits use the meter owner's tier position.
+     */
+    fn test_shared_cap_tier_position() {
+        self.hierarchy('tp');
+        assert(self.add_customer_cap('tp_org', 100, 'budget', shared = true, observe_only = true, events = false));
+        const cap = self.customer_cap('tp_org', 'budget');
+        assert(self.allow('tp_carol', 'tier_pool', 8, false)); // $8 (org meter 0 -> 8)
+        assert(self.allow('tp_alice', 'tier_pool', 4, false)); // 2 @ $1 + 2 @ $0.5 = $3 (org meter 8 -> 12)
+        assert_eq(cap.meter_value, 11);
+    }
+}

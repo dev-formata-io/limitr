@@ -50,6 +50,8 @@ export interface LimitrCap {
     overhead_cost: boolean;
     follow_decrements: boolean;
     hard_trailing: boolean;
+    shared: boolean;
+    shared_with: string[] | null;
     scope: string[] | null;
     meter_value: number;
     created_on: number;
@@ -95,6 +97,14 @@ export interface LimitrCapOptions {
      * hard_trailing. Useful when the real cost isn't known until after the call (e.g. LLM output).
      */
     hard_trailing?: boolean;
+    /**
+     * When true, this cap also applies to every customer that references this one, directly or
+     * through a ref chain (e.g. an org budget shared by its teams and users). Unshared caps only
+     * apply to calls made as the customer holding them.
+     */
+    shared?: boolean;
+    /** For shared caps: only apply to callers of these customer types (e.g. ['user']). Omit for all. */
+    shared_with?: string[];
     /** Restrict this cap to specific entitlement names. Omit (or leave undefined) to apply wherever Exchange-convertible. */
     scope?: string[];
     /** Whether this cap's meter_value resets on a schedule. Defaults to false (a non-resetting standing cap). */

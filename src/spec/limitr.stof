@@ -562,8 +562,8 @@ Limitr: {
         /// the full explanation of credit/exchangeable/ignore_grants defaults.
         fn add_customer_cap(id: str!, value: float | str!, cap_id: str = '', credit: str! = 'rune',
             exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms,
-            events: bool = true, hard_trailing: bool = false) -> Cap {
-            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, overhead_cost, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on, events, hard_trailing)
+            events: bool = true, hard_trailing: bool = false, shared: bool = false, shared_with?: list) -> Cap {
+            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, overhead_cost, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on, events, hard_trailing, shared, shared_with)
         }
 
         /// Look up a customer's standing spend cap by id.
@@ -892,22 +892,80 @@ Limitr: {
         if (customer != null) {
             const ent = self.entitlement(customer_id, entitlement);
             if (ent != null) {
-                // check entitlement scope for type of customer to use in refs (if different)
+                // Entitlement scope: the nearest customer of that type through the refs chain.
+                // No such customer -> no entitlement (never metered on the caller instead).
                 if (ent.scope != null && ent.scope != customer.type) {
-                    if (customer.refs.empty()) return null;
-                    for (const ref in customer.refs) {
-                        const tmp = self.customer(ref);
-                        if (tmp != null && tmp.type == ent.scope) {
-                            customer = tmp;
+                    let scoped = null;
+                    for (const candidate in self.ref_customers(customer)) {
+                        if (candidate.type == ent.scope) {
+                            scoped = candidate;
                             break;
                         }
                     }
-                    if (customer == null) return null;
+                    if (scoped == null) return null;
+                    customer = scoped;
                 }
                 return (customer, ent);
             }
         }
         null
+    }
+
+
+    /**
+     * Customers reachable through `customer`'s refs, transitively and nearest first
+     * (breadth-first). Each customer appears once; cycles and repeats are skipped;
+     * `customer` itself is never included.
+     */
+    fn ref_customers(customer: Customer!) -> list {
+        const out = [];
+        const seen = set(customer.id);
+        const queue = [customer];
+        while (queue.any()) {
+            const current = queue.pop_front();
+            for (const ref in current.refs) {
+                const found = self.customer(ref);
+                if (found != null && !seen.contains(found.id)) {
+                    seen.insert(found.id);
+                    out.push_back(found);
+                    queue.push_back(found);
+                }
+            }
+        }
+        out
+    }
+
+
+    /**
+     * Shared caps that apply to a call made by `caller`: every current `shared` cap on the
+     * customers reachable through its refs, filtered by `shared_with` (caller type).
+     * Expired shared caps are removed from their holder.
+     */
+    fn shared_caps_for(caller: Customer!) -> list {
+        const out = [];
+        for (const holder in self.ref_customers(caller)) {
+            for (const pair in holder.caps.fields()) {
+                const cap: Cap = pair[1];
+                if (!cap.shared) continue;
+                if (cap.shared_with != null && cap.shared_with.any() && !cap.shared_with.contains(caller.type)) continue;
+                if (!cap.ensure_current()) {
+                    holder.caps.remove(pair[0], shallow = false);
+                    continue;
+                }
+                out.push_back(cap);
+            }
+        }
+        out
+    }
+
+
+    /**
+     * The customer holding a stored cap (null for ephemeral/unattached caps).
+     */
+    fn cap_holder(cap: Cap!) -> Customer {
+        const caps_obj = cap.parent();
+        const holder = caps_obj != null ? caps_obj.parent() : null;
+        holder != null && holder.instance_of('Customer') ? holder : null
     }
 
 
@@ -1337,10 +1395,15 @@ Limitr: {
             // applicable caps (standing + ephemeral) BEFORE any mutation -
             // governor tokens, meters, and grants are all untouched at this
             // point, so a cap denial here is a clean no-op deny.
+            // Caps on this call: the caller's own caps + shared caps up its refs chain + call-scoped caps.
+            // (Not the meter owner's: a scoped entitlement moves the meter, not whose caps apply.)
+            const caller: Customer = self.customer(id);
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
+            const cap_extras = self.shared_caps_for(caller);
+            for (const ec in ephemeral_caps) cap_extras.push_back(ec);
             let cap_grant_applied = 0.0;
             let cap_overage = 0.0;
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true, position)) {
+            if (value > 0 && credit_name != null && !caller.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, cap_extras, stof_units, true, position)) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                 if (drop_e_dta) drop(event_data);
                 return false;
@@ -1353,7 +1416,7 @@ Limitr: {
                     // uncovered units are the tail of the call (grants cover from the first overage unit)
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
+                    if (diff > 0 && !caller.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
                         for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                         if (drop_e_dta) drop(event_data);
                         return false;
@@ -1572,11 +1635,13 @@ Limitr: {
             // governor deny) must not consume cap room for a call that
             // never went through.
             if (valid && credit_name != null) {
-                const crossings = customer.check_and_apply_caps(self, entitlement, credit_name, credit_overhead, value, cap_overage, cap_grant_applied, ephemeral_caps, stof_units, position);
+                const changed_caps = [];
+                const crossings = caller.check_and_apply_caps(self, entitlement, credit_name, credit_overhead, value, cap_overage, cap_grant_applied, cap_extras, stof_units, position, changed_caps);
                 if (crossings != null && event) {
                     for (const crossed: Cap in crossings) {
                         const threshold_event = new {
-                            customer,
+                            customer: self.cap_holder(crossed) ?? caller, // the customer whose cap crossed
+                            caller,
                             entitlement,
                             cap: crossed,
                         };
@@ -1584,6 +1649,19 @@ Limitr: {
                         self.round_event(threshold_event);
                         await notes.handle_event('cap-threshold-crossed', threshold_event);
                         await <Event>.send_tmp('cap-threshold-crossed', threshold_event);
+                    }
+                }
+
+                // Sync: the meter event carries the meter owner; any other customer whose cap
+                // moved on this call (the caller's personal caps on a scoped entitlement, shared
+                // caps up the chain) gets one customer-set.
+                if (event && changed_caps.any()) {
+                    const synced = set();
+                    for (const moved: Cap in changed_caps) {
+                        const holder = self.cap_holder(moved);
+                        if (holder == null || holder == customer || synced.contains(holder.id)) continue;
+                        synced.insert(holder.id);
+                        await <Event>.send('customer-set', holder);
                     }
                 }
             }
@@ -1664,8 +1742,11 @@ Limitr: {
             // applicable caps (standing + ephemeral) BEFORE any mutation -
             // governor tokens, meters, and grants are all untouched at this
             // point, so a cap denial here is a clean no-op deny.
+            const caller: Customer = self.customer(id);
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap);
-            if (value > 0 && credit_name != null && !customer.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, ephemeral_caps, stof_units, true, position)) {
+            const cap_extras = self.shared_caps_for(caller);
+            for (const ec in ephemeral_caps) cap_extras.push_back(ec);
+            if (value > 0 && credit_name != null && !caller.check_caps(self, entitlement, credit_name, credit_overhead, value, overage, cap_extras, stof_units, true, position)) {
                 for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                 return false;
             }
@@ -1676,7 +1757,7 @@ Limitr: {
                     const diff_overage = max(0, (overage - remaining).round(9));
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
-                    if (diff > 0 && !customer.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, ephemeral_caps, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
+                    if (diff > 0 && !caller.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
                         for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                         return false;
                     }
@@ -2146,7 +2227,7 @@ Limitr: {
      */
     fn add_customer_cap(customer_id: str!, value: float | str!, id: str = '', credit: str! = 'rune',
         exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms,
-        events: bool = true, hard_trailing: bool = false) -> Cap {
+        events: bool = true, hard_trailing: bool = false, shared: bool = false, shared_with?: list) -> Cap {
         const customer = self.customer(customer_id);
         if (customer == null) return null;
         if (credit != 'rune' && self.credit(credit) == null && ?self.exchange.get_pair(credit) == null) return null; // unknown credit, can't cap it
@@ -2173,6 +2254,8 @@ Limitr: {
             overhead_cost,
             follow_decrements,
             hard_trailing,
+            shared,
+            shared_with: shared_with ?? null,
             scope: scope ?? null,
             created_on: Time.now(),
             started: Time.now(),
