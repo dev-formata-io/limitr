@@ -1380,4 +1380,115 @@ Limitr TestCapPolicy: {
         assert_eq(bucket.len(), 1);
         assert_eq(bucket[0], 'thresh_combo_cap');
     }
+
+
+    // ── hard_trailing caps ────────────────────────────────────────────────────
+
+    #[test]
+    /**
+     * A hard_trailing cap lets the call that crosses the ceiling through (it was
+     * under before the call), commits it in full, then blocks until reset.
+     * ai_credit = $0.40, so the $2 cap is 5 credits.
+     */
+    fn test_hard_trailing_cap_crossing_call() {
+        const id = 'trailing_basic';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 2, 'pipeline', hard_trailing = true, events = false));
+        const cap = self.customer_cap(id, 'pipeline');
+        assert(cap.hard_trailing);
+
+        assert(self.allow(id, 'ai_credits', 4, false));          // $1.60
+        assert(self.check(id, 'ai_credits', 2));                 // $2.40 after - allowed (under before)
+        assert(self.allow(id, 'ai_credits', 2, false));
+        assert_eq(cap.meter_value.round(6), 2.4);                // committed in full
+
+        assert_not(self.check(id, 'ai_credits', 1));             // now over - blocked
+        assert_not(self.allow(id, 'ai_credits', 1, false));
+        assert_eq(cap.meter_value.round(6), 2.4);
+    }
+
+
+    #[test]
+    /**
+     * Contrast: the same sequence on a regular cap denies the crossing call.
+     */
+    fn test_regular_cap_denies_crossing_call() {
+        const id = 'trailing_contrast';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 2, 'pipeline', events = false));
+        assert(self.allow(id, 'ai_credits', 4, false));
+        assert_not(self.allow(id, 'ai_credits', 2, false));
+        assert(self.allow(id, 'ai_credits', 1, false)); // exactly $2.00 fits
+    }
+
+
+    #[test]
+    /**
+     * Landing exactly on the ceiling blocks the next call (strictly under to continue),
+     * matching Limit.hard_trailing.
+     */
+    fn test_hard_trailing_cap_at_ceiling_blocks() {
+        const id = 'trailing_exact';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 2, 'pipeline', hard_trailing = true, events = false));
+        assert(self.allow(id, 'ai_credits', 5, false)); // exactly $2.00
+        assert_not(self.allow(id, 'ai_credits', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * The threshold event fires once, on the call that crosses.
+     */
+    fn test_hard_trailing_cap_threshold_event() {
+        const id = 'trailing_event';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 2, 'pipeline', hard_trailing = true, events = false));
+        assert(self.allow(id, 'ai_credits', 4, true));
+        assert_eq(self.threshold_crossings.get(id), null);
+        assert(self.allow(id, 'ai_credits', 2, true));  // crosses
+        assert_not(self.allow(id, 'ai_credits', 1, true));
+        assert_eq(self.threshold_crossings.get(id), ['pipeline']);
+    }
+
+
+    #[test]
+    /**
+     * Resetting the cap (or a follow_decrements correction back under the
+     * ceiling) unblocks it.
+     */
+    fn test_hard_trailing_cap_unblocks() {
+        const id = 'trailing_unblock';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 2, 'pipeline', hard_trailing = true, follow_decrements = true, events = false));
+        const cap = self.customer_cap(id, 'pipeline');
+        assert(self.allow(id, 'ai_credits', 6, false)); // $2.40 in one call (was at 0)
+        assert_not(self.allow(id, 'ai_credits', 1, false));
+
+        assert(self.allow(id, 'ai_credits', -2, false)); // decrements never trip, and this cap follows them
+        assert_eq(cap.meter_value.round(6), 1.6);
+        assert(self.allow(id, 'ai_credits', 5, false)); // back under - the next call goes through whole ($3.60)
+        assert_eq(cap.meter_value.round(6), 3.6);
+        assert_not(self.allow(id, 'ai_credits', 1, false));
+        assert(self.reset_customer_cap(id, 'pipeline', false));
+        assert(self.allow(id, 'ai_credits', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * overage_only + hard_trailing: in-plan usage never counts, and the first
+     * overage call is allowed whole while the cap is under its ceiling.
+     */
+    fn test_hard_trailing_overage_only() {
+        const id = 'trailing_overage';
+        self.create_customer(id, 'free');
+        assert(self.add_customer_cap(id, 1, 'overage', overage_only = true, hard_trailing = true, events = false));
+        const cap = self.customer_cap(id, 'overage');
+        assert(self.allow(id, 'included_soft_credits', 10, false)); // included
+        assert_eq(cap.meter_value, 0);
+        assert(self.allow(id, 'included_soft_credits', 5, false));  // $2.00 overage, cap was at 0
+        assert_eq(cap.meter_value.round(6), 2);
+        assert_not(self.allow(id, 'included_soft_credits', 1, false));
+    }
 }

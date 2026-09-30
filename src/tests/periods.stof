@@ -1,0 +1,200 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Reset period tests.
+//
+// This policy is intentionally NEVER validated (no valid() call), like plans
+// set through set_plan or policy updates from Cloud - resets must not depend
+// on the schema pass filling in defaults.
+//
+// Covers: reads (value/remaining/limit/allowance/rate/resets) evaluating the
+// current period without mutating state, and the 30-day default increment for
+// limits, caps, and topup grants that reset without an explicit interval.
+//
+Limitr TestPeriodsPolicy: {
+    credits: {
+        tok: { price: { amount: 0.01 } }
+    }
+
+    plans: {
+        monthly: {
+            label: 'Monthly'
+            entitlements: {
+                // resets without reset_inc/reset_sch - defaults to 30 days
+                implicit: { limit: { credit: 'tok', mode: 'hard', value: 100, resets: true } }
+                explicit: { limit: { credit: 'tok', mode: 'hard', value: 100, resets: true, reset_inc: 30days } }
+                weekly: { limit: { credit: 'tok', mode: 'hard', value: 100, resets: true, reset_inc: 7days } }
+                grant_backed: { limit: { credit: 'tok', mode: 'hard', value: 0, resets: true } }
+            }
+            topups: {
+                // resetting topup without reset_inc - defaults to 30 days
+                refill: { credit: 'tok', value: 50, resets: true }
+            }
+        }
+    }
+
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Put a customer's meter `days_ago` into the past (simulates a period boundary passing).
+    fn age_meter(id: str!, entitlement: str!, days_ago: float) {
+        const meter: Meter = self.meter_obj(id, entitlement);
+        meter.started = Time.now() - (days_ago * 1days);
+    }
+
+
+    // ── Limit reset default (no validation) ───────────────────────────────────
+
+    #[test]
+    fn test_limit_resets_without_interval() {
+        const id = 'per_implicit';
+        self.create_customer(id, 'monthly');
+        assert(self.allow(id, 'implicit', 90, false));
+        assert_not(self.check(id, 'implicit', 20));
+
+        self.age_meter(id, 'implicit', 31);
+        assert(self.check(id, 'implicit', 20));
+        assert(self.allow(id, 'implicit', 20, false));
+        assert_eq(self.value(id, 'implicit'), 20);
+    }
+
+
+    #[test]
+    fn test_resets_timestamp_without_interval() {
+        const id = 'per_implicit_ts';
+        self.create_customer(id, 'monthly');
+        const next = self.resets(id, 'implicit');
+        assert(next != null);
+        const days_left = (next - Time.now()) as days;
+        assert(days_left > 29days && days_left <= 30days);
+    }
+
+
+    // ── Reads are read-only and see the current period ────────────────────────
+
+    #[test]
+    /**
+     * resets() must not advance the meter's period (which used to swallow the
+     * reset and carry last period's usage into the new one).
+     */
+    fn test_resets_is_read_only() {
+        const id = 'per_resets_readonly';
+        self.create_customer(id, 'monthly');
+        assert(self.allow(id, 'explicit', 90, false));
+        self.age_meter(id, 'explicit', 31);
+
+        const meter: Meter = self.meter_obj(id, 'explicit');
+        const started_before = meter.started;
+        const next = self.resets(id, 'explicit');
+        assert_eq(meter.started, started_before);  // nothing moved
+        assert(next > Time.now());
+        assert(next <= Time.now() + 30days);
+
+        assert(self.allow(id, 'explicit', 20, false)); // new period, not 90 + 20
+        assert_eq(self.value(id, 'explicit'), 20);
+    }
+
+
+    #[test]
+    /**
+     * After a period boundary, reads report the new period before any allow().
+     */
+    fn test_reads_after_boundary() {
+        const id = 'per_reads';
+        self.create_customer(id, 'monthly');
+        assert(self.allow(id, 'weekly', 60, false));
+        assert(self.allow(id, 'weekly', 30, false));
+        assert_eq(self.value(id, 'weekly'), 90);
+        assert_eq(self.remaining(id, 'weekly'), 10);
+
+        self.age_meter(id, 'weekly', 8);
+        const meter: Meter = self.meter_obj(id, 'weekly');
+        const started_before = meter.started;
+
+        assert_eq(self.value(id, 'weekly'), 0);
+        assert_eq(self.value(id, 'weekly', true), 0);
+        assert_eq(self.remaining(id, 'weekly'), 100);
+        assert_eq(self.remaining(id, 'weekly', true), 100);
+        assert_eq(self.allowance(id, 'weekly'), 100);
+        assert_eq(self.rate(id, 'weekly'), 0);
+        assert_eq(self.acceleration(id, 'weekly'), 0);
+        assert_eq(self.projected_exhaustion(id, 'weekly'), null);
+
+        // reads changed nothing - the reset still happens on the next allow
+        assert_eq(meter.started, started_before);
+        assert_eq(meter.value, 90);
+        assert(self.allow(id, 'weekly', 5, false));
+        assert_eq(meter.value, 5);
+        assert(meter.started > started_before);
+    }
+
+
+    #[test]
+    /**
+     * Grant coverage in limit()/remaining() starts from the current period's
+     * position, not last period's.
+     */
+    fn test_grant_coverage_reads_after_boundary() {
+        const id = 'per_grant_reads';
+        self.create_customer(id, 'monthly');
+        assert(self.apply_customer_topup(id, 'refill')); // 50 tok
+        assert(self.allow(id, 'grant_backed', 30, false));
+        assert_eq(self.remaining(id, 'grant_backed'), 20);
+
+        self.age_meter(id, 'grant_backed', 31);
+        assert_eq(self.value(id, 'grant_backed'), 0);
+        assert_eq(self.remaining(id, 'grant_backed'), 20); // grant left, fresh meter
+    }
+
+
+    // ── Cap & grant reset defaults (no validation) ────────────────────────────
+
+    #[test]
+    fn test_cap_resets_without_interval() {
+        const id = 'per_cap_default';
+        self.create_customer(id, 'monthly');
+        const cap = self.add_customer_cap(id, 1, 'monthly_cap', resets = true, events = false);
+        assert(cap);
+        assert(self.allow(id, 'implicit', 100, false)); // $1.00
+        assert_not(self.check(id, 'implicit', 1));
+
+        // cap period passes (meter period too, so only the cap would block)
+        cap.started = Time.now() - 31days;
+        self.age_meter(id, 'implicit', 31);
+        assert(self.allow(id, 'implicit', 10, false));
+        assert_eq(cap.meter_value.round(6), 0.1);
+    }
+
+
+    #[test]
+    fn test_topup_grant_resets_without_interval() {
+        const id = 'per_grant_default';
+        self.create_customer(id, 'monthly');
+        assert(self.apply_customer_topup(id, 'refill'));
+        assert(self.allow(id, 'grant_backed', 40, false));
+        assert_eq(self.credit_remaining(id, 'tok'), 10);
+
+        const customer = self.customer(id);
+        const grant: Grant = customer.grants.fields()[0][1];
+        grant.granted_on = Time.now() - 31days;
+        assert_eq(self.credit_remaining(id, 'tok'), 50); // reads see the refilled grant (current period)
+        self.age_meter(id, 'grant_backed', 31);
+        assert(self.allow(id, 'grant_backed', 1, false)); // grant resets to 50, then covers 1
+        assert_eq(self.credit_remaining(id, 'tok'), 49);
+    }
+}

@@ -126,6 +126,48 @@ Limit: {
 
 
     /**
+     * Effective duration-based reset increment: reset_inc, or 30 days when this limit
+     * resets without an interval or calendar schedule. Computed here (not only in the
+     * schema pass) so unvalidated policies (set_plan, Cloud updates) still reset.
+     * Null when not duration-based (no resets, or a reset_sch calendar schedule).
+     */
+    fn reset_increment() -> ms {
+        if (!self.resets || self.reset_sch != null) return null;
+        const inc: ms = self.reset_inc ?? 30days;
+        inc > 0 ? inc : null
+    }
+
+
+    /**
+     * Start of the current period for a meter that started at `started` - read-only.
+     * Returns `started` when no reset is due, a later timestamp when a reset is pending,
+     * and null if this limit doesn't reset.
+     */
+    fn current_period_start(started: ms, now: ms) -> ms {
+        if (!self.resets || started == null) return null;
+        if (self.reset_sch != null) {
+            const period_start = Time.start_of_period(now, self.reset_sch);
+            return period_start != null && started < period_start ? period_start : started;
+        }
+        const inc = self.reset_increment();
+        if (inc == null) return started;
+        const elapsed = now - started;
+        if (elapsed <= inc) return started;
+        const steps = (elapsed / inc).remove_units().ceil() - 1; // whole periods elapsed
+        started + inc * steps
+    }
+
+
+    /**
+     * Would the next operation on a meter that started at `started` begin a new period?
+     */
+    fn reset_pending(started: ms, now: ms) -> bool {
+        const period_start = self.current_period_start(started, now);
+        period_start != null && period_start != started
+    }
+
+
+    /**
      * Check this limit against a value.
      */
     fn check(new_value: float = 0, meter_value: float = 0) -> bool {

@@ -556,6 +556,8 @@ export class Limitr {
      * - "follow_decrements" opts a cap into moving back down on a decrement (e.g. an
      *   end-of-month billing correction) - off by default, since most caps should
      *   track cumulative spend as a one-way ratchet.
+     * - "hard_trailing" lets the call that crosses the ceiling through (the cap was under
+     *   before it) and blocks every call after - for costs only known after the call.
      *
      * Returns the created Cap, or null if a cap with options.cap_id already exists on
      * the customer (reset or remove it first) or options.credit doesn't resolve to a
@@ -568,7 +570,7 @@ export class Limitr {
             options.exchangeable ?? null, options.ignore_grants ?? false, options.overage_only ?? false,
             options.observe_only ?? false, options.overhead_cost ?? false, options.follow_decrements ?? false, options.scope ?? null,
             options.resets ?? false, options.reset_inc ?? null, options.reset_sch ?? null, options.expires_on ?? null,
-            options.send_events ?? true
+            options.send_events ?? true, options.hard_trailing ?? false
         ));
         if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return null;

@@ -81,34 +81,10 @@ Customer: {
             const id = pair[0];
             const grant: Grant = pair[1];
             
-            // Is this grant expired?
-            if (grant.expires_on != null && grant.expires_on < now) {
+            // Is this grant expired? Otherwise roll it through any elapsed reset periods.
+            if (!grant.ensure_current(stof_units, now)) {
                 self.grants.remove(id, shallow = false);
             } else {
-                // Should this grant value be reset?
-                if (grant.resets) {
-                    if (grant.reset_sch != null) {
-                        // Calendar-based reset: fire once when a new period has started
-                        const period_start = Time.start_of_period(now, grant.reset_sch);
-                        if (period_start != null && (grant.last_reset == null || grant.last_reset < period_start)) {
-                            grant.last_reset = period_start;
-                            grant.reset_period(stof_units);
-                        }
-                    } else if (grant.reset_inc != null && (grant.granted_on + grant.reset_inc) <= now) {
-                        // Duration-based reset: advance granted_on and reset each elapsed period
-                        let reset_cap: int = grant.reset_catchup_cap;
-                        while ((now - grant.granted_on) > grant.reset_inc) {
-                            grant.granted_on += grant.reset_inc;
-                            if (reset_cap == null) {
-                                grant.reset_period(stof_units);
-                            } else if (reset_cap > 0) {
-                                reset_cap -= 1;
-                                grant.reset_period(stof_units);
-                            }
-                        }
-                    }
-                }
-
                 // Empty grants can't cover anything (resetting grants refill above, next period)
                 if (grant.value.remove_units() <= 0) continue;
 
@@ -232,8 +208,18 @@ Customer: {
         if (exchange == null) return null;
         let exact: float = 0;
         let runes: float = 0;
+        const now = Time.now();
         for (const field in self.grants.fields()) {
             const grant: Grant = field[1];
+
+            // current period only: drop expired grants, apply pending resets (same as allow)
+            const grant_credit = ?policy.credit(grant.credit);
+            const grant_units = grant_credit != null ? (grant_credit.stof_units ?? 'float') : 'float';
+            if (!grant.ensure_current(grant_units, now)) {
+                self.grants.remove(field[0], shallow = false);
+                continue;
+            }
+
             if (grant.credit == credit) {
                 exact += grant.value.remove_units();
             } else {
@@ -428,7 +414,7 @@ Customer: {
             if (converted == null) continue; // no exchange path - cap not applicable here
 
             const ceiling = (cap.value as float).to_units(stof_units);
-            if ((cap.meter_value ?? 0) + converted > ceiling) return false;
+            if (!cap.has_room(converted, ceiling)) return false;
         }
         true
     }
@@ -473,7 +459,7 @@ Customer: {
             if (converted < 0 && units <= 0 && !cap.follow_decrements) continue;
 
             const ceiling = (cap.value as float).to_units(stof_units);
-            if (!cap.observe_only && (cap.meter_value ?? 0) + converted > ceiling) return null;
+            if (!cap.has_room(converted, ceiling)) return null;
             applicable.push_back((cap, converted, ceiling));
         }
 

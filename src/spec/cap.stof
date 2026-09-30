@@ -64,6 +64,13 @@ Cap: {
     /// If a str, can use units, but must be a valid stof number.
     float | str value: 0;
 
+    /// Deny based on the current meter_value instead of the projected post-call value
+    /// (same as Limit.hard_trailing). A call is allowed while the cap is under its ceiling
+    /// before the call, and commits in full even if it overshoots - every call after that
+    /// is denied until the cap resets, is reset, or (follow_decrements) comes back under.
+    /// Useful when the real cost isn't known until after the call (e.g. LLM output).
+    bool! hard_trailing: false;
+
     /// Optional scope: entitlement names this cap restricts.
     /// Null (default) = applies to every entitlement with a valid
     /// Exchange path from the entitlement's credit to this cap's credit.
@@ -136,6 +143,17 @@ Cap: {
 
 
     /**
+     * Effective duration-based reset increment (30 days when resetting without an
+     * interval or schedule) - doesn't depend on the schema pass having run.
+     */
+    fn reset_increment() -> ms {
+        if (!self.resets || self.reset_sch != null) return null;
+        const inc: ms = self.reset_inc ?? 30days;
+        inc > 0 ? inc : null
+    }
+
+
+    /**
      * Ensure this cap is current: drop it if expired, roll it forward
      * through any elapsed reset periods otherwise.
      * Returns false if the cap expired and should be removed by the caller.
@@ -152,10 +170,13 @@ Cap: {
                     self.last_reset = period_start;
                     self.reset_period();
                 }
-            } else if (self.reset_inc != null && self.started != null && (self.started + self.reset_inc) <= now) {
-                while ((now - self.started) > self.reset_inc) {
-                    self.started += self.reset_inc;
-                    self.reset_period();
+            } else {
+                const inc = self.reset_increment();
+                if (inc != null && self.started != null && (self.started + inc) <= now) {
+                    while ((now - self.started) > inc) {
+                        self.started += inc;
+                        self.reset_period();
+                    }
                 }
             }
         }
@@ -170,6 +191,19 @@ Cap: {
      */
     fn applies_to(entitlement: str!) -> bool {
         self.scope == null || self.scope.contains(entitlement)
+    }
+
+
+    /**
+     * Does this cap allow a change of `converted` (in this cap's credit) against `ceiling`?
+     * observe_only never denies. hard_trailing only looks at the pre-call meter_value
+     * (and, like Limit.check, decreases never trip it).
+     */
+    fn has_room(converted: float, ceiling: float) -> bool {
+        if (self.observe_only) return true;
+        const current = self.meter_value ?? 0;
+        if (self.hard_trailing) return converted <= 0 || current < ceiling;
+        current + converted <= ceiling
     }
 
 

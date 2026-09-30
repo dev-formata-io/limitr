@@ -336,8 +336,9 @@ Limitr TestGovernorPolicy: {
         assert(self.allow('allowance_gov', 'ai_tokens', 30_000));
 
         // Period remaining is 970k, governor tokens ~20k → governor is the binding constraint
+        // (includes the few tokens refilled since that call - allowance is what allow() would see now)
         const avail = self.allowance('allowance_gov', 'ai_tokens');
-        assert_eq(avail, 20_000);
+        assert(avail >= 20_000 && avail < 25_000);
 
         // Confirms allowance < remaining — governor is tighter than the period
         assert(avail < self.remaining('allowance_gov', 'ai_tokens'));
@@ -592,5 +593,25 @@ Limitr TestGovernorPolicy: {
         assert(self.check('reset_fresh', 'ai_tokens', 1_000_000));
         assert(self.allow('reset_fresh', 'ai_tokens', 1_000));
         assert_eq(meter.value, 1_000);
+    }
+
+
+    #[test]
+    /**
+     * allowance() reflects governor refill since the last call (read-only),
+     * matching what allow()/check() would accept right now.
+     */
+    fn test_allowance_includes_refill() {
+        const customer = self.create_customer('allowance_refill', 'enterprise');
+        assert(self.allow('allowance_refill', 'ai_tokens', 50_000)); // drain
+        self.backdate_governor('allowance_refill', 'ai_tokens', 10_000); // 5k refilled
+        const meter: Meter = self.meter_obj('allowance_refill', 'ai_tokens');
+        const tokens_before = meter.governor_tokens;
+
+        const avail = self.allowance('allowance_refill', 'ai_tokens');
+        assert(avail >= 5_000 && avail < 10_000); // ~5k + whatever refilled while the suite runs (0.5/ms)
+        assert_eq(meter.governor_tokens, tokens_before); // read-only
+        assert(self.check('allowance_refill', 'ai_tokens', 5_000));
+        assert(self.allow('allowance_refill', 'ai_tokens', 5_000));
     }
 }

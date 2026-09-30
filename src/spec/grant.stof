@@ -78,6 +78,53 @@ Grant: {
 
 
     /**
+     * Effective duration-based reset increment (30 days when resetting without an
+     * interval or schedule) - topups copy a null reset_inc onto grants when unvalidated.
+     */
+    fn reset_increment() -> ms {
+        if (!self.resets || self.reset_sch != null) return null;
+        const inc: ms = self.reset_inc ?? 30days;
+        inc > 0 ? inc : null
+    }
+
+
+    /**
+     * Roll this grant forward through any elapsed reset periods (the same transition
+     * allow() makes - timestamps and balance move together, so it's safe from reads).
+     * Returns false if the grant has expired and should be removed by the caller.
+     */
+    fn ensure_current(units: str = 'float', now: ms = null) -> bool {
+        now = now ?? Time.now();
+        if (self.expires_on != null && self.expires_on < now) return false;
+        if (!self.resets) return true;
+        if (self.reset_sch != null) {
+            // Calendar-based reset: fire once when a new period has started
+            const period_start = Time.start_of_period(now, self.reset_sch);
+            if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
+                self.last_reset = period_start;
+                self.reset_period(units);
+            }
+            return true;
+        }
+        const inc = self.reset_increment();
+        if (inc != null && (self.granted_on + inc) <= now) {
+            // Duration-based reset: advance granted_on and reset each elapsed period
+            let reset_cap: int = self.reset_catchup_cap;
+            while ((now - self.granted_on) > inc) {
+                self.granted_on += inc;
+                if (reset_cap == null) {
+                    self.reset_period(units);
+                } else if (reset_cap > 0) {
+                    reset_cap -= 1;
+                    self.reset_period(units);
+                }
+            }
+        }
+        true
+    }
+
+
+    /**
      * Reset this grant for a single new period.
      */
     fn reset_period(units: str = 'float') {

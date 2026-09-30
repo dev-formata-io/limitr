@@ -49,6 +49,7 @@ export interface LimitrCap {
     observe_only: boolean;
     overhead_cost: boolean;
     follow_decrements: boolean;
+    hard_trailing: boolean;
     scope: string[] | null;
     meter_value: number;
     created_on: number;
@@ -88,6 +89,12 @@ export interface LimitrCapOptions {
     overhead_cost?: boolean;
     /** When true, a decrement (negative allow value) reduces this cap's meter_value too, rather than being ignored. Useful for end-of-month billing corrections. */
     follow_decrements?: boolean;
+    /**
+     * When true, a call is allowed while the cap is under its ceiling before the call, and is committed in full
+     * even if it overshoots - every call after that is denied until the cap resets or is reset. Mirrors a Limit's
+     * hard_trailing. Useful when the real cost isn't known until after the call (e.g. LLM output).
+     */
+    hard_trailing?: boolean;
     /** Restrict this cap to specific entitlement names. Omit (or leave undefined) to apply wherever Exchange-convertible. */
     scope?: string[];
     /** Whether this cap's meter_value resets on a schedule. Defaults to false (a non-resetting standing cap). */

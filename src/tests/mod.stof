@@ -21,6 +21,7 @@ import './governor' as TestGovernor;
 import './spend_caps' as TestSpendCaps;
 import './lifecycle' as TestLifecycle;
 import './pricing' as TestPricing;
+import './periods' as TestPeriods;
 
 
 Limitr policy: {
