@@ -1302,26 +1302,7 @@ export class Limitr {
                             this.doc = doc;
                             this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
                             this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
-                            this.doc.lib('Http', 'fetch', async (
-                                url: string,
-                                method: string = 'GET',
-                                body: BodyInit | undefined | null = null,
-                                headers: Map<string, string> = new Map()): Promise<Map<string, unknown>> => {
-                                const response = await fetch(url, {
-                                    method,
-                                    body: body ?? undefined,
-                                    headers: Object.fromEntries(headers.entries()),
-                                });
-                                const result = new Map<string, unknown>();
-                                result.set('status', response.status);
-                                result.set('ok', response.ok);
-                                const headerMap = new Map();
-                                response.headers.forEach((value, key) => headerMap.set(key, value));
-                                result.set('headers', headerMap);
-                                result.set('content_type', response.headers.get('content-type') ?? response.headers.get('Content-Type') ?? 'text/plain');
-                                result.set('bytes', await response.bytes());
-                                return result;
-                            }, true);
+                            this.doc.allowHttp(); // Http::fetch (Stof's built-in, backed by the JS fetch API)
                             this.doc.lib('CloudWS', 'send', (data: string) => {
                                 this.wsSend(data);
                             });

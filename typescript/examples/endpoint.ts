@@ -36,7 +36,7 @@ GetEndpoint: {
         if (query.len() > 0) endpoint += '?' + stringify('urlencoded', query);
         drop(query);
         
-        // const res = await Http.fetch(endpoint); // really exists, but just testing for now
+        // const res = await Http::fetch(endpoint); // really exists (host calls policy.doc.allowHttp()), but just testing for now
         const res = 'Calling GET for: ' + endpoint;
         self.set_result(res);
     }
