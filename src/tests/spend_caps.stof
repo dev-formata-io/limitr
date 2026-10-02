@@ -201,8 +201,8 @@ Limitr TestCapPolicy: {
             credit,
             starting_value: value,
             value,
-            created_on: Time.now(),
-            granted_on: Time.now(),
+            created_on: Time::now(),
+            granted_on: Time::now(),
             resets,
         } on customer.grants;
         customer.grants.insert(grant.id, grant);
@@ -460,7 +460,7 @@ Limitr TestCapPolicy: {
 
         // Backdate last_reset ~45 days into the past, before the current
         // period start, so the next evaluation sees it as stale and resets.
-        self.backdate_cap_last_reset('calreset', 'cal_cap', Time.now() - (45 * 24 * 60 * 60 * 1000));
+        self.backdate_cap_last_reset('calreset', 'cal_cap', Time::now() - (45 * 24 * 60 * 60 * 1000));
 
         // Next evaluation should roll the calendar period forward and zero
         // meter_value before checking.
@@ -498,7 +498,7 @@ Limitr TestCapPolicy: {
         // within ~one reset_inc of now (not still 95 days back, and not null)
         assert(cap.started != null);
         assert(cap.started > (started_before - (95 * 24 * 60 * 60 * 1000))); // moved forward from the backdated value
-        assert((Time.now() - cap.started) <= (30 * 24 * 60 * 60 * 1000)); // within the current period
+        assert((Time::now() - cap.started) <= (30 * 24 * 60 * 60 * 1000)); // within the current period
     }
 
 
@@ -522,7 +522,7 @@ Limitr TestCapPolicy: {
         // Force the ENTITLEMENT meter to reset by backdating its started
         // beyond the entitlement's 30-day reset_inc (ai_credits limit resets).
         const meter: Meter = self.meter_obj('indep', 'ai_credits');
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         // Next call triggers the entitlement meter reset (its value rolls to
         // just the new call), but the non-resetting cap keeps its prior 6.
@@ -593,7 +593,7 @@ Limitr TestCapPolicy: {
         assert(cap != null);
 
         // Force expiry into the past
-        cap.expires_on = Time.now() - 1000;
+        cap.expires_on = Time::now() - 1000;
 
         // A call that would have exceeded the (now-expired) 1-credit cap
         // should succeed, since the cap no longer applies
@@ -1531,7 +1531,7 @@ Limitr TestCapPolicy: {
         const customer = self.customer(id);
         const cap = new Cap {
             id: 'loaded', credit: 'step_credit', exchangeable: true, value: 10,
-            created_on: Time.now(), started: Time.now(),
+            created_on: Time::now(), started: Time::now(),
         } on customer.caps;
         customer.caps.insert('loaded', cap);
 

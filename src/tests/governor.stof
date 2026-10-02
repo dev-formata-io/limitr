@@ -455,7 +455,7 @@ Limitr TestGovernorPolicy: {
         assert(meter.ewma_rate >= 0);
 
         // Force period reset
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         // Next allow() triggers reset — history and governor state cleared
         assert(self.allow('ewma_reset', 'ai_tokens', 1_000));
@@ -482,7 +482,7 @@ Limitr TestGovernorPolicy: {
         assert(meter.history.len() > 0);
 
         // Force period reset by backdating meter.started beyond reset_inc (30 days)
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         // Next allow() will detect the reset and clear governor + history
         assert(self.allow('reset', 'ai_tokens', 10_000));
@@ -556,7 +556,7 @@ Limitr TestGovernorPolicy: {
         assert_not(self.check('check_gov_reset', 'ai_tokens', 40_000));
 
         const meter: Meter = self.meter_obj('check_gov_reset', 'ai_tokens');
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         assert(self.check('check_gov_reset', 'ai_tokens', 40_000));
         assert(self.allow('check_gov_reset', 'ai_tokens', 40_000));
@@ -587,7 +587,7 @@ Limitr TestGovernorPolicy: {
         assert(self.allow('reset_fresh', 'ai_tokens', 900_000));
 
         const meter: Meter = self.meter_obj('reset_fresh', 'ai_tokens');
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         assert_not(self.check('reset_fresh', 'ai_tokens', 1_000_001));
         assert(self.check('reset_fresh', 'ai_tokens', 1_000_000));

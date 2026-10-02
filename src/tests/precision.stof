@@ -86,8 +86,8 @@ Limitr TestPrecisionPolicy: {
             credit: 'usd',
             starting_value: value,
             value,
-            created_on: Time.now(),
-            granted_on: Time.now(),
+            created_on: Time::now(),
+            granted_on: Time::now(),
         } on customer.grants;
         customer.grants.insert(grant.id, grant);
         grant
@@ -162,7 +162,7 @@ Limitr TestPrecisionPolicy: {
         const id = 'prec_voucher';
         self.create_customer(id, 'p', metadata = new {
             limitr_voucher: 'v_prec',
-            limitr_voucher_expires: Time.now() + 1day,
+            limitr_voucher_expires: Time::now() + 1day,
             limitr_voucher_runes: 2.4,
         });
         assert(self.allow(id, 'tok_soft', 6, false));

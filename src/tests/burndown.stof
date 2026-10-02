@@ -198,7 +198,7 @@ Limitr TestBurndownPolicy: {
         const before = self.credit_remaining('burndown_reset', 'abstract');
 
         const meter: Meter = self.meter_obj('burndown_reset', 'ai_input');
-        meter.started = Time.now() - 31days;
+        meter.started = Time::now() - 31days;
 
         assert(self.check('burndown_reset', 'ai_input', 10_000));
         assert(self.allow('burndown_reset', 'ai_input', 10_000));

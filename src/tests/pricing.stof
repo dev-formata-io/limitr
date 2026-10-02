@@ -92,8 +92,8 @@ Limitr TestPricingPolicy: {
             credit: 'usd',
             starting_value: value,
             value,
-            created_on: Time.now(),
-            granted_on: Time.now(),
+            created_on: Time::now(),
+            granted_on: Time::now(),
         } on customer.grants;
         customer.grants.insert(grant.id, grant);
         grant
@@ -342,7 +342,7 @@ Limitr TestPricingPolicy: {
         const id = 'pricing_vol_voucher';
         self.create_customer(id, 'metered', metadata = new {
             limitr_voucher: 'v_test',
-            limitr_voucher_expires: Time.now() + 1day,
+            limitr_voucher_expires: Time::now() + 1day,
             limitr_voucher_runes: 1.0,
         });
         const meta = self.customer_metadata(id);
@@ -454,8 +454,8 @@ Limitr TestPricingPolicy: {
             value: 1,
             resets: true,
             reset_inc: 30days,
-            created_on: Time.now(),
-            granted_on: Time.now(),
+            created_on: Time::now(),
+            granted_on: Time::now(),
         } on customer.grants;
         customer.grants.insert('drained', grant);
 

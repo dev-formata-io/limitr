@@ -54,7 +54,7 @@ Limitr TestPeriodsPolicy: {
     /// Put a customer's meter `days_ago` into the past (simulates a period boundary passing).
     fn age_meter(id: str!, entitlement: str!, days_ago: float) {
         const meter: Meter = self.meter_obj(id, entitlement);
-        meter.started = Time.now() - (days_ago * 1days);
+        meter.started = Time::now() - (days_ago * 1days);
     }
 
 
@@ -80,7 +80,7 @@ Limitr TestPeriodsPolicy: {
         self.create_customer(id, 'monthly');
         const next = self.resets(id, 'implicit');
         assert(next != null);
-        const days_left = (next - Time.now()) as days;
+        const days_left = (next - Time::now()) as days;
         assert(days_left > 29days && days_left <= 30days);
     }
 
@@ -102,8 +102,8 @@ Limitr TestPeriodsPolicy: {
         const started_before = meter.started;
         const next = self.resets(id, 'explicit');
         assert_eq(meter.started, started_before);  // nothing moved
-        assert(next > Time.now());
-        assert(next <= Time.now() + 30days);
+        assert(next > Time::now());
+        assert(next <= Time::now() + 30days);
 
         assert(self.allow(id, 'explicit', 20, false)); // new period, not 90 + 20
         assert_eq(self.value(id, 'explicit'), 20);
@@ -174,7 +174,7 @@ Limitr TestPeriodsPolicy: {
         assert_not(self.check(id, 'implicit', 1));
 
         // cap period passes (meter period too, so only the cap would block)
-        cap.started = Time.now() - 31days;
+        cap.started = Time::now() - 31days;
         self.age_meter(id, 'implicit', 31);
         assert(self.allow(id, 'implicit', 10, false));
         assert_eq(cap.meter_value.round(6), 0.1);
@@ -191,7 +191,7 @@ Limitr TestPeriodsPolicy: {
 
         const customer = self.customer(id);
         const grant: Grant = customer.grants.fields()[0][1];
-        grant.granted_on = Time.now() - 31days;
+        grant.granted_on = Time::now() - 31days;
         assert_eq(self.credit_remaining(id, 'tok'), 50); // reads see the refilled grant (current period)
         self.age_meter(id, 'grant_backed', 31);
         assert(self.allow(id, 'grant_backed', 1, false)); // grant resets to 50, then covers 1

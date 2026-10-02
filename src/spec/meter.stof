@@ -44,7 +44,7 @@ Meter: {
         if (self.history.len() >= 3) {
             drop(self.history.pop_front()); // remove from array and doc
         }
-        self.history.push_back(new { ts: Time.now(), delta });
+        self.history.push_back(new { ts: Time::now(), delta });
         const r = self.rate();
         self.ewma_rate = self.ewma_rate == null ? r : (alpha * r) + ((1 - alpha) * self.ewma_rate);
     }
@@ -100,7 +100,7 @@ Meter: {
      */
     fn governor_available(capacity: float, refill_rate: float) -> float {
         if (self.governor_tokens == null || self.governor_last_refill == null) return capacity;
-        const elapsed = (Time.now() - self.governor_last_refill).remove_units();
+        const elapsed = (Time::now() - self.governor_last_refill).remove_units();
         if (elapsed <= 0 || refill_rate == null) return min(capacity, self.governor_tokens);
         min(capacity, self.governor_tokens + (elapsed * refill_rate))
     }
@@ -112,7 +112,7 @@ Meter: {
      */
     fn refill_governor(capacity: float, refill_rate: float) {
         if (self.governor_last_refill == null) return;
-        const now = Time.now();
+        const now = Time::now();
         const elapsed = (now - self.governor_last_refill).remove_units();
         if (elapsed <= 0) return;
         self.governor_tokens = min(

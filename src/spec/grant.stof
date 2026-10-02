@@ -94,12 +94,12 @@ Grant: {
      * Returns false if the grant has expired and should be removed by the caller.
      */
     fn ensure_current(units: str = 'float', now: ms = null) -> bool {
-        now = now ?? Time.now();
+        now = now ?? Time::now();
         if (self.expires_on != null && self.expires_on < now) return false;
         if (!self.resets) return true;
         if (self.reset_sch != null) {
             // Calendar-based reset: fire once when a new period has started
-            const period_start = Time.start_of_period(now, self.reset_sch);
+            const period_start = Time::start_of_period(now, self.reset_sch);
             if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
                 self.last_reset = period_start;
                 self.reset_period(units);

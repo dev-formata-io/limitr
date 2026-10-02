@@ -242,7 +242,7 @@ fn say_hi_capability() {
 #[test]
 fn valid_policy() {
     const v = self.policy.valid();
-    if (<LimitrValidation>.error_message) pln('Error: ', LimitrValidation.error_message);
+    if (<LimitrValidation>.error_message) pln('Error: ', <LimitrValidation>.error_message);
     assert(v);
 
     assert_eq(self.policy.credits.tiered_token.tiers.len(), 4);
@@ -402,9 +402,7 @@ fn unlimited_spend() {
 #[test]
 fn usage_units() {
     // paid plan usage test
-    // 2000MB, not 2GB: Stof's GB->MB conversion drifts (1999.9999999999998MB) and cross-unit == is exact,
-    // so the exactly-rounded read no longer equals the drifted literal (Stof runtime issue, see engine-map)
-    assert_eq(self.policy.limit('cj', 'usage'), 2000MB);
+    assert_eq(self.policy.limit('cj', 'usage'), 2GB); // exact unit conversions (Stof 0.10)
     assert_eq(typename self.policy.limit('cj', 'usage'), 'MB'); // return in credit's units
 
     assert(self.policy.allow('cj', 'usage', 3)); // default is credit units (MB)
@@ -435,7 +433,7 @@ fn usage_units() {
 
 #[test]
 fn org_scope_entitlements() {
-    const days_left = (self.policy.resets('free_org', 'usage') - Time.now()) as days;
+    const days_left = (self.policy.resets('free_org', 'usage') - Time::now()) as days;
     assert(days_left > 29days && days_left < 30days);
 
     assert(self.policy.decrement('free_org', 'seats')); // min of 0, so no change

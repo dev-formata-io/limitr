@@ -115,7 +115,7 @@ Topup: {
      * Create a new grant from this topup.
      */
     fn create_grant(units: str = 'float', arena?: obj) -> Grant {
-        const now = Time.now();
+        const now = Time::now();
         const expires_on = self.expires_after != null ? now + self.expires_after : null;
         new Grant {
             id: 'lgrnt_' + nanoid(14),

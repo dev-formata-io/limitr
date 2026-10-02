@@ -146,7 +146,7 @@ Limit: {
     fn current_period_start(started: ms, now: ms) -> ms {
         if (!self.resets || started == null) return null;
         if (self.reset_sch != null) {
-            const period_start = Time.start_of_period(now, self.reset_sch);
+            const period_start = Time::start_of_period(now, self.reset_sch);
             return period_start != null && started < period_start ? period_start : started;
         }
         const inc = self.reset_increment();
@@ -173,9 +173,9 @@ Limit: {
      * the values themselves are never rounded.
      */
     fn check(new_value: float = 0, meter_value: float = 0) -> bool {
-        const next = Num.round(new_value, 9);
-        const current = Num.round(meter_value, 9);
-        const lim = Num.round(self.value as float, 9);
+        const next = Num::round(new_value, 9);
+        const current = Num::round(meter_value, 9);
+        const lim = Num::round(self.value as float, 9);
         if (self.mode == 'observe' || next <= current) return true; // decrements/no-ops never trip
         if (self.hard_trailing && self.mode == 'hard') return current < lim;
         next <= lim

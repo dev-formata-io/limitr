@@ -155,7 +155,7 @@ Limitr TestMarginsPolicy: {
         assert(tokens_before.get('cost') > 0);
 
         const meter: Meter = self.meter_obj(id, 'tokens');
-        meter.started = Time.now() - 2days; // tokens reset daily
+        meter.started = Time::now() - 2days; // tokens reset daily
         const after = self.customer_local_margin_breakdown(id);
         const tokens_after = after.get('entitlements').get('tokens');
         assert_eq(tokens_after.get('revenue'), 0);

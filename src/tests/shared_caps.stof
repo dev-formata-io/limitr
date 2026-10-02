@@ -272,7 +272,7 @@ Limitr TestSharedCapsPolicy: {
         const customer = self.customer(customer_id);
         const grant = new Grant {
             id: 'grant-usd', credit: 'usd', starting_value: value, value,
-            created_on: Time.now(), granted_on: Time.now(),
+            created_on: Time::now(), granted_on: Time::now(),
         } on customer.grants;
         customer.grants.insert(grant.id, grant);
         grant
@@ -417,16 +417,16 @@ Limitr TestSharedCapsPolicy: {
     fn test_shared_resets_and_expiry() {
         self.hierarchy('rx');
         const resetting = self.add_customer_cap('rx_org', 5, 'monthly', shared = true, resets = true, events = false);
-        const expiring = self.add_customer_cap('rx_org', 1, 'promo', shared = true, expires_on = Time.now() + 1day, events = false);
+        const expiring = self.add_customer_cap('rx_org', 1, 'promo', shared = true, expires_on = Time::now() + 1day, events = false);
         assert(self.allow('rx_alice', 'personal', 1, false));
         assert_not(self.allow('rx_alice', 'personal', 1, false)); // promo cap binds
 
-        expiring.expires_on = Time.now() - 1s;
+        expiring.expires_on = Time::now() - 1s;
         assert(self.allow('rx_alice', 'personal', 4, false));     // promo gone, monthly at 5
         assert_eq(self.customer_cap('rx_org', 'promo'), null);
         assert_not(self.allow('rx_bob', 'personal', 1, false));
 
-        resetting.started = Time.now() - 31days;                 // new period (30-day default)
+        resetting.started = Time::now() - 31days;                 // new period (30-day default)
         assert(self.allow('rx_bob', 'personal', 1, false));
         assert_eq(self.customer_cap('rx_org', 'monthly').meter_value, 1);
     }

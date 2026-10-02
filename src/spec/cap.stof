@@ -169,13 +169,13 @@ Cap: {
      * Returns false if the cap expired and should be removed by the caller.
      */
     fn ensure_current() -> bool {
-        const now = Time.now();
+        const now = Time::now();
         if (self.expires_on != null && self.expires_on < now) {
             return false;
         }
         if (self.resets) {
             if (self.reset_sch != null) {
-                const period_start = Time.start_of_period(now, self.reset_sch);
+                const period_start = Time::start_of_period(now, self.reset_sch);
                 if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
                     self.last_reset = period_start;
                     self.reset_period();
@@ -213,8 +213,8 @@ Cap: {
         if (self.observe_only) return true;
         const current = self.meter_value ?? 0;
         // compare at 1e-9 (float drift can't flip it); meter_value itself stays full precision
-        if (self.hard_trailing) return converted <= 0 || Num.round(current, 9) < Num.round(ceiling, 9);
-        Num.round(current + converted, 9) <= Num.round(ceiling, 9)
+        if (self.hard_trailing) return converted <= 0 || Num::round(current, 9) < Num::round(ceiling, 9);
+        Num::round(current + converted, 9) <= Num::round(ceiling, 9)
     }
 
 

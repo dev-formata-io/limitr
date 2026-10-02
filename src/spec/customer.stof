@@ -71,7 +71,7 @@ Customer: {
      * Removes expired & resets values.
      */
     fn best_grant(credit: str!, exchange: Exchange, stof_units: str!) -> Grant {
-        const now = Time.now();
+        const now = Time::now();
         let best = null;
         let best_exact = null;
         let best_exact_bench = null;
@@ -208,7 +208,7 @@ Customer: {
         if (exchange == null) return null;
         let exact: float = 0;
         let runes: float = 0;
-        const now = Time.now();
+        const now = Time::now();
         for (const field in self.grants.fields()) {
             const grant: Grant = field[1];
 
@@ -257,7 +257,7 @@ Customer: {
         let grant_value_applied = 0;
         let pos = max(0, position);
         let guard = fields.len() + 1; // every pass drains or covers with one grant - never spin
-        while (Num.round(overage, 9) > 0 && guard > 0) { // at 1e-9: float residue isn't overage
+        while (Num::round(overage, 9) > 0 && guard > 0) { // at 1e-9: float residue isn't overage
             guard -= 1;
             const grant: Grant = self.best_grant(credit, exchange, stof_units);
             if (grant != null) {
@@ -265,7 +265,7 @@ Customer: {
                 // clamp at 0: consuming more never credits a grant back (e.g. a volume band reprice)
                 let grant_overage = exchange != null ? exchange.exchange(overage, credit, grant.credit, pos) ?? overage : overage;
                 grant_overage = max(0, grant_overage);
-                if (Num.round(grant_overage, 9) < Num.round(grant.value, 9)) {
+                if (Num::round(grant_overage, 9) < Num::round(grant.value, 9)) {
                     grant.value -= grant_overage;
                     grant_value_applied += overage; // in "credit"
                     pos += overage;
@@ -288,7 +288,7 @@ Customer: {
         }
         event_value.grant_value_applied = grant_value_applied;
         event_value.overage = max(0, overage);
-        Num.round(overage, 9) > 0
+        Num::round(overage, 9) > 0
     }
 
 
@@ -308,11 +308,11 @@ Customer: {
                 if (overage_runes == null) return false;
                 overage_runes = max(0, overage_runes); // a volume band reprice never adds voucher balance
 
-                const res = Time.now() < self.metadata.limitr_voucher_expires && Num.round(self.metadata.limitr_voucher_runes, 9) >= Num.round(overage_runes, 9); // at 1e-9
+                const res = Time::now() < self.metadata.limitr_voucher_expires && Num::round(self.metadata.limitr_voucher_runes, 9) >= Num::round(overage_runes, 9); // at 1e-9
                 if (res) self.metadata.limitr_voucher_runes -= overage_runes;
                 return res;
             } else {
-                return Time.now() < self.metadata.limitr_voucher_expires;
+                return Time::now() < self.metadata.limitr_voucher_expires;
             }
         }
         true
@@ -357,7 +357,7 @@ Customer: {
         // An unbounded conversion (into a stairstep credit past its top band) has no meaningful
         // amount - the cap doesn't apply, rather than jumping to the sentinel and blocking everything.
         // add_customer_cap rejects these caps up front; this covers caps loaded from Cloud/set_customer.
-        if (converted != null && Num.abs(converted) >= <Credit>.UNBOUNDED_QUANTITY) return null;
+        if (converted != null && Num::abs(converted) >= <Credit>.UNBOUNDED_QUANTITY) return null;
         converted
     }
 
@@ -481,7 +481,7 @@ Customer: {
             const after = before + converted;
             cap.meter_value = after;
             if (changed != null && converted != 0) changed.push_back(cap); // caller syncs the holders
-            if (Num.round(before, 9) < Num.round(ceiling, 9) && Num.round(after, 9) >= Num.round(ceiling, 9)) crossings.push_back(cap); // at 1e-9
+            if (Num::round(before, 9) < Num::round(ceiling, 9) && Num::round(after, 9) >= Num::round(ceiling, 9)) crossings.push_back(cap); // at 1e-9
         }
 
         crossings
@@ -525,7 +525,7 @@ Customer: {
                     id: `tmp-${credit}`,
                     credit: credit,
                     value: ceiling,
-                    created_on: Time.now(),
+                    created_on: Time::now(),
                     temp: true, // for document mem management
                 };
                 out.push_back(tmp);

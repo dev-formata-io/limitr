@@ -21,7 +21,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.6.21;
+    ver version: 0.7.0;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -109,7 +109,7 @@ Limitr: {
                 policy.customers.insert(id, c as Customer);
                 for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt, false);
                 if (c.metadata != null && c.metadata.limitr_voucher != null && c.metadata.limitr_voucher_expires != null) {
-                    if (c.metadata.limitr_voucher_expires <= Time.now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
+                    if (c.metadata.limitr_voucher_expires <= Time::now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
                         const vchr = c.metadata.limitr_voucher;
                         for (const pair in policy.capabilities.fields()) {
                             const cap: Capability = pair[1];
@@ -977,7 +977,7 @@ Limitr: {
         let limit = ent.limit;
         const override: Limit = customer.overrides.get(entitlement);
         if (override != null) {
-            if (override.override_expires_on != null && Time.now() >= override.override_expires_on) {
+            if (override.override_expires_on != null && Time::now() >= override.override_expires_on) {
                 customer.overrides.remove(entitlement, shallow = false);
             } else {
                 limit = override;
@@ -992,7 +992,7 @@ Limitr: {
      * Read-only.
      */
     fn meter_reset_pending(limit?: Limit, meter?: Meter) -> bool {
-        limit != null && meter != null && meter.started != null && limit.reset_pending(meter.started, Time.now())
+        limit != null && meter != null && meter.started != null && limit.reset_pending(meter.started, Time::now())
     }
 
 
@@ -1015,7 +1015,7 @@ Limitr: {
         for (const target in [event, event.meter, event.governor]) {
             if ((typeof target) != 'obj') continue;
             for (const pair in target.fields()) {
-                if ((typeof pair[1]) == 'float') target.insert(pair[0], Num.round(pair[1], 9));
+                if ((typeof pair[1]) == 'float') target.insert(pair[0], Num::round(pair[1], 9));
             }
         }
     }
@@ -1081,7 +1081,7 @@ Limitr: {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) val += remaining;
             }
-            return Num.round(val, 9); // outgoing read: 1e-9 (storage keeps full precision)
+            return Num::round(val, 9); // outgoing read: 1e-9 (storage keeps full precision)
         }
         null
     }
@@ -1169,7 +1169,7 @@ Limitr: {
                 const meter: Meter = pair[0].meters.get(entitlement);
                 if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter)) {
                     const available = meter.governor_available(limit.governor_capacity as float, limit.governor_refill_rate);
-                    return Num.round(min(available, period_remaining), 9);
+                    return Num::round(min(available, period_remaining), 9);
                 }
             }
         }
@@ -1203,7 +1203,7 @@ Limitr: {
                 if (percent) {
                     res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
                 }
-                return Num.round(res, 9); // outgoing read: 1e-9 (storage keeps full precision)
+                return Num::round(res, 9); // outgoing read: 1e-9 (storage keeps full precision)
             }
         }
         null
@@ -1221,7 +1221,7 @@ Limitr: {
             const customer = pair[0];
             const meter: Meter = customer.meters.get(entitlement);
             const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-            return Num.round(self.period_value(limit, meter), 9); // outgoing read: 1e-9
+            return Num::round(self.period_value(limit, meter), 9); // outgoing read: 1e-9
         }
         null
     }
@@ -1246,19 +1246,19 @@ Limitr: {
 
     /**
      * Compute the next calendar period boundary after now for a given schedule.
-     * Uses Time.add_months or Time.add_days to step into the next period,
-     * then calls Time.start_of_period to find its start.
+     * Uses Time::add_months or Time::add_days to step into the next period,
+     * then calls Time::start_of_period to find its start.
      */
     fn next_period_start(now: ms, reset_sch: str) -> ms {
         let next_ts = now;
-        if (reset_sch.starts_with('weekly')) next_ts = Time.add_days(now, 7);
-        else if (reset_sch.starts_with('yearly')) next_ts = Time.add_months(now, 12);
-        else if (reset_sch.starts_with('quarterly')) next_ts = Time.add_months(now, 3);
-        else next_ts = Time.add_months(now, 1);
+        if (reset_sch.starts_with('weekly')) next_ts = Time::add_days(now, 7);
+        else if (reset_sch.starts_with('yearly')) next_ts = Time::add_months(now, 12);
+        else if (reset_sch.starts_with('quarterly')) next_ts = Time::add_months(now, 3);
+        else next_ts = Time::add_months(now, 1);
         // Note: for nth_weekday schedules, returns null if the Nth occurrence
         // doesn't exist in the target month (e.g. 5th Tuesday in a short month).
         // Callers should handle null gracefully.
-        Time.start_of_period(next_ts, reset_sch)
+        Time::start_of_period(next_ts, reset_sch)
     }
 
 
@@ -1272,7 +1272,7 @@ Limitr: {
             const ent = pair[1];
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
             if (limit != null && limit.resets) {
-                const now = Time.now();
+                const now = Time::now();
                 if (limit.reset_sch != null) {
                     return self.next_period_start(now, limit.reset_sch);
                 }
@@ -1358,7 +1358,7 @@ Limitr: {
 
             // should the meter be reset?
             let existing_meter_reset = false;
-            const now = Time.now();
+            const now = Time::now();
             if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets) {
                 const period_start = limit.current_period_start(existing_meter.started, now);
                 const should_reset = period_start != null && period_start != existing_meter.started;
@@ -1411,8 +1411,8 @@ Limitr: {
             if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
-                    const diff = max(0, Num.round(value - remaining, 9)); // at 1e-9: float residue isn't uncovered usage
-                    const diff_overage = max(0, Num.round(overage - remaining, 9));
+                    const diff = max(0, Num::round(value - remaining, 9)); // at 1e-9: float residue isn't uncovered usage
+                    const diff_overage = max(0, Num::round(overage - remaining, 9));
                     // uncovered units are the tail of the call (grants cover from the first overage unit)
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
@@ -1426,17 +1426,17 @@ Limitr: {
 
             // Governor gate: check rate ceiling before hard limit
             if (limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
-                if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
+                if (existing_meter == null) existing_meter = new Meter { started: Time::now() } on customer.meters;
                 customer.meters.insert(entitlement, existing_meter);
 
                 // Lazy-init governor runtime state & refill
                 if (existing_meter.governor_tokens == null) {
                     existing_meter.governor_tokens = limit.governor_capacity as float;
-                    existing_meter.governor_last_refill = Time.now();
+                    existing_meter.governor_last_refill = Time::now();
                 }
                 existing_meter.refill_governor(limit.governor_capacity as float, limit.governor_refill_rate);
 
-                if (value > 0 && Num.round(value, 9) > Num.round(existing_meter.governor_tokens, 9)) {
+                if (value > 0 && Num::round(value, 9) > Num::round(existing_meter.governor_tokens, 9)) {
                     // Governor deny — fire new event, record history, return false
                     existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
                     if (event) {
@@ -1472,7 +1472,7 @@ Limitr: {
             let valid = limit != null ? limit.check(new_value, meter_value) : true;
             
             if (limit != null && (valid || limit.mode == 'soft')) {
-                if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
+                if (existing_meter == null) existing_meter = new Meter { started: Time::now() } on customer.meters;
                 const old_value = prior_value; // events report the value before this call (pre-reset on a reset)
                 const changed = new_value != old_value;
                 existing_meter.credit = limit.credit;
@@ -1565,7 +1565,7 @@ Limitr: {
                 
                 if (overage > 0 && limit.grants_apply) {
                     const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
-                    if (remaining != null && Num.round(remaining, 9) >= Num.round(overage, 9)) {
+                    if (remaining != null && Num::round(remaining, 9) >= Num::round(overage, 9)) {
                         cap_overage += overage; // for spend caps that are overage only
                         if (!customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units, billable)) {
                             valid = true; // we're now valid
@@ -1590,7 +1590,7 @@ Limitr: {
                                 event_data,
                             };
 
-                            if (existing_meter == null) existing_meter = new Meter { started: Time.now() } on customer.meters;
+                            if (existing_meter == null) existing_meter = new Meter { started: Time::now() } on customer.meters;
                             existing_meter.credit = limit.credit;
                             existing_meter.value = new_value;
                             existing_meter.push_history(value, limit.ewma_alpha ?? 0.2);
@@ -1753,8 +1753,8 @@ Limitr: {
             if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) {
-                    const diff = max(0, Num.round(value - remaining, 9)); // at 1e-9: float residue isn't uncovered usage
-                    const diff_overage = max(0, Num.round(overage - remaining, 9));
+                    const diff = max(0, Num::round(value - remaining, 9)); // at 1e-9: float residue isn't uncovered usage
+                    const diff_overage = max(0, Num::round(overage - remaining, 9));
                     const diff_position = position + (value - diff);
                     const diff_overage_position = billable + max(0, max(0, overage) - diff_overage);
                     if (diff > 0 && !caller.check_caps(self, entitlement, credit_name, credit_overhead, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
@@ -1769,7 +1769,7 @@ Limitr: {
             if (value > 0 && limit != null && limit.mode == 'hard' && limit.governor_enabled && limit.governor_capacity != null) {
                 const capacity = limit.governor_capacity as float;
                 const available = existing_meter == null || reset_pending ? capacity : existing_meter.governor_available(capacity, limit.governor_refill_rate);
-                if (Num.round(value, 9) > Num.round(available, 9)) {
+                if (Num::round(value, 9) > Num::round(available, 9)) {
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                     return false;
                 }
@@ -1785,7 +1785,7 @@ Limitr: {
             // if we have a hard limit, lets check against credit grants to see if we're good
             if (limit != null && limit.mode == 'hard' && limit.grants_apply && overage > 0) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
-                if (remaining != null && Num.round(remaining, 9) >= Num.round(overage, 9)) {
+                if (remaining != null && Num::round(remaining, 9) >= Num::round(overage, 9)) {
                     for (const ec: Cap in ephemeral_caps) if (ec.temp) drop(ec);
                     return true;
                 }
@@ -1889,7 +1889,7 @@ Limitr: {
 
             // init all plan entitlement meters for this new plan
             // all plan meters are a synced starting point
-            let now = Time.now();
+            let now = Time::now();
 
             // if not overwritting existing meters, try getting the first meter started on the current plan to set as "now" for new meters
             // this will mean that the meters will be relatively synced, depending on the new entitlement resets (might be immediately expired which is okay)
@@ -1963,7 +1963,7 @@ Limitr: {
             if (pn != null) {
                 const meter = customer.meters.get(pn.subscription);
                 if (meter != null && meter.value < 1 && meter.started != null) {
-                    if (pn.trial_period == null || (Time.now() - meter.started) >= (pn.trial_period as float)) {
+                    if (pn.trial_period == null || (Time::now() - meter.started) >= (pn.trial_period as float)) {
                         return self.increment(customer_id, pn.subscription);
                     }
                 }
@@ -2037,7 +2037,7 @@ Limitr: {
 
             // init all plan entitlement meters for this new customer
             // all plan meters are a synced starting point
-            const now = Time.now();
+            const now = Time::now();
             for (const pair in pn.entitlements.fields()) {
                 const name = pair[0];
                 const ent = pair[1];
@@ -2265,8 +2265,8 @@ Limitr: {
             shared,
             shared_with: shared_with ?? null,
             scope: scope ?? null,
-            created_on: Time.now(),
-            started: Time.now(),
+            created_on: Time::now(),
+            started: Time::now(),
             resets,
             reset_inc: reset_inc,
             reset_sch: reset_sch,
@@ -2313,8 +2313,8 @@ Limitr: {
         if (cap == null) return false;
 
         cap.meter_value = 0;
-        cap.started = Time.now();
-        cap.last_reset = cap.reset_sch != null ? Time.now() : null;
+        cap.started = Time::now();
+        cap.last_reset = cap.reset_sch != null ? Time::now() : null;
 
         if (events) {
             await <Event>.send_tmp('customer-cap-reset', new { customer, cap });
@@ -2386,7 +2386,7 @@ Limitr: {
     fn credit_remaining(customer_id: str!, credit: str!) -> float {
         const customer = self.customer(customer_id);
         const remaining = customer != null ? customer.remaining_grant_credit(self, credit) : null;
-        remaining != null ? Num.round(remaining, 9) : null // outgoing read: 1e-9
+        remaining != null ? Num::round(remaining, 9) : null // outgoing read: 1e-9
     }
 
 
