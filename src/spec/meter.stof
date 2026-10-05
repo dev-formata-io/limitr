@@ -29,12 +29,50 @@ Meter: {
     /// Value of this meter (in credit's units).
     float value: 0;
 
+    /// Provider overhead spent this period (in runes): the sum of each call's actual overhead.
+    /// Null on meters from before 0.7.0 (readers fall back to value * the credit's overhead_cost).
+    float overhead: null;
+
+    /// Room held by in-flight calls (Limitr.reserve()): hold ID -> map of value, overhead, expires, basis, segment.
+    /// Counts against limits and caps for every other call until settled, released, or expired. Never metered.
+    map holds: null;
+
+    /// This customer's usage estimates for the entitlement, by segment ('all' when none). See Estimate.
+    obj estimates: null;
+
     /// Rate tracking ring buffer (max 3 entries, oldest first).
     /// Each entry: { ts: ms, delta: float }
     list! history: [];
 
     /// EWMA smoothed rate.
     float ewma_rate: null;
+
+
+    /**
+     * Room held by unexpired reservations, as (value, overhead).
+     * `prune` drops expired holds (reads pass false so they never change the meter).
+     */
+    fn held(prune: bool = false) -> (float, float) {
+        if (self.holds == null || self.holds.len() < 1) return (0, 0);
+        const now = Time::now();
+        let value = 0.0;
+        let overhead = 0.0;
+        const expired = [];
+        for (const pair in self.holds) {
+            const hold: map = pair[1];
+            const expires = hold.get('expires');
+            if (expires != null && expires <= now) {
+                expired.push_back(pair[0]);
+                continue;
+            }
+            const held = hold.get('value') ?? 0;
+            if (held <= 0) continue; // only usage is held
+            value += held;
+            overhead += hold.get('overhead') ?? 0;
+        }
+        if (prune) for (const id in expired) self.holds.remove(id);
+        (value, overhead)
+    }
 
 
     /**

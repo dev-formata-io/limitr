@@ -122,3 +122,41 @@ export interface LimitrCapOptions {
      */
     send_events?: boolean;
 }
+
+
+/**
+ * A predicted call (Limitr.estimate).
+ */
+export interface LimitrEstimate {
+    /** Predicted usage for one call, in the credit's units. */
+    value: number;
+    /** Predicted provider overhead for one call, in runes (typically USD). */
+    overhead: number;
+    /** Observations behind the estimate. */
+    samples: number;
+    /** 'local' (learned in this engine) or 'cloud' (seeded or pooled by Limitr Cloud). */
+    source: string;
+    /** 'customer' (this customer's own usage) or 'policy' (everyone's). */
+    scope: string;
+}
+
+
+/**
+ * Options for Limitr.reserve.
+ */
+export interface LimitrReserveOptions {
+    /** Amount to hold. Leave unset to hold the predicted amount (estimate). */
+    value?: number | string;
+    /** Event data for the call, used as the credit cost function's context (ex. { model, input }). */
+    context?: string | Record<string, unknown>;
+    /** What the estimate scales by (ex. input tokens). Kept on the hold, so settle learns from it. */
+    basis?: number;
+    /** Sub-estimate to use and learn (ex. the model). Kept on the hold. */
+    segment?: string;
+    /** How long the hold lasts if never settled, in ms (default: the policy's hold_ttl, 10 minutes). */
+    ttl?: number;
+    /** How cautious a predicted hold is: 0.5 = a typical call, 0.9 (default) = 9 in 10 calls use this or less. */
+    quantile?: number;
+    /** The hold's provider overhead in runes (default: predicted, or the credit's cost function). */
+    overhead?: number;
+}

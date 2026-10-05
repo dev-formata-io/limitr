@@ -77,14 +77,14 @@ Capability: {
      */
     fn set_result(v: unknown) {
         if (self.result == null) return;
-        if ((typeof self.result) == 'str') {
+        if (typeof self.result == 'str') {
             self.output.remove(self.result, shallow = false);
             self.output.insert(self.result, v);
         } else {
             self.output.remove(self.result.name, shallow = false);
             self.output.insert(self.result.name, v);
         }
-        if ((typeof v) == 'obj') v.move(self.output);
+        if (typeof v == 'obj') v.move(self.output);
     }
 
 
@@ -92,7 +92,7 @@ Capability: {
      * Get capability result after execution (return value(s)).
      */
     fn get_result() -> unknown {
-        self.result != null ? ((typeof self.result) == 'str' ? self.output.get(self.result) : self.output.get(self.result.name)) : self.output
+        self.result != null ? (typeof self.result == 'str' ? self.output.get(self.result) : self.output.get(self.result.name)) : self.output
     }
 
 
@@ -127,7 +127,7 @@ Capability: {
      */
     fn claude_tool_use(tool_use: obj!) -> bool {
         if (tool_use.id == null || tool_use.type != 'tool_use' || tool_use.name != self.name) return false;
-        if (tool_use.input != null && (typeof tool_use.input) == 'obj') {
+        if (tool_use.input != null && typeof tool_use.input == 'obj') {
             drop(self.input);
             self.input = copy(tool_use.input); // deep copy inputs
             self.input.move(self); // make sure parent is self

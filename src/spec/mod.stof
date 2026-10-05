@@ -22,6 +22,7 @@ import './credit';
 import './customer';
 import './entitlement';
 import './meter';
+import './estimate';
 import './grant';
 import './topup';
 import './cap';

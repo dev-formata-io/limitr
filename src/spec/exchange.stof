@@ -67,7 +67,7 @@ Exchange: {
      */
     fn resolve(c: str!) -> list {
         let policy = self.parent();
-        if (policy != null && ((typeof policy) != 'obj' || !policy.instance_of('Limitr'))) {
+        if (policy != null && (typeof policy != 'obj' || !policy.instance_of('Limitr'))) {
             policy = null;
         }
 

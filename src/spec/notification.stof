@@ -26,11 +26,11 @@ Notifications: {
         let handles = [];
         for (const pair in self.fields()) {
             const note = pair[1];
-            if ((typeof note) == 'obj') {
+            if (typeof note == 'obj') {
                 note as Notification;
                 if (note.matches(type, event)) {
                     let func = note.fire;
-                    if ((typeof func) == 'fn') {
+                    if (typeof func == 'fn') {
                         const count = func.params().len();
                         if (count == 2) {
                             if (func.is_async()) handles.push_back(func(pair[0], event));

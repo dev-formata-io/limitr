@@ -24,6 +24,8 @@ import './pricing' as TestPricing;
 import './periods' as TestPeriods;
 import './precision' as TestPrecision;
 import './shared_caps' as TestSharedCaps;
+import './overhead' as TestOverhead;
+import './reservations' as TestReservations;
 
 
 Limitr policy: {
@@ -296,6 +298,7 @@ fn credit_grant_overage() {
 #[test]
 fn customer_seat_override() {
     const user = 'override_user_1';
+    const notified = self.policy.notifications.half-seats.count;
     assert(self.policy.increment(user, 'seats'));
     assert_eq(self.policy.limit(user, 'seats'), 5);
     assert_eq(self.policy.remaining(user, 'seats'), 4);
@@ -304,8 +307,8 @@ fn customer_seat_override() {
     assert(self.policy.allow(user, 'seats', 1)); // 5
     assert_not(self.policy.increment(user, 'seats')); // blocked by override
 
-    // Make sure the half-seats notifications are firing (3 happen in this func)
-    assert(self.policy.notifications.half-seats.count > 2);
+    // Make sure the half-seats notifications are firing (2 happen in this func: at 1 and 0 seats remaining)
+    assert(self.policy.notifications.half-seats.count - notified >= 2);
 }
 
 #[test]

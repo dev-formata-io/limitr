@@ -1,0 +1,272 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Dynamic overhead tests.
+//
+// Each call's provider overhead (runes) is recorded on the meter for the period: the host's
+// actual cost when passed to allow(), else the credit's overhead(units, context) cost function
+// (default: units * overhead_cost). Margins, overhead caps, and events use the recorded amounts,
+// so a price change mid-period never re-prices usage that already happened.
+//
+Limitr TestOverheadPolicy: {
+    credits: {
+        // fixed rate: $0.5 per unit
+        fixed: { price: { amount: 1 }, overhead_cost: 0.5 }
+
+        // its provider price changes mid-period (own credit: tests share this document and run concurrently)
+        repriced: { price: { amount: 1 }, overhead_cost: 0.5 }
+
+        // per-call cost: model rates per input/output token (the Credit.overhead() doc example)
+        ai_token: {
+            price: { amount: 0.00002 }
+            overhead_cost: 0.000003 // fallback rate
+            rates: { sonnet: { input: 0.000003, output: 0.000015 }, haiku: { input: 0.000001, output: 0.000005 } }
+            fn overhead(units: float, context?: obj) -> float {
+                const rate = self.rates.get(context?.model ?? '');
+                if (rate == null) return units * self.overhead_cost;
+                (context.input * rate.input) + (context.output * rate.output)
+            }
+        }
+
+        // a cost function with a bug: falls back to the fixed rate
+        broken: {
+            overhead_cost: 0.1
+            fn overhead(units: float, context?: obj) -> float { units * self.missing_rate }
+        }
+    }
+
+    plans: {
+        p: {
+            default: true
+            entitlements: {
+                fixed_soft: { limit: { credit: 'fixed', mode: 'soft', value: 10 } }
+                repriced: { limit: { credit: 'repriced', mode: 'soft', value: 10 } }
+                fixed_monthly: { limit: { credit: 'fixed', mode: 'hard', value: 100, resets: true, reset_inc: 30days } }
+                ai: { limit: { credit: 'ai_token', mode: 'soft', value: 1000000 } }
+                broken: { limit: { credit: 'broken', mode: 'soft', value: 100 } }
+            }
+        }
+    }
+
+    // customer id -> [meter.overhead_diff, meter.overhead] of each meter-changed event
+    map overhead_events: map();
+
+
+    #[meter-changed]
+    fn record_overhead(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        const id = event.customer.id;
+        let seen = self.overhead_events.get(id);
+        if (seen == null) {
+            seen = [];
+            self.overhead_events.insert(id, seen);
+        }
+        seen.push_back((event.meter.overhead_diff, event.meter.overhead));
+    }
+
+
+    fn meter_overhead(id: str!, entitlement: str!) -> float {
+        const meter: Meter = self.meter_obj(id, entitlement);
+        meter?.overhead
+    }
+
+
+    #[test]
+    /**
+     * Default cost function: units * overhead_cost, accumulated on the meter.
+     */
+    fn test_fixed_rate() {
+        const id = 'oh_fixed';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'fixed_soft', 4, false));
+        assert(self.allow(id, 'fixed_soft', 2, false));
+        assert_eq(self.meter_overhead(id, 'fixed_soft'), 3);
+    }
+
+
+    #[test]
+    /**
+     * A credit's cost function prices each call from its context (the event data).
+     */
+    fn test_cost_function_context() {
+        const id = 'oh_ctx';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'ai', 1500, using new { model: 'sonnet', input: 1000, output: 500 }));
+        assert_eq(Num::round(self.meter_overhead(id, 'ai'), 12), 0.0105);      // 1000 * 3e-6 + 500 * 15e-6
+
+        assert(self.allow(id, 'ai', 1500, using new { model: 'haiku', input: 1000, output: 500 }));
+        assert_eq(Num::round(self.meter_overhead(id, 'ai'), 12), 0.014);       // + 0.0035
+
+        assert(self.allow(id, 'ai', 1000, false));                             // no context: fallback rate
+        assert_eq(Num::round(self.meter_overhead(id, 'ai'), 12), 0.017);       // + 1000 * 3e-6
+    }
+
+
+    #[test]
+    /**
+     * The host's actual cost wins over the cost function.
+     */
+    fn test_explicit_overhead() {
+        const id = 'oh_explicit';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'ai', 1500, using new { model: 'sonnet', input: 1000, output: 500 }, null, 0.25));
+        assert_eq(self.meter_overhead(id, 'ai'), 0.25);
+        assert(self.allow(id, 'fixed_soft', 1, false, overhead = 0.1));
+        assert_eq(self.meter_overhead(id, 'fixed_soft'), 0.1);
+    }
+
+
+    #[test]
+    /**
+     * Provider prices change mid-period: usage already recorded keeps the price it was charged at.
+     */
+    fn test_price_change_mid_period() {
+        const id = 'oh_reprice';
+        self.create_customer(id, 'p');
+        const credit: Credit = self.credit('repriced');
+        assert(self.allow(id, 'repriced', 4, false));   // 4 * 0.5 = 2
+        credit.overhead_cost = 1;                       // provider raises prices (Ex. Cloud pushes an update)
+        assert(self.allow(id, 'repriced', 4, false));   // 4 * 1 = 4
+        assert_eq(self.meter_overhead(id, 'repriced'), 6);
+
+        const margins = self.customer_local_margin_breakdown(id);
+        assert_eq(margins.get('entitlements').get('repriced').get('cost'), 6); // not 8 * 1
+    }
+
+
+    #[test]
+    /**
+     * Overhead is per period: it resets with the meter.
+     */
+    fn test_overhead_resets_with_period() {
+        const id = 'oh_period';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'fixed_monthly', 10, false));
+        assert_eq(self.meter_overhead(id, 'fixed_monthly'), 5);
+
+        const meter: Meter = self.meter_obj(id, 'fixed_monthly');
+        meter.started = Time::now() - 31days;
+        assert_eq(self.period_overhead(self.limit_obj(id, 'fixed_monthly'), meter, self.credit('fixed')), 0); // read-only view
+        assert(self.allow(id, 'fixed_monthly', 2, false));
+        assert_eq(self.meter_overhead(id, 'fixed_monthly'), 1);
+    }
+
+
+    #[test]
+    /**
+     * A call denied right after a period boundary starts the new period from zero,
+     * instead of carrying last period's usage (and overhead) forward.
+     */
+    fn test_denied_call_after_reset() {
+        const id = 'oh_reset_deny';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'fixed_monthly', 90, false));
+
+        const meter: Meter = self.meter_obj(id, 'fixed_monthly');
+        meter.started = Time::now() - 31days;
+        assert_not(self.allow(id, 'fixed_monthly', 150, false)); // over the hard limit on its own
+        assert_eq(self.value(id, 'fixed_monthly'), 0);
+        assert_eq(self.meter_overhead(id, 'fixed_monthly'), 0);
+
+        assert(self.allow(id, 'fixed_monthly', 5, false));
+        assert_eq(self.value(id, 'fixed_monthly'), 5);
+        assert_eq(self.meter_overhead(id, 'fixed_monthly'), 2.5);
+    }
+
+
+    #[test]
+    /**
+     * Overhead caps consume each call's actual overhead (cost function or passed in).
+     */
+    fn test_overhead_cap_uses_call_cost() {
+        const id = 'oh_cap';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 0.02, 'provider_spend', overhead_cost = true, events = false));
+        const cap = self.customer_cap(id, 'provider_spend');
+
+        using sonnet = new { model: 'sonnet', input: 1000, output: 500 };  // $0.0105
+        using haiku = new { model: 'haiku', input: 1000, output: 500 };    // $0.0035
+        assert(self.allow(id, 'ai', 1500, sonnet));
+        assert_eq(Num::round(cap.meter_value, 12), 0.0105);
+        assert_not(self.check(id, 'ai', 1500, null, sonnet));              // 0.021 > 0.02
+        assert(self.check(id, 'ai', 1500, null, haiku));                   // 0.014
+        assert(self.check(id, 'ai', 1500, null, '{ model: "haiku", input: 1000, output: 500 }')); // Stof string context
+        assert_not(self.allow(id, 'ai', 1500, sonnet));
+        assert(self.allow(id, 'ai', 1500, haiku));
+        assert_eq(Num::round(cap.meter_value, 12), 0.014);
+        assert_not(self.check(id, 'ai', 10, null, null, 0.01));            // actual cost passed in
+        assert(self.check(id, 'ai', 10, null, null, 0.005));
+    }
+
+
+    #[test]
+    /**
+     * Meter events carry this call's overhead and the period total.
+     */
+    fn test_events_carry_overhead() {
+        const id = 'oh_events';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'fixed_soft', 2, using new { request: 'a' }));
+        assert(self.allow(id, 'fixed_soft', 4, using new { request: 'b' }));
+        const seen = self.overhead_events.get(id);
+        assert_eq(seen.len(), 2);
+        assert_eq(seen[0], (1, 1));
+        assert_eq(seen[1], (2, 3));
+    }
+
+
+    #[test]
+    /**
+     * A cost function that throws falls back to the fixed rate (the call still goes through).
+     */
+    fn test_broken_cost_function_falls_back() {
+        const id = 'oh_broken';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'broken', 10, false));
+        assert_eq(Num::round(self.meter_overhead(id, 'broken'), 12), 1);
+    }
+
+
+    #[test]
+    /**
+     * Meters from before 0.7.0 have no overhead record: reads and the next call use the fixed rate.
+     */
+    fn test_legacy_meter() {
+        const id = 'oh_legacy';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'fixed_soft', 4, false));
+        const meter: Meter = self.meter_obj(id, 'fixed_soft');
+        meter.overhead = null; // as loaded from an older policy
+
+        const margins = self.customer_local_margin_breakdown(id);
+        assert_eq(margins.get('entitlements').get('fixed_soft').get('cost'), 2); // 4 * 0.5
+        assert(self.allow(id, 'fixed_soft', 2, false));
+        assert_eq(self.meter_overhead(id, 'fixed_soft'), 3);
+    }
+
+
+    #[test]
+    /**
+     * Modeled margins use the cost function, or an explicit 'overhead' per entitlement.
+     */
+    fn test_local_margin_breakdown_overhead() {
+        const fixed = self.local_margin_breakdown('p', map(('fixed_soft', 20)), false);
+        assert_eq(fixed.get('entitlements').get('fixed_soft').get('cost'), 10);
+        const explicit = self.local_margin_breakdown('p', map(('fixed_soft', map(('meter', 20), ('overhead', 3)))), false);
+        assert_eq(explicit.get('entitlements').get('fixed_soft').get('cost'), 3);
+    }
+}

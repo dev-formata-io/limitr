@@ -166,12 +166,12 @@ LimitrValidation: {
         if (model == 'flat') return true; // tiers can be null here
 
         if (target_val == null || target_val.empty()) return <LimitrValidation>.error(`A '${model}' credit pricing model requires a list of pricing tiers ('tiers' field)`);
-        for (const val in target_val) if ((typeof val) != 'obj') return <LimitrValidation>.error("Each value within a credit's 'tiers' list must be a PriceTier object");
+        for (const val in target_val) if (typeof val != 'obj') return <LimitrValidation>.error("Each value within a credit's 'tiers' list must be a PriceTier object");
 
         const sorted = self.quicksort_tiers(target_val);
         while (sorted.back().up_to == null && sorted.len() - 2 >= 0 && sorted[sorted.len() - 2].up_to == null) {
             const p = sorted.pop_back();
-            if ((typeof p) == 'obj') drop(p);
+            if (typeof p == 'obj') drop(p);
         }
         target.insert(field, sorted);
         if (sorted.back().up_to != null) return <LimitrValidation>.error(`A '${model}' credit pricing model requires the last tier in 'tiers' to be up_to null (infinity)`);

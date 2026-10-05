@@ -27,7 +27,7 @@
     },
     "homepage": "https://limitr.dev",
     "dependencies": {
-        "@formata/stof": "^0.10.1"
+        "@formata/stof": "^0.10.3"
     },
     "devDependencies": {
         "cpy-cli": "^7.0.0",

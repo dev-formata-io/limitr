@@ -39,7 +39,36 @@ Credit: {
         target_val >= 0 ? true : <LimitrValidation>.error(`Credit "${target.label}" cannot have a negative overhead cost`)
     })]
     /// Single credit cost as provider overhead when redeemed (in runes, see Limitr.exchange).
+    /// The fixed rate behind overhead() below, and its fallback.
     float overhead_cost: 0;
+
+
+    /**
+     * Provider overhead (in runes) for `units` of this credit - what one allow() or check() costs you.
+     * Default: units * overhead_cost.
+     *
+     * Override it on a credit when the cost differs per call or changes over time. `context` is the
+     * call's event data (Ex. { model: 'sonnet', input: 1200, output: 300 }), and the function can read
+     * anything in the policy (Ex. a price table that Cloud updates):
+     *
+     *     credits: {
+     *         ai_token: {
+     *             overhead_cost: 3e-6  // fallback rate
+     *             rates: { sonnet: { input: 3e-6, output: 15e-6 }, haiku: { input: 1e-6, output: 5e-6 } }
+     *             fn overhead(units: float, context?: obj) -> float {
+     *                 const rate = self.rates.get(context?.model ?? '');
+     *                 if (rate == null) return units * self.overhead_cost;
+     *                 (context.input * rate.input) + (context.output * rate.output)
+     *             }
+     *         }
+     *     }
+     *
+     * A host that knows the real cost after the provider call passes it to allow() instead, which
+     * skips this function. If this function throws, the fixed rate is used.
+     */
+    fn overhead(units: float, context?: obj) -> float {
+        (units * self.overhead_cost).remove_units()
+    }
 
 
     #[schema((target_val: str!): bool => {

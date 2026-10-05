@@ -161,7 +161,7 @@ Limitr TestPricingPolicy: {
         assert_eq(c.quantity_for(15, 100), 1000 - 100);
         assert_eq(c.quantity_for(100, 1000), <Credit>.UNBOUNDED_QUANTITY); // top band - unlimited for a fee (finite, JSON-safe)
         assert_not(c.contains('UNBOUNDED_QUANTITY')); // prototype-only constant, not copied onto credits
-        assert_eq(stringify('json', new { q: c.quantity_for(100, 1000) }), '{"q":1000000000000000.0}');
+        assert_eq(stringify('json', using new { q: c.quantity_for(100, 1000) }), '{"q":1000000000000000.0}');
     }
 
 

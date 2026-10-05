@@ -1,0 +1,408 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Reservation and estimate tests.
+//
+// reserve() holds room for an in-flight call: other calls' limit and cap checks count it, so
+// concurrent calls can't overspend together. settle() records the actual usage (even past a hard
+// limit - it already happened) and learns from it; release() drops a hold; holds expire.
+// estimate() predicts a call from running statistics (per customer once there are enough samples,
+// else policy-wide), optionally per unit of a basis (Ex. input tokens) and per segment (Ex. a model).
+//
+Limitr TestReservationsPolicy: {
+    credits: {
+        tok: { price: { amount: 1 } } // 1 tok = $1
+        ai_token: {
+            price: { amount: 0.00002 }
+            overhead_cost: 0.000003
+            rates: { sonnet: { input: 0.000003, output: 0.000015 } }
+            fn overhead(units: float, context?: obj) -> float {
+                const rate = self.rates.get(context?.model ?? '');
+                if (rate == null) return units * self.overhead_cost;
+                (context.input * rate.input) + (context.output * rate.output)
+            }
+        }
+    }
+
+    plans: {
+        p: {
+            default: true
+            entitlements: {
+                hard: { limit: { credit: 'tok', mode: 'hard', value: 100 } }
+                soft: { limit: { credit: 'tok', mode: 'soft', value: 0 } }
+                soft_incl: { limit: { credit: 'tok', mode: 'soft', value: 100 } }
+                trailing: { limit: { credit: 'tok', mode: 'hard', value: 100, hard_trailing: true } }
+                ai: { limit: { credit: 'ai_token', mode: 'soft', value: 1000000 } }
+                chat: { limit: { credit: 'tok', mode: 'soft', value: 1000000 } }
+                predicted: { limit: { credit: 'tok', mode: 'hard', value: 100 } } // only test_reserve_predicted learns this one
+            }
+        }
+    }
+
+
+    // customer id -> summed overage of meter-overage events
+    map overages: map();
+    // customer id -> overhead_diff of each meter-changed event
+    map overhead_diffs: map();
+
+
+    #[meter-overage]
+    fn record_overage(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        const id = event.customer.id;
+        self.overages.insert(id, (self.overages.get(id) ?? 0) + event.overage);
+    }
+
+
+    #[meter-changed]
+    fn record_changed(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        const id = event.customer.id;
+        let seen = self.overhead_diffs.get(id);
+        if (seen == null) {
+            seen = [];
+            self.overhead_diffs.insert(id, seen);
+        }
+        seen.push_back(event.meter.overhead_diff);
+    }
+
+
+    fn usd_grant(customer_id: str!, value: float!) -> Grant {
+        const customer = self.customer(customer_id);
+        const grant = new Grant {
+            id: 'grant-usd',
+            credit: 'usd',
+            starting_value: value,
+            value,
+            created_on: Time::now(),
+            granted_on: Time::now(),
+        } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+        grant
+    }
+
+
+    #[test]
+    /**
+     * A hold takes room from every other call until it's released.
+     */
+    fn test_hold_takes_room() {
+        const id = 'res_room';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'hard', 60);
+        assert_not_null(hold);
+        assert_eq(self.held(id, 'hard'), 60);
+        assert_eq(self.value(id, 'hard'), 0);       // never metered
+
+        assert_not(self.check(id, 'hard', 50));
+        assert_not(self.allow(id, 'hard', 50, false));
+        assert_null(self.reserve(id, 'hard', 50));   // a second hold can't overlap either
+        assert(self.check(id, 'hard', 40));
+
+        assert(self.release(id, 'hard', hold));
+        assert_not(self.release(id, 'hard', hold));
+        assert_eq(self.held(id, 'hard'), 0);
+        assert(self.allow(id, 'hard', 50, false));
+    }
+
+
+    #[test]
+    /**
+     * settle() drops the hold and meters the actual usage.
+     */
+    fn test_settle_records_actual() {
+        const id = 'res_settle';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'hard', 60);
+        assert(self.settle(id, 'hard', hold, 45, false));
+        assert_eq(self.held(id, 'hard'), 0);
+        assert_eq(self.value(id, 'hard'), 45);
+    }
+
+
+    #[test]
+    /**
+     * Usage that already happened is recorded even past a hard limit.
+     */
+    fn test_settle_past_hard_limit() {
+        const id = 'res_force';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'hard', 90, false));
+        const hold = self.reserve(id, 'hard', 10);
+        assert_not_null(hold);
+        assert(self.settle(id, 'hard', hold, 25, false)); // the call ran long
+        assert_eq(self.value(id, 'hard'), 115);
+        assert_not(self.allow(id, 'hard', 1, false));      // and the limit still holds after
+    }
+
+
+    #[test]
+    /**
+     * Expired holds stop holding room (reads don't change the meter; allow() prunes them).
+     */
+    fn test_hold_expires() {
+        const id = 'res_expire';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'hard', 80, ttl = 0ms);
+        assert_not_null(hold);
+        assert_eq(self.held(id, 'hard'), 0);
+        assert(self.check(id, 'hard', 100));
+        const meter: Meter = self.meter_obj(id, 'hard');
+        assert_eq(meter.holds.len(), 1);                   // check() is read-only
+        assert(self.allow(id, 'hard', 100, false));
+        assert_eq(meter.holds.len(), 0);                   // allow() pruned it
+    }
+
+
+    #[test]
+    /**
+     * Holds count against caps too, priced with the hold's overhead.
+     */
+    fn test_hold_counts_against_overhead_cap() {
+        const id = 'res_cap';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 0.02, 'provider_spend', overhead_cost = true, events = false));
+        using call = new { model: 'sonnet', input: 1000, output: 500 }; // $0.0105
+
+        const hold = self.reserve(id, 'ai', 1500, call);
+        assert_not_null(hold);
+        assert_not(self.check(id, 'ai', 1500, null, call));            // 0.0105 held + 0.0105 > 0.02
+        assert_null(self.reserve(id, 'ai', 1500, call));
+        assert(self.settle(id, 'ai', hold, 1500, call));
+        const cap = self.customer_cap(id, 'provider_spend');
+        assert_eq(Num::round(cap.meter_value, 9), 0.0105);
+        assert_not(self.check(id, 'ai', 1500, null, call));            // now it's spent, not held
+    }
+
+
+    #[test]
+    /**
+     * Grants can cover held room when the call fits on its own.
+     */
+    fn test_grants_cover_held_room() {
+        const id = 'res_grant';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'hard', 50, false));
+        assert_not_null(self.reserve(id, 'hard', 40));
+        assert_not(self.allow(id, 'hard', 20, false));                // 50 + 40 + 20 > 100
+        self.usd_grant(id, 20);
+        assert(self.check(id, 'hard', 20));
+        assert(self.allow(id, 'hard', 20, false));                    // grant covers the 10 over
+    }
+
+
+    #[test]
+    /**
+     * Running statistics: mean, spread, and quantiles.
+     */
+    fn test_estimate_statistics() {
+        const est = new Estimate {};
+        for (const v in [8, 10, 12, 10]) est.observe(v, v * 0.5);
+        assert_eq(est.samples, 4);
+        assert_eq(est.value_mean, 10);
+        assert_eq(est.value_var, 2);                          // population variance of 8, 10, 12, 10
+
+        const typical = est.predict(quantile = 0.5);
+        assert_eq(typical.get('value'), 10);
+        assert_eq(typical.get('overhead'), 5);
+        const cautious = est.predict();                       // 0.9: mean + 1.28 sd
+        assert(cautious.get('value') > 11.8 && cautious.get('value') < 11.85);
+
+        assert_eq(<Estimate>.z_score(0.5), 0);
+        assert_eq(Num::round(<Estimate>.z_score(0.9), 3), 1.282);
+        assert_eq(Num::round(<Estimate>.z_score(0.1), 3), -1.282);
+        drop(est);
+    }
+
+
+    #[test]
+    /**
+     * Per-basis estimates learn a ratio (Ex. output per input token) and scale by the next call's basis.
+     */
+    fn test_estimate_per_basis() {
+        const est = new Estimate {};
+        assert(est.observe(300, 0.003, basis = 100));
+        assert(est.observe(600, 0.006, basis = 200));
+        assert_not(est.observe(50, 0));                        // per basis needs a basis
+        assert(est.per_basis);
+        const p = est.predict(1000, 0.5);
+        assert_eq(p.get('value'), 3000);
+        assert_eq(Num::round(p.get('overhead'), 9), 0.03);
+        assert_null(est.predict());
+        drop(est);
+    }
+
+
+    #[test]
+    /**
+     * settle() learns; estimate() uses the customer's own numbers once there are enough samples.
+     */
+    fn test_settle_learns_and_scopes() {
+        const id = 'res_learn';
+        const other = 'res_learn_other';
+        self.create_customer(id, 'p');
+        self.create_customer(other, 'p');
+        assert_null(self.estimate(id, 'chat'));
+
+        // other customers make the policy-wide estimate (mean 100)
+        for (const i in [1, 2, 3, 4, 5, 6]) {
+            const hold = self.reserve(other, 'chat', 100, segment = 'claude-sonnet-4.5');
+            assert(self.settle(other, 'chat', hold, 100, false));
+        }
+        const policy_wide = self.estimate(id, 'chat', segment = 'claude-sonnet-4.5', quantile = 0.5);
+        assert_eq(policy_wide.get('scope'), 'policy');
+        assert_eq(policy_wide.get('value'), 100);
+        assert_eq(self.estimates.chat.get('claude-sonnet-4_5').samples, 6);
+
+        // this customer uses more: their own estimate takes over at estimate_min_samples (5)
+        for (const i in [1, 2, 3, 4, 5]) {
+            const hold = self.reserve(id, 'chat', segment = 'claude-sonnet-4.5');
+            assert(self.settle(id, 'chat', hold, 300, false));
+        }
+        const own = self.estimate(id, 'chat', segment = 'claude-sonnet-4.5', quantile = 0.5);
+        assert_eq(own.get('scope'), 'customer');
+        assert_eq(own.get('value'), 300);
+        assert_null(self.estimate(id, 'chat', segment = 'haiku'));        // nothing learned for that segment
+    }
+
+
+    #[test]
+    /**
+     * reserve() with no value holds the prediction (or the standard increment before anything is learned).
+     */
+    fn test_reserve_predicted() {
+        const id = 'res_predict';
+        self.create_customer(id, 'p');
+        const first = self.reserve(id, 'predicted');
+        assert_eq(self.held(id, 'predicted'), 1);                  // standard increment
+        assert(self.release(id, 'predicted', first));
+
+        for (const v in [20, 20, 20, 20, 20]) assert(self.observe(id, 'predicted', v));
+        const hold = self.reserve(id, 'predicted');
+        assert_eq(self.held(id, 'predicted'), 20);
+        assert(self.release(id, 'predicted', hold));
+    }
+
+
+    #[test]
+    /**
+     * Cloud can seed an estimate (a prior for engines and customers with no history).
+     */
+    fn test_cloud_seeded_estimate() {
+        const seeded = self.policy_estimate('soft', 'gpt', true);
+        seeded.samples = 1000;
+        seeded.value_mean = 42;
+        seeded.value_var = 0;
+        seeded.source = 'cloud';
+        const p = self.estimate('anyone', 'soft', segment = 'gpt');
+        assert_eq(p.get('value'), 42);
+        assert_eq(p.get('source'), 'cloud');
+    }
+
+
+    #[test]
+    /**
+     * Another call's hold never turns a call that fits on its own into overage (soft limit).
+     */
+    fn test_hold_never_bills_overage_soft() {
+        const id = 'res_no_overage_soft';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'soft_incl', 50, true));
+        assert_not_null(self.reserve(id, 'soft_incl', 40));
+        assert(self.allow(id, 'soft_incl', 20, true));          // 70 of 100: no overage
+        assert_null(self.overages.get(id));
+        assert_eq(self.value(id, 'soft_incl'), 70);
+    }
+
+
+    #[test]
+    /**
+     * Settling within the limit while other holds are open bills no overage either.
+     */
+    fn test_settle_with_other_holds_bills_no_overage() {
+        const id = 'res_no_overage_settle';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'hard', 50, true));
+        assert_not_null(self.reserve(id, 'hard', 40));
+        const second = self.reserve(id, 'hard', 10);
+        assert_not_null(second);
+        assert(self.settle(id, 'hard', second, 20, true));      // 70 of 100, 40 still held
+        assert_null(self.overages.get(id));
+        assert_eq(self.value(id, 'hard'), 70);
+    }
+
+
+    #[test]
+    /**
+     * Only usage can be held: a zero or negative hold is refused (it would add room).
+     */
+    fn test_no_negative_holds() {
+        const id = 'res_negative';
+        self.create_customer(id, 'p');
+        assert_null(self.reserve(id, 'hard', -50));
+        assert_null(self.reserve(id, 'hard', 0));
+        assert(self.allow(id, 'hard', 100, false));
+        assert_not(self.check(id, 'hard', 30));
+    }
+
+
+    #[test]
+    /**
+     * A call that records overhead but no units (Ex. it failed but still cost) still reaches events and overhead caps.
+     */
+    fn test_overhead_without_units() {
+        const id = 'res_zero_units';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 10, 'provider_spend', overhead_cost = true, events = false));
+        const hold = self.reserve(id, 'soft_incl', 10);
+        assert(self.settle(id, 'soft_incl', hold, 0, true, 5));
+        const meter: Meter = self.meter_obj(id, 'soft_incl');
+        assert_eq(meter.overhead, 5);
+        assert_eq(self.value(id, 'soft_incl'), 0);
+        assert_eq(self.overhead_diffs.get(id), [5]);
+        assert_eq(self.customer_cap(id, 'provider_spend').meter_value, 5);
+    }
+
+
+    #[test]
+    /**
+     * Trailing hard limits (allowed while under the limit) count holds too.
+     */
+    fn test_trailing_limit_counts_holds() {
+        const id = 'res_trailing';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'trailing', 60, false));
+        assert_not_null(self.reserve(id, 'trailing', 50));       // 60 < 100
+        assert_not(self.check(id, 'trailing', 1));               // 60 + 50 held >= 100
+        assert_not(self.allow(id, 'trailing', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * settle() can still learn after its hold expired, from the basis and segment passed to it.
+     */
+    fn test_settle_after_expiry_learns() {
+        const id = 'res_expired_learn';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'chat', 10, segment = 'expiring', ttl = 0ms);
+        assert(self.allow(id, 'chat', 1, false));               // prunes the expired hold
+        assert(self.settle(id, 'chat', hold, 30, false, segment = 'expiring'));
+        assert_eq(self.policy_estimate('chat', 'expiring').samples, 1);
+    }
+}
+

@@ -17,7 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
-import { LimitrCustomer, LimitrCap, LimitrCapOptions } from "./types.js";
+import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEstimate, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
 
 
@@ -928,14 +928,21 @@ export class Limitr {
      * A boolean entitlement check if value is 0 or a limit does not exist for the entitlement (bool flag).
      * Changes a meter for this customer if true.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
+     *
+     * Provider overhead for the call is recorded on the meter (margins, overhead caps, events):
+     * - `overhead`: the call's actual cost in runes (typically USD), when you know it (ex. from the provider's response).
+     * - Otherwise the credit's `overhead(units, context)` cost function prices it, with `event` as the context
+     *   (ex. `{ model: 'sonnet', input: 1200, output: 300 }`). The default is units * overhead_cost.
+     *
+     * `force` records usage that already happened, even past a hard limit or cap (see also reserve/settle).
      */
-    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean | string | Record<string, unknown> = true): Promise<boolean> {
+    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean | string | Record<string, unknown> = true, overhead?: number, force: boolean = false): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
         let ev: string | boolean = true;
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, ev)) as boolean;
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, ev, null, overhead ?? null, force)) as boolean;
     }
 
 
@@ -963,10 +970,86 @@ export class Limitr {
      * Would an "allow" call work for this entitlement and value on this customer?
      * Does not change a meter (charge usage) for this customer, just checks if it would work.
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
+     * `context` (the event you'd pass to allow) and `overhead` (actual cost) price the call for overhead caps.
      */
-    async check(customer: string, entitlement: string, value: number | string = 0): Promise<boolean> {
+    async check(customer: string, entitlement: string, value: number | string = 0, context?: string | Record<string, unknown>, overhead?: number): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value)) as boolean;
+        const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value, null, ctx, overhead ?? null)) as boolean;
+    }
+
+
+    /**
+     * Hold room for a call before it runs (ex. before an LLM request), so concurrent calls can't overspend together.
+     * Returns a hold ID, or null if the call wouldn't be allowed right now (counting every other hold).
+     * When the call finishes, settle() it with the actual usage, or release() it if it never happens.
+     * Leave `value` unset to hold the predicted amount (see estimate). Holds are never metered or billed.
+     *
+     * ```ts
+     * const hold = await limitr.reserve(user, 'ai_chat', { basis: inputTokens, segment: model });
+     * if (!hold) return deny();
+     * const res = await callModel(...);
+     * await limitr.settle(user, 'ai_chat', hold, res.usage.total_tokens, { model }, res.cost);
+     * ```
+     */
+    async reserve(customer: string, entitlement: string, options: LimitrReserveOptions = {}): Promise<string | null> {
+        if (!await this.cloudPreCheckContinue(customer)) return null;
+        const ctx = options.context === undefined ? null : (typeof options.context === 'string' ? options.context : JSON.stringify(options.context));
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.reserve', customer, entitlement,
+            options.value ?? null, ctx, options.basis ?? null, options.segment ?? null, options.ttl ?? null,
+            options.quantile ?? 0.9, options.overhead ?? null)) as string | null;
+    }
+
+
+    /**
+     * Finish a reserved call: drops the hold and records the actual usage (even past a hard limit, since it already
+     * happened), then learns from it for future estimates. `event` and `overhead` work like allow().
+     * `basis` and `segment` override the ones given to reserve (ex. if the hold expired, or you only know them after the call).
+     */
+    async settle(customer: string, entitlement: string, holdId: string | null, value: number | string, event: boolean | string | Record<string, unknown> = true, overhead?: number, basis?: number, segment?: string): Promise<boolean> {
+        let ev: string | boolean = true;
+        if (typeof event === 'string') ev = event;
+        else if (typeof event === 'boolean') ev = event;
+        else ev = JSON.stringify(event);
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.settle', customer, entitlement, holdId, value, ev, overhead ?? null, basis ?? null, segment ?? null)) as boolean;
+    }
+
+
+    /**
+     * Drop a hold without recording anything (the call never happened).
+     */
+    async release(customer: string, entitlement: string, holdId: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.release', customer, entitlement, holdId)) as boolean;
+    }
+
+
+    /**
+     * Room currently held by reservations for this customer and entitlement (in the credit's units).
+     */
+    async held(customer: string, entitlement: string): Promise<number> {
+        return (await this.gate.run(() => this.doc.call('<Limitr>.api.held', customer, entitlement)) as number | null) ?? 0;
+    }
+
+
+    /**
+     * Predict one call before it runs: value (credit units) and provider overhead (runes), from this customer's
+     * own usage once there's enough of it, otherwise everyone's. Null until something has been learned.
+     * `basis` scales per-basis estimates (ex. input tokens), `segment` picks a sub-estimate (ex. the model), and
+     * `quantile` how cautious it is (0.5 = a typical call, 0.9 = 9 in 10 calls use this or less).
+     */
+    async estimate(customer: string, entitlement: string, basis?: number, segment?: string, quantile: number = 0.9): Promise<LimitrEstimate | null> {
+        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.estimate', customer, entitlement, basis ?? null, segment ?? null, quantile)) as Map<string, unknown> | null;
+        if (!res) return null;
+        return Object.fromEntries(res) as unknown as LimitrEstimate;
+    }
+
+
+    /**
+     * Record one call's usage for estimates without reserving (settle does this for you).
+     */
+    async observe(customer: string, entitlement: string, value: number | string, overhead?: number, basis?: number, segment?: string, context?: string | Record<string, unknown>): Promise<boolean> {
+        const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
+        return await this.gate.run(() => this.doc.call('<Limitr>.api.observe', customer, entitlement, value, overhead ?? null, basis ?? null, segment ?? null, ctx)) as boolean;
     }
 
 

@@ -1,0 +1,120 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+
+#[type]
+/**
+ * Running usage statistics for one entitlement (and optional segment, Ex. a model), used to predict
+ * what a call will cost before it happens (Limitr.estimate(), Limitr.reserve()).
+ *
+ * Memory is constant: a few numbers per estimate, never a history of calls. Learned from settle() and
+ * observe() calls; a recent-weighted mean and variance (exponential smoothing), so the estimate follows
+ * changes in how customers use a feature. Early on (fewer than 1/alpha samples) it is a plain average.
+ *
+ * Estimates are plain policy data: Cloud can seed them (a prior for new customers or engines) or replace
+ * them with numbers pooled across every engine - set the fields and `source: 'cloud'`.
+ */
+Estimate: {
+    /// Observations so far (or the weight of a seeded prior).
+    int samples: 0;
+
+    /// Smoothing factor: how much each new observation counts once there are enough samples.
+    float alpha: 0.1;
+
+    /// Learned per unit of basis (Ex. per input token) when observations come with a basis, otherwise per call.
+    /// Set by the first observation.
+    bool per_basis: false;
+
+    /// Running mean and variance of a call's value (credit units; per unit of basis when per_basis).
+    float value_mean: 0;
+    float value_var: 0;
+
+    /// Running mean and variance of a call's provider overhead (runes; per unit of basis when per_basis).
+    float overhead_mean: 0;
+    float overhead_var: 0;
+
+    /// 'local' (learned in this engine) or 'cloud' (seeded or pooled by Limitr Cloud).
+    str source: 'local';
+
+    /// When the last observation was recorded.
+    ms updated: null;
+
+
+    /**
+     * Record one call. Returns false (and records nothing) if this estimate is per basis and no basis was given.
+     */
+    fn observe(value: float, overhead: float = 0, basis?: float) -> bool {
+        if (self.samples < 1) self.per_basis = basis != null && basis > 0;
+        let v = (value as float).remove_units();
+        let o = (overhead as float).remove_units();
+        if (self.per_basis) {
+            if (basis == null || basis <= 0) return false;
+            v = v / basis;
+            o = o / basis;
+        }
+
+        const n = self.samples + 1;
+        const w = max(self.alpha ?? 0.1, 1.0 / n); // plain average until 1/alpha samples
+        const dv = v - self.value_mean;
+        self.value_mean += w * dv;
+        self.value_var = (1 - w) * (self.value_var + (dv * w * dv));
+        const dov = o - self.overhead_mean;
+        self.overhead_mean += w * dov;
+        self.overhead_var = (1 - w) * (self.overhead_var + (dov * w * dov));
+
+        self.samples = n;
+        self.updated = Time::now();
+        true
+    }
+
+
+    /**
+     * Predicted value and overhead for one call at a quantile (0.5 = typical, 0.9 = 9 in 10 calls cost
+     * this or less). Assumes a roughly normal spread; never below 0.
+     * Null if there are no samples, or this estimate is per basis and no basis was given.
+     */
+    fn predict(basis?: float, quantile: float = 0.9) -> map {
+        if (self.samples < 1) return null;
+        let scale = 1.0;
+        if (self.per_basis) {
+            if (basis == null || basis <= 0) return null;
+            scale = basis;
+        }
+        const z = <Estimate>.z_score(quantile);
+        const value = max(0, self.value_mean + (z * Num::sqrt(max(0, self.value_var)))) * scale;
+        const overhead = max(0, self.overhead_mean + (z * Num::sqrt(max(0, self.overhead_var)))) * scale;
+        map(
+            ('value', value),
+            ('overhead', overhead),
+            ('samples', self.samples),
+            ('source', self.source)
+        )
+    }
+
+
+    /**
+     * Standard normal z-score for a quantile (Abramowitz & Stegun 26.2.23, error < 4.5e-4).
+     */
+    fn z_score(quantile: float) -> float {
+        const q = min(0.9999, max(0.0001, quantile));
+        if (q == 0.5) return 0;
+        const p = q > 0.5 ? 1 - q : q;
+        const t = Num::sqrt(-2 * Num::ln(p));
+        const z = t - ((2.515517 + (0.802853 * t) + (0.010328 * t * t)) / (1 + (1.432788 * t) + (0.189269 * t * t) + (0.001308 * t * t * t)));
+        q > 0.5 ? z : -z
+    }
+}

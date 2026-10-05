@@ -373,11 +373,15 @@ Customer: {
      * for ignore_grants caps - grants cover overage from its first unit.
      */
     fn cap_consumption(policy: Limitr!, cap: Cap!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!,
-        value: float!, overage: float!, grant_applied: float = 0, position: float = 0, overage_position: float = null) -> float {
+        value: float!, overage: float!, grant_applied: float = 0, position: float = 0, overage_position: float = null, overhead_only: float = null) -> float {
         if (!cap.applies_to(entitlement)) return null;
         if (!cap.exchangeable && entitlement_credit != cap.credit) return null;
 
         const exchange: Exchange = policy.exchange;
+        if (overhead_only != null) {
+            // overhead with no units (Ex. a failed call that still cost): only plain overhead caps take it
+            return cap.overhead_cost && !cap.overage_only ? self.cap_convert(exchange, cap, entitlement_credit, 1, overhead_only) : null;
+        }
         const opos = overage_position ?? max(0, position);
         const ignore = cap.ignore_grants && grant_applied > 0;
 
@@ -451,12 +455,14 @@ Customer: {
      *
      * See cap_consumption for `position`. `changed` (optional) collects every cap whose
      * meter_value moved, so the caller can sync the customers holding them.
+     * `force` commits usage that already happened (Limitr.allow(force)): caps advance even past their ceiling.
+     * `overhead_only` is overhead (runes) charged with no units: only plain overhead caps move.
      */
-    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0, changed: list = null) -> list {
+    fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0, changed: list = null, force: bool = false, overhead_only: float = null) -> list {
         // Pass 1: roll forward resets, drop expired, and verify - mutate nothing yet.
         const applicable = [];
         for (const cap: Cap in self.current_caps(extra)) {
-            const converted = self.cap_consumption(policy, cap, entitlement, entitlement_credit, credit_overhead, value, overage, grant_applied, position);
+            const converted = self.cap_consumption(policy, cap, entitlement, entitlement_credit, credit_overhead, value, overage, grant_applied, position, null, overhead_only);
             if (converted == null) continue; // not applicable to this entitlement/credit pair
 
             // Negative amounts: a true decrement (fewer units - or, for overage_only, in-plan usage)
@@ -466,7 +472,7 @@ Customer: {
             if (converted < 0 && units <= 0 && !cap.follow_decrements) continue;
 
             const ceiling = (cap.value as float).to_units(stof_units);
-            if (!cap.has_room(converted, ceiling)) return null;
+            if (!force && !cap.has_room(converted, ceiling)) return null;
             applicable.push_back((cap, converted, ceiling));
         }
 
@@ -498,14 +504,14 @@ Customer: {
      * The resulting list is what check_caps / check_and_apply_caps expect
      * for their `extra` parameter.
      *
-     * Caller owns the returned object(s) and is responsible for drop()
-     * on each once the call completes - these are never inserted into any
-     * customer.caps map.
+     * Caller owns the transient Caps (temp: true): pass an `arena` the caller drops
+     * (Ex. allow()'s `using scratch`), or drop each one once the call completes.
+     * They are never inserted into any customer.caps map.
      */
-    fn caps_from_arg(arg: Cap | map = null) -> list {
+    fn caps_from_arg(arg: Cap | map = null, arena?: obj) -> list {
         const out = [];
         if (arg == null) return out;
-        if ((typeof arg) == 'obj' && arg.instance_of('Cap')) {
+        if (typeof arg == 'obj' && arg.instance_of('Cap')) {
             out.push_back(arg);
             return out;
         }
@@ -514,11 +520,11 @@ Customer: {
             const credit = pair[0];
             let ceiling = pair[1];
 
-            if ((typeof ceiling) == 'fn') {
+            if (typeof ceiling == 'fn') {
                 ceiling = ceiling();
             }
 
-            if ((typeof ceiling) == 'obj') {
+            if (typeof ceiling == 'obj') {
                 out.push_back(ceiling as Cap);
             } else {
                 const tmp = new Cap {
@@ -527,7 +533,7 @@ Customer: {
                     value: ceiling,
                     created_on: Time::now(),
                     temp: true, // for document mem management
-                };
+                } on (arena ?? self);
                 out.push_back(tmp);
             }
         }

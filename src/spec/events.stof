@@ -41,8 +41,8 @@ Event: {
             }
         }
         if (lib('App')) {
-            const val = (typeof value) == 'obj' ? stringify('json', value) : value;
-            if ((typeof key) == 'list' || (typeof key) == 'set') {
+            const val = typeof value == 'obj' ? stringify('json', value) : value;
+            if (typeof key == 'list' || typeof key == 'set') {
                 for (const k in key) App?::event_handler(k, val);
             } else {
                 App?::event_handler(key, val);
