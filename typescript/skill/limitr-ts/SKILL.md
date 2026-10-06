@@ -23,7 +23,7 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.10.3 or later for Limitr 0.7). Import only from `@formata/limitr`.
+The package depends on `@formata/stof` (0.10.4 or later for Limitr 0.7). Import only from `@formata/limitr`.
 
 ## Create the engine
 

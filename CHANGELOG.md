@@ -6,7 +6,7 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ## 0.7.0
 
-Dynamic provider costs, reservations with usage prediction, and memory-safe API calls. Requires Stof 0.10.3.
+Dynamic provider costs, reservations with usage prediction, and memory-safe API calls. Requires Stof 0.10.4.
 
 ### Added
 
@@ -79,8 +79,10 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
   reservations and estimates, reads, customers, spend caps, plans and credits, margins, notifications and
   capabilities, sync), then one marked Internal section. Helpers that belong to a type moved to it:
   `Entitlement.estimate_inputs`, `Meter.estimate`, `Customer.ensure_meter`, and `<Estimate>.key`.
-- **Requires Stof 0.10.3.** The spec uses `using` declarations, `Lib::func` library calls (Ex. `Time::now()`,
-  `Num::round()`), and unary `typeof`. The TypeScript package depends on `@formata/stof` 0.10.3 or later.
+- **Requires Stof 0.10.4.** The spec uses `using` declarations, `Lib::func` library calls (Ex. `Time::now()`,
+  `Num::round()`), and unary `typeof` (0.10.3). 0.10.4 keeps calls fast as customers are added (dropping a call's
+  temporary objects no longer searches the whole document) and fixes the policy diff below. The TypeScript package
+  depends on `@formata/stof` 0.10.4 or later.
 - **No document growth per call.** `allow()` and `check()` keep each call's temporary objects (event objects,
   call-scoped caps, event data parsed from a string) in a scratch object that is dropped on every return path.
   `Customer.caps_from_arg(arg, arena?)` creates temporary caps on that arena. The API helpers
@@ -99,6 +101,10 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
 - `set_customer_plan(..., overwrite_meters = true)` left each replaced meter in the document, unreferenced. It is
   now dropped.
 - API helpers left temporary objects in the document on error and early-return paths.
+- `difference_bstf` (and TypeScript `difference`) always reported lists of objects as changed (Ex. a credit's price
+  tiers), since it compared the objects by ID. They now match by value (Stof 0.10.4).
+- `difference_bstf` with an export of the same policy (or one loaded from the same BSTF) overwrote the policy's
+  objects while diffing, leaving it empty. The export is now parsed as a copy (Stof 0.10.4).
 
 ## 0.6.21
 

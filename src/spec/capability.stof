@@ -129,9 +129,7 @@ Capability: {
         if (tool_use.id == null || tool_use.type != 'tool_use' || tool_use.name != self.name) return false;
         if (tool_use.input != null && typeof tool_use.input == 'obj') {
             drop(self.input);
-            // a deep copy, created on self (through a local: `self.input = copy(...)` leaves an object behind in Stof 0.10.3)
-            const input = copy(tool_use.input);
-            self.input = input;
+            self.input = copy(tool_use.input); // a deep copy, created on self
         } else {
             drop(self.input);
             self.input = new {}; // just clear it anyway

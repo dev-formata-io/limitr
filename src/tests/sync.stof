@@ -75,15 +75,41 @@ SyncTests: {
 
     #[test]
     /**
-     * The policy exports to BSTF, and diffs against its own export without errors.
+     * The policy exports to BSTF and diffs against its own export: no differences, and the policy is untouched.
      */
     fn test_bstf_and_diff() {
         using holder = self.fresh();
         const policy: Limitr = holder.policy;
         const bstf = policy.policy_bstf();
         assert(bstf.len() > 0);
-        const diff = policy.difference_bstf(bstf);
-        assert_not(diff.contains('error'));
+        assert_eq(policy.difference_bstf(bstf), '{}');
+        assert_eq(policy.plan('p').name, 'p'); // diffing parses the export into this document (as a copy)
+        assert(policy.valid());
+    }
+
+
+    #[test]
+    /**
+     * A policy edited elsewhere (Ex. from JSON) diffs by value: lists of objects (price tiers) only show when changed.
+     */
+    fn test_diff_tiers() {
+        using holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: { pricing_model: 'tiered', tiers: [{ up_to: 1000, price: { amount: 0.01 } }, { price: { amount: 0.005 } }] } }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10 } } } } }
+        }`, holder, 'stof');
+        const policy: Limitr = holder.policy;
+        const json = stringify('json', policy);
+
+        using same = new {};
+        parse(json, same, 'json');
+        assert_eq(policy.difference_bstf(blobify('bstf', same)), '{}');
+
+        using changed = new {};
+        parse(json.replace('0.005', '0.004'), changed, 'json');
+        using diff = new {};
+        parse(policy.difference_bstf(blobify('bstf', changed)), diff, 'json');
+        assert_eq(diff.credits.tok.tiers[1].price.amount, 0.004);
     }
 
 
