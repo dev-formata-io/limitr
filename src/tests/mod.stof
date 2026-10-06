@@ -26,6 +26,8 @@ import './precision' as TestPrecision;
 import './shared_caps' as TestSharedCaps;
 import './overhead' as TestOverhead;
 import './reservations' as TestReservations;
+import './billing_events' as TestBillingEvents;
+import './sync' as TestSync;
 
 
 Limitr policy: {
@@ -313,7 +315,7 @@ fn customer_seat_override() {
 
 #[test]
 fn global_policy() {
-    assert_eq(<Limitr>.api.get(), self.policy);
+    assert_eq(<Limitr>.load(), self.policy);
 }
 
 #[test]
@@ -353,7 +355,7 @@ fn plan_entitlements() {
     const chat = self.policy.entitlement('paid', 'chat');
     assert(chat);
 
-    const free_prep = <Limitr>.api.entitlement('free', 'prep');
+    const free_prep = self.policy.entitlement('free', 'prep');
     assert(free_prep);
     assert_eq(free_prep, prep);
 }

@@ -202,4 +202,41 @@ Entitlement: {
 
     /// Hidden entitlement?
     bool hidden: false;
+
+    /// Event data field holding this entitlement's estimate basis (Ex. 'input' for input tokens).
+    /// When set, estimates learn usage per unit of that value and scale each prediction by it, so a
+    /// larger call gets a larger hold. It is read from the context or event data given to reserve(),
+    /// settle(), observe(), and estimate() (a `basis` argument wins). Use the same field in every plan.
+    str estimate_basis: null;
+
+    /// Event data field whose value picks the estimate segment (Ex. 'model'): each value keeps its own
+    /// estimate. A `segment` argument wins. Keep the values few: a model or a feature, never a user or
+    /// request ID.
+    str estimate_segment: null;
+
+
+    /**
+     * This entitlement's estimate inputs for one call, as (basis, segment, per_basis). A `basis` or
+     * `segment` argument wins; otherwise the estimate_basis and estimate_segment fields are read from
+     * the call's context (its event data). Basis is null when estimates aren't per basis, or when the
+     * call has none - logged when `required`, since such a call can't be predicted or learned from.
+     */
+    fn estimate_inputs(context?: obj, basis?: float, segment?: str, required: bool = true) -> (float, str, bool) {
+        const per_basis = self.estimate_basis != null && self.estimate_basis.len() > 0;
+        let found_basis = null;
+        if (per_basis) {
+            found_basis = basis ?? context?.get(self.estimate_basis);
+            if (found_basis != null) found_basis = (found_basis as float).remove_units();
+            else if (required) err(`Limitr: '${Obj::name(self)}' estimates per '${self.estimate_basis}', but the call has none (pass it in the event data, or as basis)`);
+        } else if (basis != null) {
+            err(`Limitr: a basis was given for '${Obj::name(self)}', which has no estimate_basis (ignored)`);
+        }
+
+        let found_segment = segment;
+        if (found_segment == null && self.estimate_segment != null && context != null) {
+            const value = context.get(self.estimate_segment);
+            if (value != null) found_segment = str(value);
+        }
+        (found_basis, found_segment, per_basis)
+    }
 }

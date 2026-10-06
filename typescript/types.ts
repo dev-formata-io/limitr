@@ -142,16 +142,47 @@ export interface LimitrEstimate {
 
 
 /**
+ * Options for Limitr.estimate.
+ */
+export interface LimitrEstimateOptions {
+    /** The call's event data (ex. { model, input }): supplies the entitlement's estimate_basis and estimate_segment fields. */
+    context?: string | Record<string, unknown>;
+    /** How cautious: 0.5 = a typical call, 0.9 (default) = 9 in 10 calls use this or less. */
+    quantile?: number;
+    /** Overrides the basis read from `context` (only for entitlements that declare estimate_basis). */
+    basis?: number;
+    /** Overrides the segment read from `context`. */
+    segment?: string;
+}
+
+
+/**
+ * Options for Limitr.observe.
+ */
+export interface LimitrObserveOptions {
+    /** The call's provider overhead in runes (default: the credit's cost function with `context`). */
+    overhead?: number;
+    /** The call's event data (ex. { model, input, output }): cost function context, estimate_basis, estimate_segment. */
+    context?: string | Record<string, unknown>;
+    /** Overrides the basis read from `context` (only for entitlements that declare estimate_basis). */
+    basis?: number;
+    /** Overrides the segment read from `context`. */
+    segment?: string;
+}
+
+
+/**
  * Options for Limitr.reserve.
  */
 export interface LimitrReserveOptions {
     /** Amount to hold. Leave unset to hold the predicted amount (estimate). */
     value?: number | string;
-    /** Event data for the call, used as the credit cost function's context (ex. { model, input }). */
+    /** The call's event data (ex. { model, input }): the cost function's context, and the entitlement's
+     *  estimate_basis / estimate_segment fields (kept on the hold, so settle learns from the call). */
     context?: string | Record<string, unknown>;
-    /** What the estimate scales by (ex. input tokens). Kept on the hold, so settle learns from it. */
+    /** Overrides the basis read from `context` (only for entitlements that declare estimate_basis). */
     basis?: number;
-    /** Sub-estimate to use and learn (ex. the model). Kept on the hold. */
+    /** Overrides the segment read from `context`. */
     segment?: string;
     /** How long the hold lasts if never settled, in ms (default: the policy's hold_ttl, 10 minutes). */
     ttl?: number;

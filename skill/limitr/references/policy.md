@@ -98,6 +98,8 @@ self.seats.limit.value = 10; }`.
 | `limit` | Limit | null | No limit: a feature flag. |
 | `scope` | str | null | Meter on the nearest customer of this type through refs (Ex. `'org'`). |
 | `hidden` | bool | false | |
+| `estimate_basis` | str | null | Event data field a call's size scales with (Ex. `'input'`). Estimates learn per unit of it. Same in every plan. |
+| `estimate_segment` | str | null | Event data field that picks the estimate segment (Ex. `'model'`). Keep its values few. |
 
 ## Limit
 
@@ -205,7 +207,7 @@ the plan's topup changes, its grants change too, and when it is removed, its gra
 |---|---|---|---|
 | `samples` | int | 0 | Observations (or the weight of a seeded prior). |
 | `alpha` | float | 0.1 | Smoothing once there are 1/alpha samples. |
-| `per_basis` | bool | false | Learned per unit of basis. Set by the first observation. |
+| `per_basis` | bool | false | Learned per unit of basis. Follows the entitlement's `estimate_basis`; a change starts the estimate over. |
 | `value_mean` / `value_var` | float | 0 | Per call (or per unit of basis), credit units. |
 | `overhead_mean` / `overhead_var` | float | 0 | Per call (or per unit of basis), runes. |
 | `source` | str | `'local'` | `'cloud'` when seeded or pooled by Limitr Cloud. |

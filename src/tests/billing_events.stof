@@ -1,0 +1,224 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Billing event tests.
+//
+// Meter events carry what each call is worth at list price: meter.price_diff, the billable units the call
+// adds past the limit, priced from the customer's tier position (next to overhead_diff, its cost). Overage
+// events add overage_price: the overage grants didn't cover, in runes.
+// A call denied by a spend cap sends cap-limit (nothing is metered).
+//
+Limitr TestBillingEventsPolicy: {
+    credits: {
+        flat: { price: { amount: 1 } }
+        tiered: {
+            pricing_model: 'tiered'
+            tiers: [{ up_to: 10, price: { amount: 1 } }, { price: { amount: 0.5 } }]
+        }
+        unpriced: {}
+    }
+
+    plans: {
+        p: {
+            default: true
+            entitlements: {
+                flat_soft: { limit: { credit: 'flat', mode: 'soft', value: 10 } }
+                flat_hard: { limit: { credit: 'flat', mode: 'hard', value: 10 } }
+                tiered_soft: { limit: { credit: 'tiered', mode: 'soft', value: 0 } }
+                unpriced: { limit: { credit: 'unpriced', mode: 'soft', value: 10 } }
+                org_flat: { limit: { credit: 'flat', mode: 'soft', value: 1000 } }
+            }
+        }
+    }
+
+    // customer id -> list of maps (type, price_diff, overage, overage_price, cap, customer)
+    map seen: map();
+
+
+    fn record(type: str, event: obj) {
+        const policy = event.customer.parent().parent();
+        if (policy != self) return;
+        const id = event.caller?.id ?? event.customer.id;
+        let list = self.seen.get(id);
+        if (list == null) {
+            list = [];
+            self.seen.insert(id, list);
+        }
+        list.push_back(map(
+            ('type', type),
+            ('price_diff', event.meter?.price_diff),
+            ('overage', event.overage),
+            ('overage_price', event.overage_price),
+            ('cap', event.cap?.id),
+            ('customer', event.customer.id),
+        ));
+    }
+
+    #[meter-changed]
+    fn on_changed(event: obj) { self.record('meter-changed', event); }
+
+    #[meter-overage]
+    fn on_overage(event: obj) { self.record('meter-overage', event); }
+
+    #[meter-limit]
+    fn on_limit(event: obj) { self.record('meter-limit', event); }
+
+    #[cap-limit]
+    fn on_cap_limit(event: obj) { self.record('cap-limit', event); }
+
+
+    fn last(id: str!) -> map {
+        const list = self.seen.get(id);
+        list != null ? list.back() : null
+    }
+
+
+    #[test]
+    /**
+     * Usage inside the limit is worth nothing extra; past it, each unit at the flat price.
+     */
+    fn test_price_flat() {
+        const id = 'bill_flat';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'flat_soft', 8));
+        let e = self.last(id);
+        assert_eq(e.get('type'), 'meter-changed');
+        assert_eq(e.get('price_diff'), 0);
+
+        assert(self.allow(id, 'flat_soft', 5));      // 3 past the limit
+        e = self.last(id);
+        assert_eq(e.get('type'), 'meter-overage');
+        assert_eq(e.get('price_diff'), 3);
+        assert_eq(e.get('overage'), 3);
+        assert_eq(e.get('overage_price'), 3);
+
+        assert(self.allow(id, 'flat_soft', 2));
+        e = self.last(id);
+        assert_eq(e.get('price_diff'), 2);
+        assert_eq(e.get('overage_price'), 2);
+
+        assert(self.allow(id, 'flat_soft', -4));     // a decrement takes value back off
+        e = self.last(id);
+        assert_eq(e.get('type'), 'meter-changed');
+        assert_eq(e.get('price_diff'), -4);
+    }
+
+
+    #[test]
+    /**
+     * Tier-priced calls are priced from where the customer already is on the tiers.
+     */
+    fn test_price_tiered_position() {
+        const id = 'bill_tiered';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'tiered_soft', 8));    // 8 at 1
+        assert_eq(self.last(id).get('price_diff'), 8);
+        assert(self.allow(id, 'tiered_soft', 4));    // 2 at 1, 2 at 0.5
+        const e = self.last(id);
+        assert_eq(e.get('price_diff'), 3);
+        assert_eq(e.get('overage_price'), 3);
+
+        assert(self.allow(id, 'tiered_soft', -6));   // refunded from where it was: 2 at 0.5, then 4 at 1
+        assert_eq(self.last(id).get('price_diff'), -5);
+    }
+
+
+    #[test]
+    /**
+     * Grants cover overage first: overage_price is only what they didn't cover, price_diff the call's full worth.
+     */
+    fn test_overage_price_after_grants() {
+        const id = 'bill_grants';
+        self.create_customer(id, 'p');
+        const customer = self.customer(id);
+        const grant = new Grant { id: 'g', credit: 'usd', starting_value: 2, value: 2, created_on: Time::now(), granted_on: Time::now() } on customer.grants;
+        customer.grants.insert(grant.id, grant);
+
+        assert(self.allow(id, 'flat_soft', 15));     // 5 over, $2 of it granted
+        const e = self.last(id);
+        assert_eq(e.get('type'), 'meter-overage');
+        assert_eq(e.get('price_diff'), 5);
+        assert_eq(e.get('overage'), 3);
+        assert_eq(e.get('overage_price'), 3);
+    }
+
+
+    #[test]
+    /**
+     * A denied call reports what it would have been worth; an unpriced credit has no price.
+     */
+    fn test_price_denied_and_unpriced() {
+        const id = 'bill_denied';
+        self.create_customer(id, 'p');
+        assert_not(self.allow(id, 'flat_hard', 12));
+        let e = self.last(id);
+        assert_eq(e.get('type'), 'meter-limit');
+        assert_eq(e.get('price_diff'), 2);
+
+        assert(self.allow(id, 'unpriced', 20));
+        e = self.last(id);
+        assert_null(e.get('price_diff'));
+        assert_null(e.get('overage_price'));
+    }
+
+
+    #[test]
+    /**
+     * A standing cap that denies a call sends cap-limit, and nothing is metered. No events, no cap-limit.
+     */
+    fn test_cap_limit_event() {
+        const id = 'bill_cap';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 5, 'five_dollars', events = false));
+        assert_not(self.allow(id, 'flat_soft', 6));  // $6 against a $5 cap
+        const e = self.last(id);
+        assert_eq(e.get('type'), 'cap-limit');
+        assert_eq(e.get('cap'), 'five_dollars');
+        assert_eq(e.get('customer'), id);
+        assert_eq(e.get('price_diff'), 0);            // inside the plan limit: no billable worth
+        assert_eq(self.value(id, 'flat_soft'), 0);
+
+        assert_not(self.allow(id, 'flat_soft', 6, false));
+        assert_eq(self.seen.get(id).len(), 1);
+    }
+
+
+    #[test]
+    /**
+     * Call-scoped caps send cap-limit for the caller; shared caps name the customer holding them.
+     */
+    fn test_cap_limit_holders() {
+        const id = 'bill_scoped';
+        self.create_customer(id, 'p');
+        assert_not(self.allow(id, 'flat_soft', 2, true, map(('rune', 1))));
+        let e = self.last(id);
+        assert_eq(e.get('type'), 'cap-limit');
+        assert_eq(e.get('cap'), 'tmp-rune');
+        assert_eq(e.get('customer'), id);
+
+        const org = 'bill_org';
+        const user = 'bill_org_user';
+        self.create_customer(org, 'p', 'org');
+        self.create_customer(user, 'p', 'user', 'U', [org]);
+        assert(self.add_customer_cap(org, 3, 'org_budget', shared = true, events = false));
+        assert_not(self.allow(user, 'org_flat', 4));
+        e = self.last(user);
+        assert_eq(e.get('type'), 'cap-limit');
+        assert_eq(e.get('cap'), 'org_budget');
+        assert_eq(e.get('customer'), org);           // the cap's holder; the caller is the user
+    }
+}

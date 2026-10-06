@@ -35,8 +35,8 @@ Estimate: {
     /// Smoothing factor: how much each new observation counts once there are enough samples.
     float alpha: 0.1;
 
-    /// Learned per unit of basis (Ex. per input token) when observations come with a basis, otherwise per call.
-    /// Set by the first observation.
+    /// Learned per unit of basis (Ex. per input token) instead of per call. Follows the entitlement's
+    /// estimate_basis: when that changes, the estimate starts over (earlier samples are in other units).
     bool per_basis: false;
 
     /// Running mean and variance of a call's value (credit units; per unit of basis when per_basis).
@@ -54,11 +54,27 @@ Estimate: {
     ms updated: null;
 
 
+    #[static]
     /**
-     * Record one call. Returns false (and records nothing) if this estimate is per basis and no basis was given.
+     * The field name an estimate is stored under for a segment: 'all' when there is none, and '.' and
+     * spaces become '_', since field names can't contain them (Ex. 'claude-sonnet-4.5' -> 'claude-sonnet-4_5').
      */
-    fn observe(value: float, overhead: float = 0, basis?: float) -> bool {
-        if (self.samples < 1) self.per_basis = basis != null && basis > 0;
+    fn key(segment?: str) -> str {
+        if (segment == null || segment.len() < 1) return 'all';
+        segment.replace('.', '_').replace(' ', '_')
+    }
+
+
+    /**
+     * Record one call. `per_basis` is the mode the entitlement asks for (see Entitlement.estimate_basis):
+     * a change of mode starts the estimate over. Returns false (and records nothing) when learning per
+     * basis and no basis was given.
+     */
+    fn observe(value: float, overhead: float = 0, basis?: float, per_basis: bool = false) -> bool {
+        if (per_basis != self.per_basis) {
+            if (self.samples > 0) self.reset();
+            self.per_basis = per_basis;
+        }
         let v = (value as float).remove_units();
         let o = (overhead as float).remove_units();
         if (self.per_basis) {
@@ -83,6 +99,20 @@ Estimate: {
 
 
     /**
+     * Forget every observation (a seeded estimate becomes local again).
+     */
+    fn reset() {
+        self.samples = 0;
+        self.value_mean = 0;
+        self.value_var = 0;
+        self.overhead_mean = 0;
+        self.overhead_var = 0;
+        self.source = 'local';
+        self.updated = null;
+    }
+
+
+    /**
      * Predicted value and overhead for one call at a quantile (0.5 = typical, 0.9 = 9 in 10 calls cost
      * this or less). Assumes a roughly normal spread; never below 0.
      * Null if there are no samples, or this estimate is per basis and no basis was given.
@@ -98,8 +128,8 @@ Estimate: {
         const value = max(0, self.value_mean + (z * Num::sqrt(max(0, self.value_var)))) * scale;
         const overhead = max(0, self.overhead_mean + (z * Num::sqrt(max(0, self.overhead_var)))) * scale;
         map(
-            ('value', value),
-            ('overhead', overhead),
+            ('value', Num::round(value, 9)),        // outgoing read: 1e-9, like the engine's other reads
+            ('overhead', Num::round(overhead, 9)),
             ('samples', self.samples),
             ('source', self.source)
         )

@@ -22,6 +22,12 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
   earlier usage. Meters from before 0.7.0 (`overhead: null`) fall back to `value * overhead_cost`.
 - **Overhead in events.** `meter-changed`, `meter-overage`, and `meter-limit` events carry `meter.overhead` (period
   total) and `meter.overhead_diff` (this call). `meter-governed` carries `meter.overhead`.
+- **Price in events.** Meter events carry `meter.price_diff`: what the call is worth at list price, in runes (the
+  billable units it adds past the limit, priced from the customer's tier position, before grants). Next to
+  `overhead_diff`, every event has the call's margin. `meter-overage` adds `overage_price`: the overage grants
+  didn't cover, in runes (what to bill). Null for credits with no price. Only computed when the call sends events.
+- **`cap-limit` event.** A call denied by a spend cap now sends `cap-limit` with the cap, the customer holding it,
+  the caller, and the call's meter values (`diff`, `overhead_diff`, `price_diff`). Before, cap denials were silent.
 - **Overhead with no units.** `allow(id, ent, 0, event, null, overhead)` records a cost with no usage (Ex. a failed
   call that still cost you): it sends a `meter-changed` event and moves plain overhead caps.
 - **`check(..., context?, overhead?)`** prices the call the same way `allow()` does, so a dry run agrees with the
@@ -39,9 +45,15 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
     metered or billed. They expire after `Limitr.hold_ttl` (default 10 minutes). Holds must be positive.
   - Another call's hold can deny a call but never turns an in-limit call into overage.
 - **Usage estimates.** New `Estimate` type: a recency-weighted mean and variance of a call's value and overhead
-  (constant memory, a plain average until 1/alpha samples), optionally per unit of a basis such as input tokens.
-  - `estimate(id, ent, basis?, segment?, quantile = 0.9)` predicts one call: `value`, `overhead`, `samples`,
-    `source` ('local' or 'cloud'), and `scope` ('customer' or 'policy').
+  (constant memory, a plain average until 1/alpha samples).
+  - **Per-basis estimates are declared on the entitlement:** `estimate_basis: 'input'` names the event data field
+    the call's size scales with (Ex. input tokens). Estimates then learn per unit of it and scale each
+    prediction by it. `estimate_segment: 'model'` names the field that picks the segment. `reserve`, `settle`,
+    `estimate`, and `observe` read both from the call's event data, so hosts only pass what they already have.
+    `basis` and `segment` arguments override them. A per-basis call without its basis is logged, and isn't
+    learned from (it is still metered). Changing `estimate_basis` starts an estimate over.
+  - `estimate(id, ent, basis?, segment?, quantile = 0.9, context?)` predicts one call: `value`, `overhead`,
+    `samples`, `source` ('local' or 'cloud'), and `scope` ('customer' or 'policy').
   - `observe(id, ent, value, overhead?, basis?, segment?, context?)` records a call without a reservation.
     `settle()` calls it for you.
   - Policy-wide estimates are at `Limitr.estimates.<entitlement>.<segment>`, each customer's at
@@ -49,11 +61,24 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
     (default 5) observations. Segments must stay low-cardinality: a model or a feature, never a user or request ID.
   - Estimates are plain policy data, so Cloud can seed them or replace them with pooled numbers (`source: 'cloud'`).
 - **TypeScript:** `allow(..., overhead?, force?)`, `check(..., context?, overhead?)`, and new `reserve(customer,
-  entitlement, options)`, `settle`, `release`, `held`, `estimate`, and `observe` methods, with the
-  `LimitrEstimate` and `LimitrReserveOptions` types.
+  entitlement, options)`, `settle`, `release`, `held`, `estimate(customer, entitlement, options)`, and
+  `observe(customer, entitlement, value, options)` methods, with the `LimitrEstimate`, `LimitrReserveOptions`,
+  `LimitrEstimateOptions`, and `LimitrObserveOptions` types.
 
 ### Changed
 
+- **Breaking: the policy lives at `root.policy`, and `<Limitr>.api` is gone.** Call the policy's functions
+  directly (`root.policy.allow(...)`, or `'policy.allow'` from an SDK's document). `<Limitr>.load()` gives
+  `root.policy` its `Limitr` type (a policy parsed from JSON, YAML, or TOML has none) and returns it; SDKs call it
+  once after loading or replacing a policy. A policy elsewhere in the document, or marked `#[limitr]`, is no longer
+  found. The former `api`-only functions are policy functions now: `policy_bstf`, `difference_bstf`,
+  `update_policy_internals`, `update_customer_internals`, `update_customer_invoices`, `set_notifications`,
+  `set_capabilities`, and `claude_tools(customer_id?)` / `claude_tool_use(json, customer_id?)`, which take and
+  return JSON (they replace the policy's object-based versions of the same names).
+- **`limitr.stof` reads top to bottom:** public functions first, grouped by area (the policy, metering,
+  reservations and estimates, reads, customers, spend caps, plans and credits, margins, notifications and
+  capabilities, sync), then one marked Internal section. Helpers that belong to a type moved to it:
+  `Entitlement.estimate_inputs`, `Meter.estimate`, `Customer.ensure_meter`, and `<Estimate>.key`.
 - **Requires Stof 0.10.3.** The spec uses `using` declarations, `Lib::func` library calls (Ex. `Time::now()`,
   `Num::round()`), and unary `typeof`. The TypeScript package depends on `@formata/stof` 0.10.3 or later.
 - **No document growth per call.** `allow()` and `check()` keep each call's temporary objects (event objects,
@@ -68,6 +93,7 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
 
 ### Fixed
 
+- A Claude `tool_use` with input left an object in the document on every call (`Capability.claude_tool_use`).
 - A call denied right after a period boundary left last period's usage on the meter, so the next call added to it.
   The new period now starts from zero even when the first call in it is denied.
 - `set_customer_plan(..., overwrite_meters = true)` left each replaced meter in the document, unreferenced. It is

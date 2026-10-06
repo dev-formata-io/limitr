@@ -1,0 +1,136 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Sync, serialization, and capability tests.
+//
+// The functions SDKs and Limitr Cloud call to update a running policy: replace plans and credits,
+// load customers, export and diff the policy, and register notifications and capabilities (including
+// Claude tool use). Each test parses its own policy, so updates never touch another test's.
+//
+SyncTests: {
+    /// A fresh policy for one test (drop the returned holder, or declare it with `using`).
+    fn fresh() -> obj {
+        const holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: { price: { amount: 1 } } }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10 } } } } }
+        }`, holder, 'stof');
+        holder
+    }
+
+
+    #[test]
+    /**
+     * load() types root.policy as a Limitr and returns it.
+     */
+    fn test_load() {
+        assert(<Limitr>.load().instance_of('Limitr'));
+        assert_eq(<Limitr>.load(), root.policy);
+    }
+
+
+    #[test]
+    /**
+     * Cloud replaces plans and credits in place; customers already loaded stay.
+     */
+    fn test_update_policy_internals() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.create_customer('sync_c1', 'p');
+        policy.update_policy_internals('{ "policy": { "plans": { "q": { "default": true, "entitlements": { "b": {} } } }, "credits": { "tok2": {} } } }', 'json');
+        assert_null(policy.plans.p);
+        assert_not_null(policy.plans.q);
+        assert_not_null(policy.credits.tok2);
+        assert_null(policy.credits.tok);
+        assert_not_null(policy.customer('sync_c1'));
+    }
+
+
+    #[test]
+    /**
+     * A customer record from Cloud replaces the local one, with its alt IDs.
+     */
+    fn test_update_customer_internals() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.update_customer_internals('{ "id": "sync_c2", "plan": "p", "alt_ids": ["sync_c2_alt"] }');
+        assert_eq(policy.customer('sync_c2_alt').id, 'sync_c2');
+        assert(policy.allow('sync_c2', 'a', 5, false));
+    }
+
+
+    #[test]
+    /**
+     * The policy exports to BSTF, and diffs against its own export without errors.
+     */
+    fn test_bstf_and_diff() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        const bstf = policy.policy_bstf();
+        assert(bstf.len() > 0);
+        const diff = policy.difference_bstf(bstf);
+        assert_not(diff.contains('error'));
+    }
+
+
+    #[test]
+    /**
+     * Capabilities registered from Stof become Claude tools, and a tool_use runs them.
+     */
+    fn test_capabilities_and_claude_tools() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.set_capabilities(`
+            square: {
+                description: 'Square a number'
+                parameters: [{ name: 'x', description: 'The number', schema_type: 'number' }]
+                result: 'square'
+                #[run]
+                fn calc() { self.output.square = self.input.x * self.input.x; }
+            }
+        `);
+        assert_not_null(policy.capability('square'));
+
+        using tools = new {};
+        parse(policy.claude_tools(), tools, 'json');
+        assert_eq(tools.tools.len(), 1);
+        assert_eq(tools.tools[0].name, 'square');
+
+        using result = new {};
+        parse(policy.claude_tool_use('{ "type": "tool_use", "id": "toolu_1", "name": "square", "input": { "x": 3 } }'), result, 'json');
+        assert_eq(result.type, 'tool_result');
+        assert_eq(result.tool_use_id, 'toolu_1');
+        assert_eq(result.content, '9');
+        assert_null(policy.claude_tool_use('{ "type": "tool_use", "id": "toolu_2", "name": "missing", "input": {} }'));
+    }
+
+
+    #[test]
+    /**
+     * Notifications registered from Stof are set on the policy.
+     */
+    fn test_set_notifications() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.set_notifications(`
+            never: {
+                fn matches(type: str, event: obj) -> bool { false }
+            }
+        `);
+        assert_not_null(policy.notifications.never);
+    }
+}

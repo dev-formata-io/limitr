@@ -67,6 +67,19 @@ Customer: {
 
 
     /**
+     * This customer's meter for an entitlement, created if missing.
+     */
+    fn ensure_meter(entitlement: str!, credit?: str) -> Meter {
+        let meter: Meter = self.meters.get(entitlement);
+        if (meter == null) {
+            meter = new Meter { started: Time::now(), credit: credit ?? '' } on self.meters;
+            self.meters.insert(entitlement, meter);
+        }
+        meter
+    }
+
+
+    /**
      * Find the best grant on this customer for a given credit.
      * Removes expired & resets values.
      */
@@ -416,6 +429,15 @@ Customer: {
      * See cap_consumption for `position` / `overage_position`.
      */
     fn check_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false, position: float = 0, overage_position: float = null) -> bool {
+        self.denying_cap(policy, entitlement, entitlement_credit, credit_overhead, value, overage, extra, stof_units, non_ignore_grants_only, position, overage_position) == null
+    }
+
+
+    /**
+     * The first applicable, enforcing cap without room for a proposed change, or null when every cap
+     * has room. Same parameters as check_caps (which is this, as a bool).
+     */
+    fn denying_cap(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false, position: float = 0, overage_position: float = null) -> Cap {
         for (const cap: Cap in self.current_caps(extra)) {
             if (non_ignore_grants_only && cap.ignore_grants) continue;
             if (cap.observe_only) continue; // never denies - accumulates only, see check_and_apply_caps
@@ -424,9 +446,9 @@ Customer: {
             if (converted == null) continue; // no exchange path - cap not applicable here
 
             const ceiling = (cap.value as float).to_units(stof_units);
-            if (!cap.has_room(converted, ceiling)) return false;
+            if (!cap.has_room(converted, ceiling)) return cap;
         }
-        true
+        null
     }
 
 

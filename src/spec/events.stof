@@ -138,6 +138,17 @@ AppEvents: {
     }
 
 
+    #[cap-limit]
+    /**
+     * Cap limited.
+     * Called when a spend cap denies a call (nothing was metered).
+     * Value includes the cap, the customer holding it, the caller, entitlement, plan, credit, and meter state.
+     */
+    fn app_cap_limit(value: obj) {
+        if (lib('App', 'cap_limit')) App::cap_limit(stringify('json', value));
+    }
+
+
     /*****************************************************************************
      * Customers.
      *****************************************************************************/

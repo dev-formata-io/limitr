@@ -1,7 +1,9 @@
 # Engine API
 
-Functions on the `Limitr` policy object (`src/spec/limitr.stof`). `<Limitr>.api` has a wrapper for each with the
-same parameters, which finds the policy with `<Limitr>.api.get()` first. SDKs call the `<Limitr>.api` versions.
+Functions on the policy at `root.policy` (`src/spec/limitr.stof`, public sections), called on it directly:
+`root.policy.allow(...)` in Stof, `'policy.allow'` from an SDK. `<Limitr>.load()` types `root.policy` as a
+`Limitr` (a policy parsed from JSON, YAML, or TOML has no type) and returns it. Functions in the file's
+Internal section are helpers, not API.
 
 `id` is a customer ID or alt ID. Where noted, it can also be a plan ID (plan-level reads). Values are in the
 credit's units unless they say runes. Optional parameters (`name?`) default to null. Stof calls can name
@@ -28,8 +30,11 @@ function context). `cap` is a `Cap` or a map of credit to ceiling. `overhead` is
 | `settle(id, entitlement, hold_id, value = 0, event = true, overhead?, basis?, segment?)` | bool | Drop the hold, `allow(force = true)`, learn. |
 | `release(id, entitlement, hold_id)` | bool | Drop a hold. False if there was none. |
 | `held(id, entitlement)` | float | Room held by unexpired holds. |
-| `estimate(id, entitlement, basis?, segment?, quantile = 0.9)` | map | `value`, `overhead`, `samples`, `source`, `scope`, or null. |
+| `estimate(id, entitlement, basis?, segment?, quantile = 0.9, context?)` | map | `value`, `overhead`, `samples`, `source`, `scope`, or null. |
 | `observe(id, entitlement, value, overhead?, basis?, segment?, context?)` | bool | Learn from a call without a hold. |
+
+`context` / `event` (the call's event data) supplies the entitlement's `estimate_basis` and `estimate_segment`
+fields. `basis` and `segment` arguments override them.
 
 ## Reads
 
@@ -72,7 +77,7 @@ These meter nothing and show the current period (0 after a pending reset).
 
 | Function | Returns | Notes |
 |---|---|---|
-| `add_customer_cap(customer_id, value, id = '', credit = 'rune', exchangeable?, ignore_grants = false, overage_only = false, observe_only = false, overhead_cost = false, follow_decrements = false, scope?, resets = false, reset_inc?, reset_sch?, expires_on?, events = true, hard_trailing = false, shared = false, shared_with?)` | Cap | `id` is the cap ID (generated when empty). Null if that cap exists or the credit is unknown. The `<Limitr>.api` wrapper names these `id` (customer) and `cap_id`. |
+| `add_customer_cap(customer_id, value, id = '', credit = 'rune', exchangeable?, ignore_grants = false, overage_only = false, observe_only = false, overhead_cost = false, follow_decrements = false, scope?, resets = false, reset_inc?, reset_sch?, expires_on?, events = true, hard_trailing = false, shared = false, shared_with?)` | Cap | `id` is the cap ID (generated when empty). Null if that cap exists or the credit is unknown. |
 | `customer_cap(id, cap_id)` | Cap | |
 | `reset_customer_cap(id, cap_id, events = true)` | bool | Zero its `meter_value`. |
 | `remove_customer_cap(id, cap_id, events = true)` | bool | |
@@ -91,6 +96,13 @@ These meter nothing and show the current period (0 after a pending reset).
 | `customer_local_margin_breakdown(customer_id)` | map | Revenue, cost (recorded overhead), and margin this period. |
 | `local_margin_breakdown(plan, entitlements, scaled = true)` | map | Margin for hypothetical usage (entitlement -> value, or a map with `value`, `overhead`, `context`). |
 
-`<Limitr>.api` only: `get()`, `valid()`, `policy_bstf()`, `difference_bstf(bstf, symmetric = false)`,
-`update_policy_internals(stof_or_json, format)`, `update_customer_internals(...)`, `set_notifications(contents,
-format)`, `set_capabilities(contents, format)`, `claude_tools(customer_id?)`, `claude_tool_use(json, customer_id?)`.
+## Notifications, capabilities, and sync
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| `set_notifications(contents, format = 'stof')` / `set_capabilities(contents, format = 'stof')` | | Register every object in `contents`. |
+| `claude_tools(customer_id?)` | str | Claude tool definitions as JSON (`{ "tools": [...] }`), filtered by customer access. |
+| `claude_tool_use(tool_use_json, customer_id?)` | str | Run a `tool_use` against its capability; the `tool_result` as JSON, or null. |
+| `policy_bstf()` / `difference_bstf(bstf, symmetric = false)` | blob / str | Export the policy; diff another export against it (JSON). |
+| `update_policy_internals(updated, format = 'json')` | | Replace plans, credits, exchange, notifications, capabilities; add new customers (Cloud). |
+| `update_customer_internals(customer, format = 'json')` / `update_customer_invoices(content, format = 'json')` | | Replace a customer, or its invoices (Cloud). |

@@ -11,7 +11,7 @@ description: >
 # Limitr for TypeScript
 
 `@formata/limitr` embeds the Limitr engine (the Stof spec compiled to BSTF) in a Stof WebAssembly document and
-wraps the `<Limitr>.api` functions as async methods. It runs in-process in Node, Deno, Bun, and browsers. No network
+wraps the policy's functions (at `root.policy`) as async methods. It runs in-process in Node, Deno, Bun, and browsers. No network
 calls happen in any hot path; Cloud mode syncs over a background WebSocket.
 
 This skill covers the TypeScript API. What a policy means and how a call is decided is in the **limitr** skill; read
@@ -100,8 +100,11 @@ request can run between a `check` and the following `allow`. When concurrent req
 
 ## LLM calls: reserve, then settle
 
+The policy's `chat` entitlement declares `estimate_basis: 'input'` and `estimate_segment: 'model'` (see the limitr
+skill), so the event data alone sizes each prediction:
+
 ```ts
-const hold = await limitr.reserve(userId, 'chat', { basis: inputTokens, segment: model, context: { model } });
+const hold = await limitr.reserve(userId, 'chat', { context: { model, input: inputTokens } });
 if (!hold) return paymentRequired();
 try {
     const res = await callModel(model, messages);
@@ -119,9 +122,11 @@ try {
 - `settle(customer, entitlement, holdId, value, event?, overhead?, basis?, segment?)` records the real usage and
   learns from it. Pass the provider's reported cost as `overhead` when you have it.
 - `release` drops a hold; `held` is the room held now. Unsettled holds expire after the policy's `hold_ttl` (10 min).
-- `estimate(customer, entitlement, basis?, segment?, quantile = 0.9)` returns `{ value, overhead, samples, source,
-  scope }` or null. `observe(...)` records a call without a hold.
-- Keep `segment` low-cardinality (a model name, a feature), never a user or request ID.
+- `estimate(customer, entitlement, { context?, quantile?, basis?, segment? })` returns `{ value, overhead, samples,
+  source, scope }` or null. `observe(customer, entitlement, value, { context?, overhead?, basis?, segment? })`
+  records a call without a hold.
+- `basis` and `segment` options override what the event data says. They are rarely needed.
+- Keep the segment field's values low-cardinality (a model name, a feature), never a user or request ID.
 
 ## Spend caps
 
@@ -154,7 +159,7 @@ the plan's subscription entitlement once (after its trial).
 ```ts
 limitr.addHandler('billing', async (key, value) => {
     const event = typeof value === 'string' ? JSON.parse(value) : value;
-    if (key === 'meter-overage') await billing.record(event.customer.id, event.entitlement, event.overage);
+    if (key === 'meter-overage') await billing.charge(event.customer.id, event.entitlement, event.overage_price);
     if (key === 'customer-set') await db.customers.put(event.id, event);
 });
 ```
@@ -165,7 +170,9 @@ limitr.addHandler('billing', async (key, value) => {
   returns without waiting for them. Catch errors inside async handlers, and don't assume a handler finished when
   `allow` returns.
 - Event names and payloads are in the limitr skill (`references/events.md`). Common ones: `meter-changed`,
-  `meter-overage`, `meter-limit`, `meter-governed`, `meter-reset`, `cap-threshold-crossed`, `customer-set`.
+  `meter-overage`, `meter-limit`, `meter-governed`, `meter-reset`, `cap-limit`, `cap-threshold-crossed`,
+  `customer-set`. Meter events carry the call's cost (`meter.overhead_diff`) and list price (`meter.price_diff`) in
+  runes, which together give its margin.
 - In Cloud mode, `topup-purchase-failed` also arrives from Cloud.
 
 ## Persist customer state
@@ -181,7 +188,7 @@ Customer records hold all state (meters, grants, caps, overrides). Without Cloud
 
 `setPlan(id, planStof)`, `deletePlan(id)`, `setNotifications(stof)`, `setCapabilities(stof)`, and
 `difference(otherLimitr)` (a diff of two policies). For anything else, call the engine directly:
-`await limitr.docCall('<Limitr>.api.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
+`await limitr.docCall('policy.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
 registering host functions the policy can call (`limitr.doc.lib('App', 'name', fn)`) or allowing HTTP from the
 policy (`limitr.doc.allowHttp()`).
 
@@ -204,8 +211,8 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 2. **Re-creating the engine per request.** All state lives in the instance. Create it once.
 3. **`check` then `allow` under concurrency.** Not atomic across requests; use `reserve` / `settle`.
 4. **Reading event payloads without parsing.** Object payloads are JSON strings.
-5. **Expecting a cap denial to send an event.** Calls denied by caps return false with no meter event; check
-   `allow`'s return value.
+5. **Missing the basis.** On an entitlement with `estimate_basis`, every `reserve` and `settle` needs that field
+   in its event data. Without it, the call is metered but not learned from, and the engine logs it.
 6. **High-cardinality `segment` values.** Each one keeps an estimate in memory forever.
 7. **Losing state on restart** without Cloud. Persist customers from events and load them on boot.
 8. **Forgetting `overhead` when the provider reports cost.** Without it, the credit's cost function or fixed

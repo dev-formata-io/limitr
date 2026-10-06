@@ -311,15 +311,15 @@ Limitr TestLifecyclePolicy: {
 
 #[test]
 /**
- * <Limitr>.api.plan_trial_period forwards the id (root.policy is the mod.stof policy).
+ * plan_trial_period takes a plan or a customer ID (root.policy is the mod.stof policy).
  */
 fn api_plan_trial_period() {
     const plan = root.policy.plans.paid;
-    assert_eq(<Limitr>.api.plan_trial_period('paid'), null);
+    assert_eq(root.policy.plan_trial_period('paid'), null);
 
     plan.trial_period = 7days; // no await between set and restore - safe with async tests
-    const by_plan = <Limitr>.api.plan_trial_period('paid');
-    const by_customer = <Limitr>.api.plan_trial_period('cj');
+    const by_plan = root.policy.plan_trial_period('paid');
+    const by_customer = root.policy.plan_trial_period('cj');
     plan.trial_period = null;
 
     assert_eq(by_plan, 7days);

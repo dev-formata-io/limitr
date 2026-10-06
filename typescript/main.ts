@@ -17,7 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrApi } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
-import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEstimate, LimitrReserveOptions } from "./types.js";
+import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
 
 
@@ -85,6 +85,7 @@ export class Limitr {
         this.doc = new StofDoc();
         this.doc.parse(limitrApi, 'bstf');
         this.doc.parse(policy, format);
+        this.doc.sync_call('<Limitr>.load'); // root.policy becomes a Limitr (JSON, YAML, and TOML policies have no type)
     }
 
 
@@ -143,7 +144,7 @@ export class Limitr {
      * @returns Whether this policy is valid and if not, what the current error is as a string.
      */
     async valid(): Promise<[boolean, string]> {
-        const valid = await this.gate.run(() => this.doc.call('<Limitr>.api.valid')) as boolean;
+        const valid = await this.gate.run(() => this.doc.call('policy.valid')) as boolean;
         if (valid) return [true, ''];
         const error = this.doc.get('<LimitrValidation>.error_message') as string;
         return [false, error];
@@ -155,8 +156,8 @@ export class Limitr {
      * This policy is treated as the schema for the diff operation.
      */
     async difference(other: Limitr, symmetric: boolean = false): Promise<Record<string, unknown>> {
-        const bstf = await other.docCall('<Limitr>.api.policy_bstf') as Uint8Array;
-        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.difference_bstf', bstf, symmetric)) as string;
+        const bstf = await other.docCall('policy.policy_bstf') as Uint8Array;
+        const json = await this.gate.run(() => this.doc.call('policy.difference_bstf', bstf, symmetric)) as string;
         return JSON.parse(json);
     }
 
@@ -178,7 +179,7 @@ export class Limitr {
      * Get a plan record by ID (plan ID or customer ID).
      */
     async plan(id: string, def: boolean = true): Promise<Record<string, unknown> | undefined> {
-        const planNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.plan', id, def));
+        const planNode = await this.gate.run(() => this.doc.sync_call('policy.plan', id, def));
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
@@ -188,7 +189,7 @@ export class Limitr {
      * Get the default plan if any.
      */
     async defaultPlan(): Promise<Record<string, unknown> | undefined> {
-        const planNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.default_plan'));
+        const planNode = await this.gate.run(() => this.doc.sync_call('policy.default_plan'));
         if (typeof planNode === 'string') return this.doc.record(planNode);
         return undefined;
     }
@@ -199,7 +200,7 @@ export class Limitr {
      * Returns a node ID to the resulting Plan.
      */
     async setPlan(id: string, planStof: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_plan', id, planStof)) as string | null;
+        return await this.gate.run(() => this.doc.call('policy.set_plan', id, planStof)) as string | null;
     }
 
 
@@ -207,7 +208,7 @@ export class Limitr {
      * Delete a plan by ID.
      */
     async deletePlan(id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_plan', id)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.delete_plan', id)) as boolean;
     }
 
 
@@ -215,7 +216,7 @@ export class Limitr {
      * Plan period string.
      */
     async planPeriod(id: string): Promise<'yearly' | 'monthly' | 'weekly' | 'daily' | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_period', id)) as 'yearly' | 'monthly' | 'weekly' | 'daily' | null;
+        return await this.gate.run(() => this.doc.call('policy.plan_period', id)) as 'yearly' | 'monthly' | 'weekly' | 'daily' | null;
     }
 
 
@@ -223,7 +224,7 @@ export class Limitr {
      * Plan trial period in milliseconds (if any).
      */
     async planTrialPeriod(id: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_trial_period', id)) as number | null;
+        return await this.gate.run(() => this.doc.call('policy.plan_trial_period', id)) as number | null;
     }
 
 
@@ -231,7 +232,7 @@ export class Limitr {
      * Plan subscription entitlement name.
      */
     async planSubEntitlementName(id: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.plan_sub_entitlement_name', id)) as string | null;
+        return await this.gate.run(() => this.doc.call('policy.plan_sub_entitlement_name', id)) as string | null;
     }
 
 
@@ -243,7 +244,7 @@ export class Limitr {
      * Get a credit record by ID/type.
      */
     async credit(id: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.credit', id));
+        const node = await this.gate.run(() => this.doc.sync_call('policy.credit', id));
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -254,7 +255,7 @@ export class Limitr {
      * ID can be a plan ID or a customer ID.
      */
     async creditFor(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.credit_for', id, entitlement));
+        const node = await this.gate.run(() => this.doc.sync_call('policy.credit_for', id, entitlement));
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -265,7 +266,7 @@ export class Limitr {
      * Convert some of one credit to another (if possible).
      */
     async creditExchange(inCredit: string, outCredit: string = 'rune', value: number = 1): Promise<number | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.credit_exchange', inCredit, outCredit, value)) as number | null;
+        return await this.gate.run(() => this.doc.call('policy.credit_exchange', inCredit, outCredit, value)) as number | null;
     }
 
 
@@ -281,7 +282,7 @@ export class Limitr {
      * You can use this object for customer state UI also.
      */
     async customer(id: string): Promise<LimitrCustomer | undefined> {
-        const subNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        const subNode = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
         if (typeof subNode === 'string') return this.doc.record(subNode) as unknown as LimitrCustomer;
         return undefined;
     }
@@ -291,7 +292,7 @@ export class Limitr {
      * Get a customer metadata object (if any).
      */
     async customerMetadata(id: string): Promise<Record<string, unknown> | undefined> {
-        const metaNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_metadata', id));
+        const metaNode = await this.gate.run(() => this.doc.sync_call('policy.customer_metadata', id));
         if (typeof metaNode === 'string') return this.doc.record(metaNode);
         return undefined;
     }
@@ -302,7 +303,7 @@ export class Limitr {
      * Customers contain all state information, so this is all that is required to save/load.
      */
     async customers(): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.get'));
+        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.load'));
         if (typeof node === 'string') {
             const subs = this.doc.get('customers', node);
             if (typeof subs === 'string') return this.doc.record(subs);
@@ -315,7 +316,7 @@ export class Limitr {
      * Get the customer reference IDs for a customer.
      */
     async customerRefs(id: string): Promise<string[] | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_refs', id)) as string[] | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.customer_refs', id)) as string[] | null;
     }
 
 
@@ -324,7 +325,7 @@ export class Limitr {
      * Returns true if the plan has changed (and emits customer-set & customer-plan-changed events).
      */
     async setCustomerPlan(id: string, plan: string, overwrite_meters: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer_plan', id, plan, overwrite_meters)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.set_customer_plan', id, plan, overwrite_meters)) as boolean;
     }
 
 
@@ -333,7 +334,7 @@ export class Limitr {
      * Also ensure this customer doesn't have included topups that are no longer applicable given their plan.
      */
     async ensureCustomerIncludedTopups(id: string, event: boolean = true) {
-        await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_included_topups', id, event));
+        await this.gate.run(() => this.doc.call('policy.ensure_included_topups', id, event));
     }
 
 
@@ -346,7 +347,7 @@ export class Limitr {
      * Make sure to set up a plan "subscription" entitlement and credit (typically flat rate that does not reset with a soft limit of 0).
      */
     async ensureCustomerPlanQuantity(id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.ensure_plan_subscription', id)) as boolean | null ?? false;
+        return await this.gate.run(() => this.doc.call('policy.ensure_plan_subscription', id)) as boolean | null ?? false;
     }
 
 
@@ -356,7 +357,7 @@ export class Limitr {
      * NOTE: Returns true if a new customer was created (one will always exist after this).
      */
     async ensureCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<boolean> {
-        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
         if (existing) return false;
         if (this.ws) {
             switch (this.ws.readyState) {
@@ -379,7 +380,7 @@ export class Limitr {
         let meta: string | null = null;
         if (typeof metadata === 'string') meta = metadata;
         else if (metadata) meta = JSON.stringify(metadata);
-        await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta));
+        await this.gate.run(() => this.doc.call('policy.create_customer', id, plan, type, label, refs, alts, meta));
         return true;
     }
 
@@ -393,7 +394,7 @@ export class Limitr {
         let meta: string | null = null;
         if (typeof metadata === 'string') meta = metadata;
         else if (metadata) meta = JSON.stringify(metadata);
-        const node = await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer', id, plan, type, label, refs, alts, meta)) as string;
+        const node = await this.gate.run(() => this.doc.call('policy.create_customer', id, plan, type, label, refs, alts, meta)) as string;
         if (typeof node === 'string') return this.doc.record(node) as unknown as LimitrCustomer;
         return undefined;
     }
@@ -409,7 +410,7 @@ export class Limitr {
         const id = record.id as string;
         if (!id) throw new Error('Ensure setting a customer expects a customer record with an ID');
 
-        const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+        const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
         if (existing) return false;
         if (this.ws) {
             switch (this.ws.readyState) {
@@ -429,7 +430,7 @@ export class Limitr {
                 }
             }
         }
-        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', JSON.stringify(record), event)) as string | null;
+        const res = await this.gate.run(() => this.doc.call('policy.set_customer', JSON.stringify(record), event)) as string | null;
         return !!res;
     }
 
@@ -440,7 +441,7 @@ export class Limitr {
      */
     async setCustomer(customer: string | Record<string, unknown> | LimitrCustomer, event: boolean = true): Promise<string | null> {
         const customerStof = typeof customer === 'string' ? customer : JSON.stringify(customer);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_customer', customerStof, event)) as string | null;
+        return await this.gate.run(() => this.doc.call('policy.set_customer', customerStof, event)) as string | null;
     }
 
 
@@ -475,7 +476,7 @@ export class Limitr {
      * If a cloud customer, they will not be removed from the cloud.
      */
     async removeCustomer(id: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_customer', id)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.delete_customer', id)) as boolean;
     }
 
 
@@ -483,7 +484,7 @@ export class Limitr {
      * Add an alternative customer ID to an existing customer.
      */
     async addAltID(existing: string, alt: string, event: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.set_alt_customer_id', existing, alt, event)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.set_alt_customer_id', existing, alt, event)) as boolean;
     }
 
 
@@ -491,7 +492,7 @@ export class Limitr {
      * Remove an alternative customer ID from an existing customer.
      */
     async removeAltID(alt: string, event: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.delete_alt_customer_id', alt, event)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.delete_alt_customer_id', alt, event)) as boolean;
     }
 
 
@@ -502,7 +503,7 @@ export class Limitr {
      * If the customer already has an override for this entitlement, it will be replaced.
      */
     async createCustomerOverride(id: string, entitlement: string, value?: string | number, expires_on?: number, credit?: string, mode?: string, increment?: number | string, resets?: boolean, reset_inc?: number | string, reset_sch?: string): Promise<string | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.create_customer_override', id, entitlement, expires_on ?? null, credit ?? null, mode ?? null, value ?? null, increment ?? null, resets ?? null, reset_inc ?? null, reset_sch ?? null)) as string | null;
+        return await this.gate.run(() => this.doc.call('policy.create_customer_override', id, entitlement, expires_on ?? null, credit ?? null, mode ?? null, value ?? null, increment ?? null, resets ?? null, reset_inc ?? null, reset_sch ?? null)) as string | null;
     }
 
 
@@ -510,7 +511,7 @@ export class Limitr {
      * Remove a customer override (limit).
      */
     async removeCustomerOverride(id: string, entitlement: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_override', id, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.remove_customer_override', id, entitlement)) as boolean;
     }
 
 
@@ -519,7 +520,7 @@ export class Limitr {
      * Creates a credit grant from a topup (by name) if found on this customer's plan.
      */
     async applyCustomerTopup(id: string, topup: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.apply_customer_topup', id, topup)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.apply_customer_topup', id, topup)) as boolean;
     }
 
 
@@ -528,7 +529,7 @@ export class Limitr {
      * For remaining entitlement (optionally including credit grants), use "remaining" instead.
      */
     async remainingCredit(id: string, credit: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.credit_remaining', id, credit)) as number | null;
+        return await this.gate.run(() => this.doc.call('policy.credit_remaining', id, credit)) as number | null;
     }
 
 
@@ -567,7 +568,7 @@ export class Limitr {
      */
     async addCustomerCap(id: string, value: number | string, options: LimitrCapOptions = {}): Promise<LimitrCap | null> {
         const capNode = await this.gate.run(() => this.doc.call(
-            '<Limitr>.api.add_customer_cap',
+            'policy.add_customer_cap',
             id, value, options.cap_id ?? '', options.credit ?? 'rune',
             options.exchangeable ?? null, options.ignore_grants ?? false, options.overage_only ?? false,
             options.observe_only ?? false, options.overhead_cost ?? false, options.follow_decrements ?? false, options.scope ?? null,
@@ -585,7 +586,7 @@ export class Limitr {
      * Returns the Cap, or undefined if not present.
      */
     async customerCap(id: string, cap_id: string): Promise<LimitrCap | undefined> {
-        const capNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer_cap', id, cap_id));
+        const capNode = await this.gate.run(() => this.doc.sync_call('policy.customer_cap', id, cap_id));
         if (typeof capNode === 'string') return this.doc.record(capNode) as unknown as LimitrCap;
         return undefined;
     }
@@ -597,7 +598,7 @@ export class Limitr {
      * Returns false if no cap with this id exists on the customer.
      */
     async resetCustomerCap(id: string, cap_id: string, event: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.reset_customer_cap', id, cap_id, event)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.reset_customer_cap', id, cap_id, event)) as boolean;
     }
 
 
@@ -607,7 +608,7 @@ export class Limitr {
      * Returns false if no cap with this id exists on the customer.
      */
     async removeCustomerCap(id: string, cap_id: string, event: boolean = true): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.remove_customer_cap', id, cap_id, event)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.remove_customer_cap', id, cap_id, event)) as boolean;
     }
 
 
@@ -689,7 +690,7 @@ export class Limitr {
      * Customer local margin snapshot.
      */
     async customerMarginSnapshot(customerId: string): Promise<Map<string, unknown> | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.customer_local_margin_breakdown', customerId)) as Map<string, unknown> | null;
+        return await this.gate.run(() => this.doc.call('policy.customer_local_margin_breakdown', customerId)) as Map<string, unknown> | null;
     }
 
 
@@ -697,7 +698,7 @@ export class Limitr {
      * Local margin snapshot.
      */
     async marginSnapshot(plan: string, entitlements: Map<string, unknown>): Promise<Map<string, unknown> | null> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.local_margin_breakdown', plan, entitlements)) as Map<string, unknown> | null;
+        return await this.gate.run(() => this.doc.call('policy.local_margin_breakdown', plan, entitlements)) as Map<string, unknown> | null;
     }
 
 
@@ -709,7 +710,7 @@ export class Limitr {
      * Set notifications.
      */
     async setNotifications(contents: string | Uint8Array, format: string = 'stof') {
-        await this.gate.run(() => this.doc.call('<Limitr>.api.set_notifications', contents, format));
+        await this.gate.run(() => this.doc.call('policy.set_notifications', contents, format));
     }
 
 
@@ -721,7 +722,7 @@ export class Limitr {
      * Capability by name.
      */
     async capability(name: string): Promise<Record<string, unknown> | undefined> {
-        const capNode = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.capability', name));
+        const capNode = await this.gate.run(() => this.doc.sync_call('policy.capability', name));
         if (typeof capNode === 'string') return this.doc.record(capNode);
         return undefined;
     }
@@ -731,7 +732,7 @@ export class Limitr {
      * Set capabilities.
      */
     async setCapabilities(contents: string | Uint8Array, format: string = 'stof') {
-        await this.gate.run(() => this.doc.sync_call('<Limitr>.api.set_capabilities', contents, format));
+        await this.gate.run(() => this.doc.sync_call('policy.set_capabilities', contents, format));
     }
 
 
@@ -739,7 +740,7 @@ export class Limitr {
      * Run a capability.
      */
     async runCapability(name: string, args: Record<string, unknown> = {}, customerId?: string): Promise<unknown> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.run_capability', name, new Map(Object.entries(args)), customerId ?? null));
+        return await this.gate.run(() => this.doc.call('policy.run_capability', name, new Map(Object.entries(args)), customerId ?? null));
     }
 
 
@@ -747,7 +748,7 @@ export class Limitr {
      * Claude tools from capabilities, optionally for a specific customer.
      */
     async claudeTools(customerId?: string): Promise<Record<string, unknown>[]> {
-        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.claude_tools', customerId ?? null)) as string | null;
+        const json = await this.gate.run(() => this.doc.call('policy.claude_tools', customerId ?? null)) as string | null;
         if (json) {
             const obj = JSON.parse(json);
             return obj.tools ?? [];
@@ -762,7 +763,7 @@ export class Limitr {
      */
     async claudeToolUse(toolUse: any, customerId?: string): Promise<Record<string, unknown> | null> {
         const toolUseJson = typeof toolUse === 'string' ? toolUse : JSON.stringify(toolUse);
-        const json = await this.gate.run(() => this.doc.call('<Limitr>.api.claude_tool_use', toolUseJson, customerId ?? null)) as string | null;
+        const json = await this.gate.run(() => this.doc.call('policy.claude_tool_use', toolUseJson, customerId ?? null)) as string | null;
         return json ? JSON.parse(json) : null;
     }
 
@@ -775,7 +776,7 @@ export class Limitr {
      * Get an entitlement record with a plan ID or customer ID and an entitlement name.
      */
     async entitlement(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.entitlement', id, entitlement));
+        const node = await this.gate.run(() => this.doc.sync_call('policy.entitlement', id, entitlement));
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -787,7 +788,7 @@ export class Limitr {
      * Will always be in the units of the credit associated with this entitlement (ex. limit.value = '2GB', credit.stof_units = 'MB', limit = 2000).
      */
     async limit(id: string, entitlement: string, grants: boolean = true): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.limit', id, entitlement, grants)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.limit', id, entitlement, grants)) as number | null;
     }
 
 
@@ -796,7 +797,7 @@ export class Limitr {
      * Could be overridden for a customer, so potentially different from the above entitlement's limit.
      */
     async limitObject(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.limit_obj', id, entitlement));
+        const node = await this.gate.run(() => this.doc.sync_call('policy.limit_obj', id, entitlement));
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -807,7 +808,7 @@ export class Limitr {
      * Resolves to a shared meter for the entitlement scope if defined and different from the customer type.
      */
     async meterObject(id: string, entitlement: string): Promise<Record<string, unknown> | undefined> {
-        const node = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.meter_obj', id, entitlement));
+        const node = await this.gate.run(() => this.doc.sync_call('policy.meter_obj', id, entitlement));
         if (typeof node === 'string') return this.doc.record(node);
         return undefined;
     }
@@ -819,7 +820,7 @@ export class Limitr {
      */
     async remaining(customer: string, entitlement: string, percent: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.remaining', customer, entitlement, percent, grants)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.remaining', customer, entitlement, percent, grants)) as number | null;
     }
 
 
@@ -831,7 +832,7 @@ export class Limitr {
      */
     async allowance(customer: string, entitlement: string, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.allowance', customer, entitlement, grants)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.allowance', customer, entitlement, grants)) as number | null;
     }
 
 
@@ -842,7 +843,7 @@ export class Limitr {
      */
     async projectedExhaustion(customer: string, entitlement: string, smoothed: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.projected_exhaustion', customer, entitlement, smoothed, grants)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.projected_exhaustion', customer, entitlement, smoothed, grants)) as number | null;
     }
 
 
@@ -852,7 +853,7 @@ export class Limitr {
      * Derived from the last two entries in the meter's ring buffer.
      */
     async rate(customer: string, entitlement: string): Promise<number> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.rate', customer, entitlement)) as number ?? 0;
+        return await this.gate.run(() => this.doc.sync_call('policy.rate', customer, entitlement)) as number ?? 0;
     }
 
 
@@ -862,7 +863,7 @@ export class Limitr {
      * Returns 0 if fewer than three allow() calls have been made.
      */
     async acceleration(customer: string, entitlement: string): Promise<number> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.acceleration', customer, entitlement)) as number ?? 0;
+        return await this.gate.run(() => this.doc.sync_call('policy.acceleration', customer, entitlement)) as number ?? 0;
     }
 
 
@@ -872,7 +873,7 @@ export class Limitr {
      */
     async value(customer: string, entitlement: string, percent: boolean = false, grants: boolean = true): Promise<number | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.value', customer, entitlement, percent, grants)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.value', customer, entitlement, percent, grants)) as number | null;
     }
 
 
@@ -880,7 +881,7 @@ export class Limitr {
      * Get the cost for a standard increment on an entitlement (if set on its limit).
      */
     async cost(id: string, entitlement: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.cost', id, entitlement)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.cost', id, entitlement)) as number | null;
     }
 
 
@@ -888,7 +889,7 @@ export class Limitr {
      * Meter resets at this timestamp (unix timestamp in ms) for this customer ID and entitlement.
      */
     async resets(id: string, entitlement: string): Promise<number | null> {
-        return await this.gate.run(() => this.doc.sync_call('<Limitr>.api.resets', id, entitlement)) as number | null;
+        return await this.gate.run(() => this.doc.sync_call('policy.resets', id, entitlement)) as number | null;
     }
 
     
@@ -904,7 +905,7 @@ export class Limitr {
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.increment', customer, entitlement, ev)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.increment', customer, entitlement, ev)) as boolean;
     }
 
 
@@ -919,7 +920,7 @@ export class Limitr {
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.decrement', customer, entitlement, ev)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.decrement', customer, entitlement, ev)) as boolean;
     }
 
 
@@ -942,7 +943,7 @@ export class Limitr {
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.allow', customer, entitlement, value, ev, null, overhead ?? null, force)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.allow', customer, entitlement, value, ev, null, overhead ?? null, force)) as boolean;
     }
 
 
@@ -952,7 +953,7 @@ export class Limitr {
      */
     async checkIncrement(customer: string, entitlement: string): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_increment', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.check_increment', customer, entitlement)) as boolean;
     }
 
 
@@ -962,7 +963,7 @@ export class Limitr {
      */
     async checkDecrement(customer: string, entitlement: string): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.check_decrement', customer, entitlement)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.check_decrement', customer, entitlement)) as boolean;
     }
 
 
@@ -975,7 +976,7 @@ export class Limitr {
     async check(customer: string, entitlement: string, value: number | string = 0, context?: string | Record<string, unknown>, overhead?: number): Promise<boolean> {
         if (!await this.cloudPreCheckContinue(customer)) return false;
         const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.check', customer, entitlement, value, null, ctx, overhead ?? null)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.check', customer, entitlement, value, null, ctx, overhead ?? null)) as boolean;
     }
 
 
@@ -984,18 +985,20 @@ export class Limitr {
      * Returns a hold ID, or null if the call wouldn't be allowed right now (counting every other hold).
      * When the call finishes, settle() it with the actual usage, or release() it if it never happens.
      * Leave `value` unset to hold the predicted amount (see estimate). Holds are never metered or billed.
+     * `context` is the call's event data: when the entitlement declares `estimate_basis: 'input'` and
+     * `estimate_segment: 'model'`, the prediction is sized by `context.input` for `context.model`.
      *
      * ```ts
-     * const hold = await limitr.reserve(user, 'ai_chat', { basis: inputTokens, segment: model });
+     * const hold = await limitr.reserve(user, 'ai_chat', { context: { model, input: inputTokens } });
      * if (!hold) return deny();
      * const res = await callModel(...);
-     * await limitr.settle(user, 'ai_chat', hold, res.usage.total_tokens, { model }, res.cost);
+     * await limitr.settle(user, 'ai_chat', hold, res.usage.total_tokens, { model, input: inputTokens, output: res.usage.output_tokens }, res.cost);
      * ```
      */
     async reserve(customer: string, entitlement: string, options: LimitrReserveOptions = {}): Promise<string | null> {
         if (!await this.cloudPreCheckContinue(customer)) return null;
         const ctx = options.context === undefined ? null : (typeof options.context === 'string' ? options.context : JSON.stringify(options.context));
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.reserve', customer, entitlement,
+        return await this.gate.run(() => this.doc.call('policy.reserve', customer, entitlement,
             options.value ?? null, ctx, options.basis ?? null, options.segment ?? null, options.ttl ?? null,
             options.quantile ?? 0.9, options.overhead ?? null)) as string | null;
     }
@@ -1004,14 +1007,15 @@ export class Limitr {
     /**
      * Finish a reserved call: drops the hold and records the actual usage (even past a hard limit, since it already
      * happened), then learns from it for future estimates. `event` and `overhead` work like allow().
-     * `basis` and `segment` override the ones given to reserve (ex. if the hold expired, or you only know them after the call).
+     * `basis` and `segment` override the hold's and the event data's (rarely needed: the entitlement's
+     * estimate_basis / estimate_segment fields are read from the hold or `event`).
      */
     async settle(customer: string, entitlement: string, holdId: string | null, value: number | string, event: boolean | string | Record<string, unknown> = true, overhead?: number, basis?: number, segment?: string): Promise<boolean> {
         let ev: string | boolean = true;
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.settle', customer, entitlement, holdId, value, ev, overhead ?? null, basis ?? null, segment ?? null)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.settle', customer, entitlement, holdId, value, ev, overhead ?? null, basis ?? null, segment ?? null)) as boolean;
     }
 
 
@@ -1019,7 +1023,7 @@ export class Limitr {
      * Drop a hold without recording anything (the call never happened).
      */
     async release(customer: string, entitlement: string, holdId: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.release', customer, entitlement, holdId)) as boolean;
+        return await this.gate.run(() => this.doc.call('policy.release', customer, entitlement, holdId)) as boolean;
     }
 
 
@@ -1027,18 +1031,20 @@ export class Limitr {
      * Room currently held by reservations for this customer and entitlement (in the credit's units).
      */
     async held(customer: string, entitlement: string): Promise<number> {
-        return (await this.gate.run(() => this.doc.call('<Limitr>.api.held', customer, entitlement)) as number | null) ?? 0;
+        return (await this.gate.run(() => this.doc.call('policy.held', customer, entitlement)) as number | null) ?? 0;
     }
 
 
     /**
      * Predict one call before it runs: value (credit units) and provider overhead (runes), from this customer's
      * own usage once there's enough of it, otherwise everyone's. Null until something has been learned.
-     * `basis` scales per-basis estimates (ex. input tokens), `segment` picks a sub-estimate (ex. the model), and
-     * `quantile` how cautious it is (0.5 = a typical call, 0.9 = 9 in 10 calls use this or less).
+     * `context` is the call's event data (ex. `{ model, input }`), read for the entitlement's estimate_basis and
+     * estimate_segment; `quantile` is how cautious it is (0.5 = a typical call, 0.9 = 9 in 10 calls use this or less).
      */
-    async estimate(customer: string, entitlement: string, basis?: number, segment?: string, quantile: number = 0.9): Promise<LimitrEstimate | null> {
-        const res = await this.gate.run(() => this.doc.call('<Limitr>.api.estimate', customer, entitlement, basis ?? null, segment ?? null, quantile)) as Map<string, unknown> | null;
+    async estimate(customer: string, entitlement: string, options: LimitrEstimateOptions = {}): Promise<LimitrEstimate | null> {
+        const ctx = options.context === undefined ? null : (typeof options.context === 'string' ? options.context : JSON.stringify(options.context));
+        const res = await this.gate.run(() => this.doc.call('policy.estimate', customer, entitlement,
+            options.basis ?? null, options.segment ?? null, options.quantile ?? 0.9, ctx)) as Map<string, unknown> | null;
         if (!res) return null;
         return Object.fromEntries(res) as unknown as LimitrEstimate;
     }
@@ -1047,9 +1053,10 @@ export class Limitr {
     /**
      * Record one call's usage for estimates without reserving (settle does this for you).
      */
-    async observe(customer: string, entitlement: string, value: number | string, overhead?: number, basis?: number, segment?: string, context?: string | Record<string, unknown>): Promise<boolean> {
-        const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
-        return await this.gate.run(() => this.doc.call('<Limitr>.api.observe', customer, entitlement, value, overhead ?? null, basis ?? null, segment ?? null, ctx)) as boolean;
+    async observe(customer: string, entitlement: string, value: number | string, options: LimitrObserveOptions = {}): Promise<boolean> {
+        const ctx = options.context === undefined ? null : (typeof options.context === 'string' ? options.context : JSON.stringify(options.context));
+        return await this.gate.run(() => this.doc.call('policy.observe', customer, entitlement, value,
+            options.overhead ?? null, options.basis ?? null, options.segment ?? null, ctx)) as boolean;
     }
 
 
@@ -1201,9 +1208,9 @@ export class Limitr {
      */
     async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
         const voucher = id.startsWith('limitr_v1_');
-        if (voucher) await this.gate.run(() => this.doc.call('<Limitr>.api.delete_customer', id));
+        if (voucher) await this.gate.run(() => this.doc.call('policy.delete_customer', id));
         if (!voucher) {
-            const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id));
+            const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
             if (existing) return true;
         }
 
@@ -1216,7 +1223,7 @@ export class Limitr {
             const intervalMs = 50;
             const start = Date.now();
             const poll = async () => {
-                if (await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', id))) {
+                if (await this.gate.run(() => this.doc.sync_call('policy.customer', id))) {
                     await this.ensureCustomerIncludedTopups(id, false);
                     resolve(true);
                     return;
@@ -1244,13 +1251,13 @@ export class Limitr {
         if (this.ws) {
             switch (this.ws.readyState) {
                 case WebSocket.OPEN: {
-                    const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', customer));
+                    const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', customer));
                     if (!existing) return await this.addCloudCustomer(customer);
                     break;
                 }
                 case WebSocket.CONNECTING: {
                     await waitOnOpen(this.ws);
-                    const existing = await this.gate.run(() => this.doc.sync_call('<Limitr>.api.customer', customer));
+                    const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', customer));
                     if (!existing) return await this.addCloudCustomer(customer);
                     break;
                 }
@@ -1350,11 +1357,11 @@ export class Limitr {
                         this._deniedCloudCustomers.add(record.id);
                     }
                 } else if (!!record.policy && !!record.policy.plans) {
-                    await this.gate.run(() => this.doc.call('<Limitr>.api.update_policy_internals', data, 'json'));
+                    await this.gate.run(() => this.doc.call('policy.update_policy_internals', data, 'json'));
                 } else if (record.type === 'customer-invoices' && !!record.data.invoices && !!record.id) {
-                    await this.gate.run(() => this.doc.call('<Limitr>.api.update_customer_invoices', data, 'json'));
+                    await this.gate.run(() => this.doc.call('policy.update_customer_invoices', data, 'json'));
                 } else if (!!record.type && !!record.id) {
-                    await this.gate.run(() => this.doc.call('<Limitr>.api.update_customer_internals', data, 'json'));
+                    await this.gate.run(() => this.doc.call('policy.update_customer_internals', data, 'json'));
                     await this.ensureCustomerIncludedTopups(record.id, false);
                 }
             } catch {
@@ -1380,9 +1387,10 @@ export class Limitr {
                             doc.parse(`fn before_policy_update_clean() { root.remove('LimitrTypes', shallow = false); drop(this); }`);
                             doc.sync_call('before_policy_update_clean');
                             const cleanBuffer = doc.blobify('bstf');
-                            await this.doc.call('<Limitr>.api.update_policy_internals', cleanBuffer, 'bstf');
+                            await this.doc.call('policy.update_policy_internals', cleanBuffer, 'bstf');
                         } else {
                             this.doc = doc;
+                            this.doc.sync_call('<Limitr>.load');
                             this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
                             this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
                             this.doc.allowHttp(); // Http::fetch (Stof's built-in, backed by the JS fetch API)
@@ -1401,7 +1409,7 @@ export class Limitr {
                         this.wsInit = true;
                     });
                 } else {
-                    await this.gate.run(() => this.doc.call('<Limitr>.api.set_capabilities', buffer, 'bstf'));
+                    await this.gate.run(() => this.doc.call('policy.set_capabilities', buffer, 'bstf'));
                 }
             } catch (e) {
                 console.error('Error initializing Limitr Policy from BSTF:', e);

@@ -32,7 +32,7 @@ This file is the working guide. Details are in `references/`:
 - **stof skill:** the language. Syntax, types, units, libraries, `using`, tests.
 - **limitr skill (this one):** the policy and engine semantics, the same in every SDK.
 - **SDK skills (Ex. limitr-ts):** installing, constructing the engine, calling it from application code, handling
-  events, and Limitr Cloud. The SDKs are thin wrappers that call `<Limitr>.api.*` in the embedded document.
+  events, and Limitr Cloud. The SDKs are thin wrappers that call `root.policy`'s functions in the embedded document.
 
 ## Mental model
 
@@ -107,9 +107,11 @@ Limitr policy: {
 }
 ```
 
-The policy is the object typed `Limitr`, conventionally named `policy` at the root. `<Limitr>.api.get()` finds it:
-`root.policy`, else the first root field that is a `Limitr` instance or has the `#[limitr]` attribute. Plan and
-credit names are their field names. In JSON, the same document is `{ "policy": { "credits": {...}, "plans": {...} } }`.
+The policy always lives at `root.policy`, and its functions are called on it directly (`root.policy.allow(...)`).
+In JSON, the same document is `{ "policy": { "credits": {...}, "plans": {...} } }`. A policy parsed from JSON, YAML,
+or TOML has no type yet: `<Limitr>.load()` makes `root.policy` a `Limitr` and returns it (SDKs call it on load).
+Plan and credit names are their field names. In `limitr.stof`, public functions come first, grouped by area; the
+marked Internal section at the end is not part of the API.
 
 Validate a policy with `policy.valid()` (SDKs validate on load by default). It schema-checks every credit, plan,
 entitlement, limit, topup, and exchange pair, sorts and checks tiers, and fills defaults such as a 30-day
@@ -230,10 +232,15 @@ For calls whose usage is only known afterwards (LLM calls, jobs), reserve room f
 overspend together:
 
 ```stof
-const hold = policy.reserve('user_1', 'chat', null, using new { model: 'sonnet' }, input_tokens, 'sonnet');
+// the entitlement says what a call's size scales with, and what separates estimates
+chat: { estimate_basis: 'input', estimate_segment: 'model', limit: { credit: 'ai_token', mode: 'soft', value: 2_000_000 } }
+```
+
+```stof
+const hold = policy.reserve('user_1', 'chat', null, using new { model: 'sonnet', input: 1200 });
 if (hold == null) return false;                       // not allowed right now (counts other holds)
 // ... run the call ...
-policy.settle('user_1', 'chat', hold, used_tokens, using new { model: 'sonnet', input: 1200, output: 300 });
+policy.settle('user_1', 'chat', hold, 1500, using new { model: 'sonnet', input: 1200, output: 300 });
 // or, if it never ran: policy.release('user_1', 'chat', hold);
 ```
 
@@ -243,15 +250,22 @@ policy.settle('user_1', 'chat', hold, used_tokens, using new { model: 'sonnet', 
 - `settle(id, ent, hold, value, event?, overhead?, basis?, segment?)` drops the hold and records the actual usage
   with `force` (it already happened), then learns from it.
 - Holds count on their own meter only, expire after `hold_ttl` (10 minutes), and are never billed.
-- `estimate(id, ent, basis?, segment?, quantile)` returns `value`, `overhead`, `samples`, `source`, and `scope`. It
-  uses the customer's own estimate after `estimate_min_samples` (5), else the policy-wide one.
-- `basis` (Ex. input tokens) makes an estimate learn per unit of basis. `segment` (Ex. a model) keeps a separate
-  estimate. Keep segments few: a model or a feature, never a user or request ID.
+- `estimate(id, ent, basis?, segment?, quantile, context?)` returns `value`, `overhead`, `samples`, `source`, and
+  `scope`. It uses the customer's own estimate after `estimate_min_samples` (5), else the policy-wide one.
+- **Basis:** `estimate_basis` names the event data field a call's size scales with (Ex. input tokens). Estimates
+  learn per unit of it and scale each prediction by it, so a bigger prompt gets a bigger hold. Without it,
+  estimates are per call. A per-basis call missing the field is logged and not learned from.
+- **Segment:** `estimate_segment` names the field that keeps separate estimates (Ex. per model). Keep its values
+  few: a model or a feature, never a user or request ID.
+- `basis` and `segment` arguments override the event data. A `basis` for an entitlement with no `estimate_basis`
+  is ignored (and logged).
 
 ## Events and notifications
 
-Every meter change fires an event: `meter-changed`, `meter-overage` (soft overage after grants: bill it),
-`meter-limit` (denied), `meter-governed`, and `meter-reset`, plus customer, cap, and plan events. Events reach:
+Every meter change fires an event: `meter-changed`, `meter-overage` (soft overage after grants: bill its
+`overage_price`), `meter-limit` (denied), `meter-governed`, and `meter-reset`. A call denied by a cap fires
+`cap-limit`. Customer, cap, and plan changes have their own events. Meter events carry the call's cost
+(`meter.overhead_diff`) and list price (`meter.price_diff`), both in runes. Events reach:
 
 - **Policy notifications:** objects under `policy.notifications` with `matches(type, event) -> bool` and an optional
   `fire(event)`. Without `fire`, a match re-sends the event under the notification's name.

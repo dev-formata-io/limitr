@@ -107,11 +107,21 @@ credits: {
         }
     }
 }
+plans: {
+    pro: {
+        entitlements: {
+            // a call's size scales with its input tokens; each model keeps its own estimate
+            chat: { estimate_basis: 'input', estimate_segment: 'model',
+                limit: { credit: 'ai_token', mode: 'soft', value: 2_000_000, resets: true } }
+        }
+    }
+}
 ```
 
-Flow: `reserve(id, 'chat', null, ctx, input_tokens, model)` (null value holds the predicted amount), run the model,
-`settle(id, 'chat', hold, total_tokens, { model, input, output })`, or pass the provider's reported cost as
-`overhead`. Cloud can update `rates` without a deploy. An `overhead_cost: true` cap limits what a customer can cost
+Flow: `reserve(id, 'chat', null, { model, input })` (a null value holds the predicted amount, sized by the input),
+run the model, then `settle(id, 'chat', hold, total_tokens, { model, input, output })`, optionally passing the
+provider's reported cost as `overhead`. Each event's `meter.price_diff` minus `meter.overhead_diff` is that call's
+margin. Cloud can update `rates` without a deploy. An `overhead_cost: true` cap limits what a customer can cost
 you (Ex. `add_customer_cap(id, 20, id = 'cost_guard', overhead_cost = true, resets = true)`).
 
 ## Budgets for orgs and teams

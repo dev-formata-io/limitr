@@ -16,8 +16,9 @@ so a handler that keeps data must copy what it needs (Ex. `copy(event.meter)` mo
 ## Meter events (from allow, increment, decrement, settle)
 
 `allow` fires at most one of `meter-changed`, `meter-overage`, `meter-limit`, or `meter-governed` per call, plus
-`meter-reset` when the call started a new period. Calls with `event = false` fire nothing, and neither do calls
-denied by a cap (caps are checked before anything is metered) or calls on unknown customers or entitlements.
+`meter-reset` when the call started a new period. A call denied by a cap fires `cap-limit` instead (caps are
+checked before anything is metered). Calls with `event = false` fire nothing, and neither do calls on unknown
+customers or entitlements.
 
 | Event | When |
 |---|---|
@@ -38,6 +39,8 @@ Payload of `meter-changed` and `meter-overage`:
         diff: 50            // this call's value
         overhead: 0.0021    // provider overhead this period (runes)
         overhead_diff: 0.0004 // this call's overhead (runes)
+        price_diff: 0.001   // this call's worth at list price (runes): billable units past the limit, priced
+                            // from the customer's tier position, before grants (null: the credit has no price)
     }
     customer: { ... }       // the customer whose meter moved (the scope owner for scoped entitlements)
     entitlement: 'chat'
@@ -47,10 +50,15 @@ Payload of `meter-changed` and `meter-overage`:
     event_data: { ... }     // what the caller passed as `event`, or null
     overage: 20             // meter-overage: units past the limit not covered by grants (credit units)
     grant_value_applied: 30 // when grants covered some or all of the overage (credit units)
+    overage_price: 0.0004 // meter-overage: what to bill for `overage` (runes), priced after the grant coverage
 }
 ```
 
-`meter-limit` payload: `meter: { value, limit, invalid, diff, overhead, overhead_diff }` (value is unchanged,
+`price_diff` minus `overhead_diff` is the call's margin. Sum `price_diff` for a period's billable worth. A
+decrement has a negative `price_diff` (refunded from where the customer was on the tiers). Prices are only
+computed when a call sends events.
+
+`meter-limit` payload: `meter: { value, limit, invalid, diff, overhead, overhead_diff, price_diff }` (value is unchanged,
 `invalid` is what it would have been), `customer`, `entitlement`, `plan`, `credit`, `invalid_value`, `overage`,
 `event_data`.
 
@@ -61,6 +69,7 @@ Payload of `meter-changed` and `meter-overage`:
 
 | Event | Payload |
 |---|---|
+| `cap-limit` | `customer` (cap holder; the caller for call-scoped caps), `caller`, `entitlement`, `plan`, `credit`, `cap`, `event_data`, `meter: { value, limit, diff, overhead, overhead_diff, price_diff }`. A cap denied the call; nothing changed. |
 | `cap-threshold-crossed` | `customer` (cap holder), `caller`, `entitlement`, `cap`. Fires once when `meter_value` reaches `value`. |
 | `customer-cap-added` | `customer`, `cap` |
 | `customer-cap-reset` | `customer`, `cap` |
@@ -85,11 +94,11 @@ come from the Cloud sync helpers.
 
 ## Which event to use
 
-- **Bill usage:** `meter-overage` (`overage` is what to charge, after grants), or read meters at period end for
-  in-plan usage priced by the plan. Prices: `credit.price` / tiers, priced from the customer's position.
+- **Bill usage:** `meter-overage` (`overage_price` is what to charge in runes, after grants), or read meters at
+  period end for in-plan usage priced by the plan.
 - **Sync customer state to your database:** `customer-set`, plus the meter events (their `customer` carries meters).
   Meter events do not also send `customer-set` for the meter owner.
 - **Upsell or warn:** a notification on `meter-changed` with a `remaining` threshold, or an `observe_only` cap
   (its `value` is the threshold) and `cap-threshold-crossed`.
-- **Rate-limit telemetry:** `meter-governed` and `meter-limit`.
-- **Cost tracking:** `meter.overhead_diff` on every meter event.
+- **Rate-limit telemetry:** `meter-governed`, `meter-limit`, and `cap-limit`.
+- **Cost and margin per call:** `meter.overhead_diff` and `meter.price_diff` on every meter event.

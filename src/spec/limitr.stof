@@ -17,7 +17,9 @@
 
 #[type]
 /**
- * A Limitr policy.
+ * A Limitr policy: the rules (credits, plans, entitlements) and the state (customers and their meters)
+ * in one object, which always lives at root.policy. Public functions come first, grouped by area; the
+ * Internal section at the end holds their helpers.
  */
 Limitr: {
     /// Limitr version.
@@ -45,6 +47,7 @@ Limitr: {
     obj capabilities: {};
 
     /// Policy-wide usage estimates (see estimate()): estimates.<entitlement>.<segment> -> Estimate.
+    /// An entitlement's estimate_basis and estimate_segment say what each call is measured by.
     /// Learned from settle() and observe(); Cloud can seed or replace them with numbers pooled across engines.
     /// Each segment keeps its own estimate (here and on every customer's meter), so keep segments few:
     /// a model or a feature, never a user or request ID.
@@ -57,597 +60,21 @@ Limitr: {
     ms hold_ttl: 10min;
 
 
-    #[no-export]
-    #[type_ignore]
+    /*****************************************************************************
+     * The policy
+     * root.policy is the policy. Call its functions directly: root.policy.allow(...).
+     *****************************************************************************/
+
+
+    #[static]
     /**
-     * Static API.
-     * <Limitr>.api.get();
+     * The policy: the Limitr at root.policy, the one place a policy lives.
+     * A policy parsed from JSON, YAML, or TOML has no type yet - this gives it one (the return type
+     * casts it). SDKs call it once after loading or replacing a policy, then call the policy's
+     * functions directly (Ex. root.policy.allow(...)).
      */
-    api: {
-        /// Get the top-level policy.
-        /// Named root.policy.
-        /// Or, any Limitr object on the root or obj with #[limitr].
-        fn get() -> Limitr {
-            const top = root.policy;
-            if (typeof top == 'obj') return top;
-
-            for (const pair in root.fields()) {
-                if (typeof pair[1] == 'obj') {
-                    if (pair[1].instance_of('Limitr') || root.attributes(pair[0]).contains('limitr')) {
-                        return pair[1];
-                    }
-                }
-            }
-            null
-        }
-
-
-        /// Is the top-level policy valid?
-        fn valid() -> bool {
-            ?self.get().valid() ?? false
-        }
-
-
-        /// Set customer invoices data within this policy.
-        fn update_customer_invoices(content: str!, format: str! = 'json') {
-            const policy = self.get();
-            if (policy == null) return;
-            const i = new {} on policy;
-            try {
-                parse(content, i, format);
-                const id = i.id ?? nanoid();
-                i.id = id;
-                if (policy.invoices == null) policy.invoices = new {} on policy;
-                policy.invoices.remove(id, shallow = false);
-                i.move(policy.invoices);
-                policy.invoices.insert(id, i);
-                await <Event>.send('internal-customer-invoices-updated', i);
-            } catch {
-                drop(i);
-            }
-        }
-
-
-        /// Replace a customer internals within this Limitr policy.
-        fn update_customer_internals(customer: str!, format: str! = 'json') {
-            const policy = self.get();
-            if (policy == null) return;
-            const c = new {} on policy.customers;
-            try {
-                parse(customer, c, format);
-                const id = c.id ?? nanoid();
-                c.id = id;
-                policy.customers.remove(id, shallow = false);
-                policy.customers.insert(id, c as Customer);
-                for (const alt in c.alt_ids ?? []) policy.set_alt_customer_id(id, alt, false);
-                if (c.metadata != null && c.metadata.limitr_voucher != null && c.metadata.limitr_voucher_expires != null) {
-                    if (c.metadata.limitr_voucher_expires <= Time::now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
-                        const vchr = c.metadata.limitr_voucher;
-                        for (const pair in policy.capabilities.fields()) {
-                            const cap: Capability = pair[1];
-                            if (cap.voucher == vchr || (cap.customers != null && cap.customers.len() == 1 && cap.customers.contains(vchr))) {
-                                policy.capabilities.remove(pair[0], shallow = false);
-                            } else if (cap.customers != null) {
-                                cap.customers.remove_all(vchr);
-                            }
-                        }
-                    }
-                }
-                await <Event>.send('internal-customer-updated', c);
-            } catch {
-                drop(c);
-            }
-        }
-
-
-        /// Replace the current active policy internals in this document with a new one.
-        fn update_policy_internals(updated: unknown!, format: str! = 'json') {
-            const policy = self.get();
-            if (policy == null) return;
-            using p = new {}; // what's left of it after moving the parts in is dropped on return
-            try {
-                parse(updated, p, format);
-                if (typeof p.policy.plans == 'obj') {
-                    policy.remove('plans', shallow = false);
-                    policy.plans = p.policy.plans;
-                    p.policy.plans.move(policy);
-                }
-                if (typeof p.policy.credits == 'obj') {
-                    policy.remove('credits', shallow = false);
-                    policy.credits = p.policy.credits;
-                    p.policy.credits.move(policy);
-                }
-                if (typeof p.policy.notifications == 'obj') {
-                    for (const pair in p.policy.notifications.fields()) {
-                        policy.set_notification(pair[0], pair[1]);
-                    }
-                }
-                if (typeof p.policy.exchange == 'obj') {
-                    policy.exchange.grant_strategy = p.policy.exchange.grant_strategy ?? 'expires_first';
-                    for (const pair in p.policy.exchange.fields()) {
-                        const name = pair[0];
-                        const val = pair[1];
-                        if (typeof val == 'obj') {
-                            policy.exchange.remove(name, shallow = false);
-                            policy.exchange.insert(name, val);
-                            val.move(policy.exchange);
-                        }
-                    }
-                }
-                if (typeof p.limitr_cloud == 'obj') {
-                    root.remove('limitr_cloud', shallow = false);
-                    root.limitr_cloud = p.limitr_cloud;
-                    p.limitr_cloud.move(root);
-                }
-                if (typeof p.policy.capabilities == 'obj') {
-                    for (const pair in p.policy.capabilities.fields()) {
-                        const name = pair[0];
-                        const cap: Capability = pair[1];
-                        if (cap.name == null || cap.name.len() < 1) cap.name = name;
-                        policy.set_capability(cap);
-                    }
-                }
-                if (typeof p.policy.customers == 'obj') {
-                    for (const pair in p.policy.customers.fields()) {
-                        const id = pair[0];
-                        const existing = policy.customers.get(id);
-                        if (existing == null) {
-                            const c = pair[1];
-                            policy.customers.insert(id, c);
-                            c.move(policy.customers);
-                            for (const alt in c.alt_ids) policy.alt_customer_ids.insert(alt, id);
-                        }
-                    }
-                }
-
-                await <Event>.send('internal-policy-updated');
-            } catch {
-                // Nada...
-            }
-        }
-
-
-        /// Get policy BSTF.
-        fn policy_bstf() -> blob {
-            const policy = self.get();
-            blobify('bstf', policy)
-        }
-
-
-        /// Generate a diff JSON string with a different policy BSTF.
-        /// This policy is treated as the "schema" for this operation, and will not be modified.
-        fn difference_bstf(bstf: blob, symmetric: bool = false) -> str {
-            const policy = self.get();
-            if (policy == null) return '{ "error": "no policy found" }';
-            let out = '{}';
-            try {
-                using other = new {};
-                parse(bstf, other, 'bstf');
-                policy.diff(other, symmetric);
-                out = stringify('json', other);
-            } catch {
-                out = '{ "error": "could not process BSTF for policy diff" }';
-            }
-            out
-        }
-
-
-        /*****************************************************************************
-         * Notifications.
-         *****************************************************************************/
-        
-        /// Set many imported notifications at once.
-        /// Goes through fields and sets all objects as notification observers in this policy.
-        fn set_notifications(contents: unknown, format: str = 'stof') {
-            using tmp = new {};
-            const policy = ?self.get();
-            if (policy == null) return;
-            try {
-                parse(contents, tmp, format);
-                for (const field in tmp.fields()) {
-                    const note = field[1];
-                    if (typeof note == 'obj') {
-                        policy.set_notification(field[0], note as Notification);
-                    }
-                }
-            } catch {
-                // Nada..
-            }
-        }
-
-
-        /*****************************************************************************
-         * Capabilities.
-         *****************************************************************************/
-        
-        /// Capability by name.
-        fn capability(name: str!) -> Capability {
-            ?self.get().capability(name)
-        }
-
-        /// Set many imported capabilities at once.
-        /// Goes through fields and sets all objects as capabilities in this policy.
-        fn set_capabilities(contents: unknown, format: str = 'stof') {
-            using tmp = new {};
-            const policy = ?self.get();
-            if (policy == null) return;
-            try {
-                parse(contents, tmp, format);
-                for (const field in tmp.fields()) {
-                    const cap = field[1];
-                    if (typeof cap == 'obj') {
-                        // name, cast, & move to the correct location in doc
-                        if (cap.name == null || cap.name.len() < 1) cap.name = field[0];
-                        policy.set_capability(cap as Capability);
-                    }
-                }
-            } catch {
-                // Nada..
-            }
-        }
-
-        /// Run a capability.
-        fn run_capability(name: str!, args: map = map(), customer_id?: str) -> unknown {
-            ?self.get().run_capability(name, args, customer_id)
-        }
-
-        /// Claude tools JSON.
-        /// Array is placed in "tools" field.
-        fn claude_tools(customer_id?: str) -> str {
-            const policy = self.get();
-            if (policy == null) return null;
-            using arena = new {};
-            arena.tools = policy.claude_tools(arena, customer_id);
-            stringify('json', arena)
-        }
-
-        /// Claude tool use.
-        /// Runs the appropriate capability if found and returns a tool result JSON.
-        fn claude_tool_use(tool_use_json: str!, customer_id?: str) -> str {
-            const policy = self.get();
-            if (policy == null) return null;
-            using arena = new {};
-            parse(tool_use_json, arena, 'json');
-            const res = policy.claude_tool_use(arena, arena, customer_id);
-            res != null ? stringify('json', res) : null
-        }
-
-        
-        /*****************************************************************************
-         * Plans.
-         *****************************************************************************/
-        
-        /// Plan from ID (customer ID or plan ID).
-        fn plan(id: str!, default: bool = true) -> Plan {
-            ?self.get().plan(id, default)
-        }
-
-        /// Get the default plan if any.
-        fn default_plan() -> Plan {
-            ?self.get().default_plan()
-        }
-
-        /// Delete a plan by plan ID.
-        /// Be careful, as customers that have this plan will no longer work as expected.
-        fn delete_plan(id: str!) -> bool {
-            ?self.get().delete_plan(id)
-        }
-
-        /// Set/create a plan with a name & internal Stof.
-        fn set_plan(id: str!, internal_stof: str!) -> Plan {
-            ?self.get().set_plan(id, internal_stof)
-        }
-
-        /// Plan period.
-        fn plan_period(id: str!) -> str {
-            ?self.get().plan_period(id)
-        }
-
-        /// Plan trial period in ms (optional).
-        fn plan_trial_period(id: str!) -> ms {
-            ?self.get().plan_trial_period(id)
-        }
-
-        /// Plan subscription entitlement name.
-        fn plan_sub_entitlement_name(id: str!) -> str {
-            ?self.get().plan_sub_entitlement_name(id)
-        }
-
-
-        /*****************************************************************************
-         * Entitlements.
-         *****************************************************************************/
-        
-        /// Get a plan entitlement from a customer or plan ID.
-        fn entitlement(id: str!, entitlement: str!) -> Entitlement {
-            ?self.get().entitlement(id, entitlement)
-        }
-
-        /// Get the limit value for an entitlement.
-        fn limit(id: str!, entitlement: str!, grants: bool = true) -> float {
-            ?self.get().limit(id, entitlement, grants)
-        }
-
-        /// Get the customers meter object (resolved to entitlement scope if needed).
-        fn meter_obj(id: str!, entitlement: str!) -> Meter {
-            ?self.get().meter_obj(id, entitlement)
-        }
-
-        /// Get the customers limit object (could be overridden).
-        fn limit_obj(id: str!, entitlement: str!) -> Limit {
-            ?self.get().limit_obj(id, entitlement)
-        }
-
-        /// Estimated time until a customer exhausts their entitlement at the current rate of consumption.
-        /// Returns a future ms timestamp, or null if there is no consumption history or the rate is zero.
-        /// Meaningful after at least two allow() calls have been made.
-        fn projected_exhaustion(id: str!, entitlement: str!, smoothed: bool = false, grants: bool = true) -> ms {
-            ?self.get().projected_exhaustion(id, entitlement, smoothed, grants)
-        }
-
-        /// Current instantaneous consumption rate for a customer entitlement (units per ms).
-        /// Returns 0 if fewer than two allow() calls have been made.
-        /// Derived from the last two entries in the meter's ring buffer.
-        fn rate(id: str!, entitlement: str!) -> float {
-            const meter: Meter = ?self.get().meter_obj(id, entitlement);
-            if (meter == null) return 0;
-            meter.rate()
-        }
-
-        /// Rate of change between the two most recent consumption intervals (units per ms²).
-        /// Positive means consumption is accelerating, negative means decelerating.
-        /// Returns 0 if fewer than three allow() calls have been made.
-        fn acceleration(id: str!, entitlement: str!) -> float {
-            const meter: Meter = ?self.get().meter_obj(id, entitlement);
-            if (meter == null) return 0;
-            meter.acceleration()
-        }
-
-        /// Get the remaining balance value for a customer ID (limit - current (metered) value).
-        fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
-            ?self.get().remaining(id, entitlement, percent, grants)
-        }
-
-        /// Get the immediately available allowance for a customer entitlement.
-        /// When a governor is configured, returns the minimum of the current governor
-        /// token balance and the remaining period balance.
-        /// Falls back to remaining() if no governor is configured.
-        fn allowance(id: str!, entitlement: str!, grants: bool = true) -> float {
-            ?self.get().allowance(id, entitlement, grants)
-        }
-
-        /// Get the current value of a metered entitlement for a customer ID.
-        fn value(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
-            ?self.get().value(id, entitlement, percent, grants)
-        }
-
-        /// Get the standard increment "cost" of an "increment" operation.
-        fn cost(id: str!, entitlement: str!) -> float {
-            ?self.get().cost(id, entitlement)
-        }
-
-        /// Meter resets on this timestamp for this user & entitlement.
-        fn resets(id: str!, entitlement: str!) -> ms {
-            ?self.get().resets(id, entitlement)
-        }
-
-        /// Change the value of a metered entitlement by a standard increment.
-        fn increment(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
-            ?self.get().increment(id, entitlement, event, cap)
-        }
-
-        /// Change the value of a metered entitlement by removing a standard increment.
-        fn decrement(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
-            ?self.get().decrement(id, entitlement, event, cap)
-        }
-
-        /// Allow this entitlement to change by "value"?
-        /// A boolean entitlement check if value is 0 or a limit does not exist for the entitlement.
-        /// Changes a meter for this customer if true.
-        /// `cap` is an optional call-scoped spend ceiling - a Cap object or a
-        /// bare map of credit -> ceiling, e.g. map(('ai_credits', 2), ('usd', 5)).
-        /// `overhead` is the call's actual provider cost in runes, when the host knows it (skips the credit's overhead()).
-        /// `force` records usage that already happened, even past a hard limit or cap.
-        fn allow(id: str!, entitlement: str!, value: float = 0, event: bool | str | obj = true, cap: Cap | map = null, overhead?: float, force: bool = false) -> bool {
-            ?self.get().allow(id, entitlement, value, event, cap, overhead, force)
-        }
-
-        /// Check if changing the value of a metered entitlement by a standard increment would be allowed.
-        fn check_increment(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
-            ?self.get().check_increment(id, entitlement, cap)
-        }
-
-        /// Check if changing the value of a metered entitlement by removing a standard increment would be allowed.
-        fn check_decrement(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
-            ?self.get().check_decrement(id, entitlement, cap)
-        }
-
-        /// Would "allow" be true if called with this "value"?
-        /// `cap` is an optional call-scoped spend ceiling, same shorthand as allow().
-        /// `context` is the event data you'd pass to allow() (obj or Stof string), `overhead` the call's actual cost.
-        fn check(id: str!, entitlement: str!, value: float = 0, cap: Cap | map = null, context: obj | str = null, overhead?: float) -> bool {
-            ?self.get().check(id, entitlement, value, cap, context, overhead)
-        }
-
-
-        /*****************************************************************************
-         * Reservations & estimates.
-         *****************************************************************************/
-
-        /// Hold room for a call before it runs. Returns a hold ID, or null if it wouldn't be allowed.
-        /// Null `value` holds the predicted amount (estimate()). See Limitr.reserve().
-        fn reserve(id: str!, entitlement: str!, value: float | str = null, context: obj | str = null, basis?: float, segment?: str, ttl?: ms, quantile: float = 0.9, overhead?: float) -> str {
-            ?self.get().reserve(id, entitlement, value, context, basis, segment, ttl, quantile, overhead)
-        }
-
-        /// Finish a reserved call with its actual usage (recorded even past a hard limit) and learn from it.
-        fn settle(id: str!, entitlement: str!, hold_id: str, value: float | str = 0, event: bool | str | obj = true, overhead?: float, basis?: float, segment?: str) -> bool {
-            ?self.get().settle(id, entitlement, hold_id, value, event, overhead, basis, segment)
-        }
-
-        /// Drop a hold without recording anything.
-        fn release(id: str!, entitlement: str!, hold_id: str!) -> bool {
-            ?self.get().release(id, entitlement, hold_id) ?? false
-        }
-
-        /// Room currently held by reservations (credit units).
-        fn held(id: str!, entitlement: str!) -> float {
-            ?self.get().held(id, entitlement)
-        }
-
-        /// Predict a call: map of value, overhead, samples, source, scope - or null if nothing is learned yet.
-        fn estimate(id: str!, entitlement: str!, basis?: float, segment?: str, quantile: float = 0.9) -> map {
-            ?self.get().estimate(id, entitlement, basis, segment, quantile)
-        }
-
-        /// Record one call's usage for estimates (settle() does this for you).
-        fn observe(id: str!, entitlement: str!, value: float | str, overhead?: float, basis?: float, segment?: str, context: obj | str = null) -> bool {
-            ?self.get().observe(id, entitlement, value, overhead, basis, segment, context) ?? false
-        }
-
-
-        /*****************************************************************************
-         * Credits.
-         *****************************************************************************/
-        
-        /// Get a credit by ID/type.
-        fn credit(id: str!) -> Credit {
-            ?self.get().credit(id)
-        }
-
-        /// Get a credit type for a specific entitlement (limited/metered).
-        /// ID can be a plan ID or a customer ID.
-        fn credit_for(id: str!, entitlement: str!) -> Credit {
-            ?self.get().credit_for(id, entitlement)
-        }
-
-        /// Exchange some of one credit for another (if possible).
-        fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
-            ?self.get().credit_exchange(in_currency, out_currency, value)
-        }
-
-
-        /*****************************************************************************
-         * Customers.
-         *****************************************************************************/
-        
-        /// Get a customer by ID.
-        fn customer(id: str!) -> Customer {
-            ?self.get().customer(id)
-        }
-
-        /// Get a customer's metadata object.
-        fn customer_metadata(id: str!) -> obj {
-            ?self.get().customer_metadata(id)
-        }
-
-        /// Get the customer refs for the customer ID.
-        fn customer_refs(id: str!) -> list {
-            ?self.get().customer_refs(id)
-        }
-
-        /// Set customer refs.
-        fn set_customer_refs(id: str!, refs: list!) -> bool {
-            ?self.get().set_customer_refs(id, refs)
-        }
-
-        /// Change a customer's plan ID.
-        fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
-            ?self.get().set_customer_plan(id, plan, overwrite_meters)
-        }
-
-        /// Ensure customers included plan topup grants.
-        fn ensure_included_topups(customer_id: str!, event: bool = true) {
-            ?self.get().ensure_included_topups(customer_id, event)
-        }
-
-        /// Ensure customer "subscription" credit quantity.
-        fn ensure_plan_subscription(customer_id: str!) -> bool {
-            ?self.get().ensure_plan_subscription(customer_id)
-        }
-
-        /// Create a new customer.
-        fn create_customer(id: str!, plan: str! = '', type: str! = 'user', label: str! = 'User', refs?: list, alts?: list, metadata?: str | obj) -> Customer {
-            ?self.get().create_customer(id, plan, type, label, refs, alts, metadata)
-        }
-
-        /// Set/create a customer with an id & internal Stof.
-        fn set_customer(stof: str!, event: bool = true) -> Customer {
-            ?self.get().set_customer(stof, event)
-        }
-
-        /// Delete a customer.
-        fn delete_customer(id: str!) -> bool {
-            ?self.get().delete_customer(id)
-        }
-
-        /// Set an alternative customer ID (must be unique).
-        fn set_alt_customer_id(id: str!, alt: str!, event: bool = true) -> bool {
-            ?self.get().set_alt_customer_id(id, alt, event)
-        }
-
-        /// Delete an alternative customer ID.
-        fn delete_alt_customer_id(alt: str!, event: bool = true) -> bool {
-            ?self.get().delete_alt_customer_id(alt, event)
-        }
-
-        /// Create a new customer override (limit).
-        fn create_customer_override(id: str!, entitlement: str!, expires?: ms, credit?: str, mode?: str, value?: float | str, increment?: float | str, resets?: bool, reset_inc?: ms, reset_sch?: str) -> Limit {
-            ?self.get().create_customer_override(id, entitlement, expires, credit, mode, value, increment, resets, reset_inc, reset_sch)
-        }
-
-        /// Remove a customer override (limit).
-        fn remove_customer_override(id: str!, entitlement: str!) -> bool {
-            ?self.get().remove_customer_override(id, entitlement)
-        }
-
-        /// Add a standing spend cap to a customer. See Limitr.add_customer_cap for
-        /// the full explanation of credit/exchangeable/ignore_grants defaults.
-        fn add_customer_cap(id: str!, value: float | str!, cap_id: str = '', credit: str! = 'rune',
-            exchangeable?: bool, ignore_grants: bool = false, overage_only: bool = false, observe_only: bool = false, overhead_cost: bool = false, follow_decrements: bool = false, scope?: list, resets: bool = false, reset_inc?: ms, reset_sch?: str, expires_on?: ms,
-            events: bool = true, hard_trailing: bool = false, shared: bool = false, shared_with?: list) -> Cap {
-            ?self.get().add_customer_cap(id, value, cap_id, credit, exchangeable, ignore_grants, overage_only, observe_only, overhead_cost, follow_decrements, scope, resets, reset_inc, reset_sch, expires_on, events, hard_trailing, shared, shared_with)
-        }
-
-        /// Look up a customer's standing spend cap by id.
-        fn customer_cap(id: str!, cap_id: str!) -> Cap {
-            ?self.get().customer_cap(id, cap_id)
-        }
-
-        /// Reset a customer's spend cap consumption to zero without removing it.
-        fn reset_customer_cap(id: str!, cap_id: str!, events: bool = true) -> bool {
-            ?self.get().reset_customer_cap(id, cap_id, events)
-        }
-
-        /// Remove a standing spend cap from a customer entirely.
-        fn remove_customer_cap(id: str!, cap_id: str!, events: bool = true) -> bool {
-            ?self.get().remove_customer_cap(id, cap_id, events)
-        }
-
-        /// Apply a plan topup to a customer.
-        fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
-            ?self.get().apply_customer_topup(customer_id, topup)
-        }
-
-        /// How much of a credit is remaining for a customer.
-        fn credit_remaining(customer_id: str!, credit: str!) -> float {
-            ?self.get().credit_remaining(customer_id, credit)
-        }
-
-
-        /*****************************************************************************
-         * Margin snapshots.
-         *****************************************************************************/
-        
-        /// Customer local margin snapshot (quick and rough).
-        fn customer_local_margin_breakdown(customer_id: str!) -> map {
-            ?self.get().customer_local_margin_breakdown(customer_id)
-        }
-
-        /// Local margin snapshot breakdown.
-        fn local_margin_breakdown(plan_name: str!, entitlements: map!) -> map {
-            ?self.get().local_margin_breakdown(plan_name, entitlements)
-        }
+    fn load() -> Limitr {
+        root.policy
     }
 
 
@@ -680,705 +107,9 @@ Limitr: {
 
 
     /*****************************************************************************
-     * Plans.
+     * Metering
+     * Decide and record usage. allow() is the engine; the others are variations of it.
      *****************************************************************************/
-    
-    /**
-     * Get a plan by ID (either a plan ID or a customer ID).
-     */
-    fn plan(id: str!, default: bool = true) -> Plan {
-        let pn = self.plans.get(id);
-        if (pn != null) {
-            pn.name = id;
-            return pn;
-        }
-        pn = self.plan_for(id, false);
-        if (pn == null && default) pn = self.default_plan();
-        pn
-    }
-
-
-    /**
-     * Get a plan by customer ID.
-     */
-    fn plan_for(customer_id: str!, default: bool = true) -> Plan {
-        const customer = self.customer(customer_id);
-        if (customer != null) {
-            let pn = self.plans.get(customer.plan);
-            if (pn != null) pn.name = customer.plan;
-
-            if (pn == null && customer.refs.any()) {
-                for (const ref in customer.refs) {
-                    pn = self.plan_for(ref, false);
-                    if (pn != null) break;
-                }
-            }
-            if (pn == null && default) pn = self.default_plan();
-            return pn;
-        }
-        null
-    }
-
-
-    /**
-     * Get the (first) default plan in this policy.
-     */
-    fn default_plan() -> Plan {
-        for (const pair in self.plans.fields()) {
-            const plan: Plan = pair[1];
-            if (plan.default) {
-                plan.name = pair[0];
-                return plan;
-            }
-        }
-        null
-    }
-
-
-    /**
-     * Delete a plan by plan ID.
-     * Be careful, as customers that have this plan will no longer work as expected.
-     */
-    fn delete_plan(id: str!) -> bool {
-        const plan = self.plans.get(id);
-        if (plan != null) {
-            await <Event>.send('plan-removed', plan);
-        }
-        self.plans.remove(id, shallow = false)
-    }
-
-
-    /**
-     * Set/create a plan with a name & internal Stof.
-     */
-    fn set_plan(id: str!, internal_stof: str!) -> Plan {
-        self.delete_plan(id);
-        const plan = new {} on self.plans;
-        try {
-            parse(internal_stof, plan, 'stof');
-        } catch {
-            drop(plan);
-            return null;
-        }
-        plan.name = id;
-        self.plans.insert(id, plan);
-        await <Event>.send('plan-set', plan as Plan);
-        plan
-    }
-
-
-    /**
-     * Plan period.
-     */
-    fn plan_period(id: str!) -> str {
-        const plan = self.plan(id);
-        plan != null ? plan.period : null
-    }
-
-
-    /**
-     * Plan trial period in ms (optional).
-     * Accepts a plan ID or customer ID. Unitless trial_period values are treated as ms.
-     */
-    fn plan_trial_period(id: str!) -> ms {
-        const plan = self.plan(id);
-        plan != null && plan.trial_period != null ? (plan.trial_period as float) : null
-    }
-
-
-    /**
-     * Plan subscription entitlement.
-     * This is the entitlement to update for a base plan price (typically only once).
-     */
-    fn plan_sub_entitlement_name(id: str!) -> str {
-        const plan = self.plan(id);
-        plan != null ? plan.subscription : null
-    }
-
-
-    /*****************************************************************************
-     * Notifications.
-     *****************************************************************************/
-    
-    /**
-     * Set a policy notification observer (overwrites existing if any).
-     */
-    fn set_notification(name: str!, note: Notification!) {
-        const old = self.notifications.get(name);
-        if (old != null) drop(old);
-        note.move(self.notifications);
-        self.notifications.insert(name, note);
-    }
-
-
-    /*****************************************************************************
-     * Capabilities.
-     *****************************************************************************/
-    
-    /**
-     * Get a policy capability by name.
-     */
-    fn capability(name: str!) -> Capability {
-        let cp = self.capabilities.get(name);
-        if (cp != null) {
-            cp.name = name;
-            return cp;
-        }
-        null
-    }
-
-
-    /**
-     * Set a policy capability (overwrites existing if any).
-     */
-    fn set_capability(cap: Capability!) {
-        const old = self.capability(cap.name);
-        if (old != null) drop(old);
-        cap.move(self.capabilities);
-        self.capabilities.insert(cap.name, cap);
-    }
-
-
-    /**
-     * Run capability.
-     * Args is map<string, unknown>.
-     */
-    fn run_capability(name: str!, args: map = map(), customer_id?: str) -> unknown {
-        const cp = self.capability(name);
-        if (cp != null) {
-            if (customer_id != null) {
-                const pn = self.plan_for(customer_id);
-                const plan = pn == null ? null : pn.name;
-                if (!cp.access(plan, customer_id)) return null;
-            }
-
-            drop(cp.input);
-            cp.input = new {} on cp;
-            for (const pair in args) {
-                cp.input.insert(pair[0], copy(pair[1]));
-            }
-            drop(cp.output);
-            cp.output = new {} on cp;
-            cp.run();
-            return cp.get_result();
-        }
-        null
-    }
-
-
-    /**
-     * Claude tools for capabilities.
-     * Forced arena pattern for good stof practice.
-     */
-    fn claude_tools(arena: obj!, customer_id?: str) -> list {
-        const tools = [];
-        const pn = customer_id == null ? null : self.plan_for(customer_id);
-        const plan = pn == null ? null : pn.name;
-        for (const pair in self.capabilities.fields()) {
-            const cp: Capability = pair[1];
-            if (customer_id != null) {
-                if (cp.access(plan, customer_id)) {
-                    tools.push_back(cp.claude_tool(arena));
-                }
-            } else {
-                tools.push_back(cp.claude_tool(arena));
-            }
-        }
-        tools
-    }
-
-
-    /**
-     * Claude tool use.
-     * Runs the appropriate capability if found and returns a tool result or null.
-     */
-    fn claude_tool_use(tool_use: obj!, arena: obj!, customer_id?: str) -> obj {
-        const name = tool_use.name;
-        if (name == null) return null;
-        const cp = self.capability(name);
-        if (cp != null) {
-            if (customer_id != null) {
-                const pn = self.plan_for(customer_id);
-                const plan = pn == null ? null : pn.name;
-                if (!cp.access(plan, customer_id)) return null;
-            }
-            if (cp.claude_tool_use(tool_use)) {
-                cp.run();
-                return cp.claude_tool_result(tool_use, arena);
-            }
-        }
-        null
-    }
-
-
-    /*****************************************************************************
-     * Entitlements.
-     *****************************************************************************/
-    
-    /**
-     * Get a plan entitlement from either a customer ID or plan ID.
-     */
-    fn entitlement(id: str!, entitlement: str!) -> Entitlement {
-        const pn: Plan = self.plan(id);
-        if (pn != null) {
-            return pn.entitlements.get(entitlement);
-        }
-        null
-    }
-
-
-    /**
-     * Customer entitlement pair.
-     */
-    fn customer_entitlement(customer_id: str!, entitlement: str!) -> (Customer, Entitlement) {
-        let customer = self.customer(customer_id);
-        if (customer != null) {
-            const ent = self.entitlement(customer_id, entitlement);
-            if (ent != null) {
-                // Entitlement scope: the nearest customer of that type through the refs chain.
-                // No such customer -> no entitlement (never metered on the caller instead).
-                if (ent.scope != null && ent.scope != customer.type) {
-                    let scoped = null;
-                    for (const candidate in self.ref_customers(customer)) {
-                        if (candidate.type == ent.scope) {
-                            scoped = candidate;
-                            break;
-                        }
-                    }
-                    if (scoped == null) return null;
-                    customer = scoped;
-                }
-                return (customer, ent);
-            }
-        }
-        null
-    }
-
-
-    /**
-     * Customers reachable through `customer`'s refs, transitively and nearest first
-     * (breadth-first). Each customer appears once; cycles and repeats are skipped;
-     * `customer` itself is never included.
-     */
-    fn ref_customers(customer: Customer!) -> list {
-        const out = [];
-        const seen = set(customer.id);
-        const queue = [customer];
-        while (queue.any()) {
-            const current = queue.pop_front();
-            for (const ref in current.refs) {
-                const found = self.customer(ref);
-                if (found != null && !seen.contains(found.id)) {
-                    seen.insert(found.id);
-                    out.push_back(found);
-                    queue.push_back(found);
-                }
-            }
-        }
-        out
-    }
-
-
-    /**
-     * Shared caps that apply to a call made by `caller`: every current `shared` cap on the
-     * customers reachable through its refs, filtered by `shared_with` (caller type).
-     * Expired shared caps are removed from their holder.
-     */
-    fn shared_caps_for(caller: Customer!) -> list {
-        const out = [];
-        for (const holder in self.ref_customers(caller)) {
-            for (const pair in holder.caps.fields()) {
-                const cap: Cap = pair[1];
-                if (!cap.shared) continue;
-                if (cap.shared_with != null && cap.shared_with.any() && !cap.shared_with.contains(caller.type)) continue;
-                if (!cap.ensure_current()) {
-                    holder.caps.remove(pair[0], shallow = false);
-                    continue;
-                }
-                out.push_back(cap);
-            }
-        }
-        out
-    }
-
-
-    /**
-     * The customer holding a stored cap (null for ephemeral/unattached caps).
-     */
-    fn cap_holder(cap: Cap!) -> Customer {
-        const caps_obj = cap.parent();
-        const holder = caps_obj != null ? caps_obj.parent() : null;
-        holder != null && holder.instance_of('Customer') ? holder : null
-    }
-
-
-    /**
-     * Customer entitlement limit.
-     */
-    fn customer_entitlement_limit(customer?: Customer, entitlement?: str, ent?: Entitlement) -> Limit {
-        if (customer == null || entitlement == null || ent == null) return null;
-        let limit = ent.limit;
-        const override: Limit = customer.overrides.get(entitlement);
-        if (override != null) {
-            if (override.override_expires_on != null && Time::now() >= override.override_expires_on) {
-                customer.overrides.remove(entitlement, shallow = false);
-            } else {
-                limit = override;
-            }
-        }
-        limit
-    }
-
-
-    /**
-     * Is a period reset pending for this meter (the next allow() will start a new period)?
-     * Read-only.
-     */
-    fn meter_reset_pending(limit?: Limit, meter?: Meter) -> bool {
-        limit != null && meter != null && meter.started != null && limit.reset_pending(meter.started, Time::now())
-    }
-
-
-    /**
-     * Meter value for the current period - 0 when a period reset is pending.
-     * Read-only: reads see the new period without having to wait for an allow().
-     */
-    fn period_value(limit?: Limit, meter?: Meter) -> float {
-        if (meter == null) return 0;
-        self.meter_reset_pending(limit, meter) ? 0 : meter.value
-    }
-
-
-    /**
-     * Provider overhead spent on a meter in the current period (runes) - 0 when a period reset is pending.
-     * Meters from before 0.7.0 have no record, so they fall back to value * the credit's fixed rate.
-     */
-    fn period_overhead(limit?: Limit, meter?: Meter, credit?: Credit) -> float {
-        if (meter == null || self.meter_reset_pending(limit, meter)) return 0;
-        if (meter.overhead != null) return meter.overhead;
-        credit != null ? (meter.value * (credit.overhead_cost ?? 0)).remove_units() : 0
-    }
-
-
-    /**
-     * Provider overhead (runes) for one call of `units` of a credit.
-     * The host's actual cost (`overhead`) wins; otherwise the credit's overhead() cost function with the
-     * call's context (event data). If that function throws or returns a non-number, the fixed rate is used.
-     */
-    fn call_overhead(credit?: Credit, units: float, context?: obj, overhead?: float) -> float {
-        if (overhead != null) return (overhead as float).remove_units();
-        if (credit == null || units == 0) return 0;
-        try {
-            const cost = credit.overhead(units, context);
-            if (cost != null) return (cost as float).remove_units();
-        } catch (e: str) {
-            err(`Limitr: overhead() for credit '${Obj::name(credit)}' failed, using overhead_cost: ${e}`);
-        }
-        (units * (credit.overhead_cost ?? 0)).remove_units()
-    }
-
-
-    /**
-     * Round an outgoing event's numbers to 1e-9 (top level, plus its `meter` and `governor`
-     * objects). Storage keeps full precision so sub-nano amounts still accumulate; this only
-     * keeps drift like 0.30000000000000004 out of notifications, host handlers, and Cloud.
-     */
-    fn round_event(event: obj) {
-        for (const target in [event, event.meter, event.governor]) {
-            if (typeof target != 'obj') continue;
-            for (const pair in target.fields()) {
-                if (typeof pair[1] == 'float') target.insert(pair[0], Num::round(pair[1], 9));
-            }
-        }
-    }
-
-
-    /**
-     * Customer meter object.
-     * Resolved to the correct customer given the entitlement scope.
-     */
-    fn meter_obj(id: str!, entitlement: str!) -> Meter {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair != null) {
-            const customer = pair[0];
-            return customer.meters.get(entitlement);
-        }
-        null
-    }
-
-
-    /**
-     * Get the customer's limit object.
-     * Could be overridden, hence the helper.
-     */
-    fn limit_obj(id: str!, entitlement: str!) -> Limit {
-        const pair = self.customer_entitlement(id, entitlement);
-        let limit;
-        if (pair != null) {
-            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        } else {
-            const ent = self.entitlement(id, entitlement);
-            limit = ent != null ? ent.limit : null;
-        }
-        limit
-    }
-
-
-    /**
-     * Get the limit value for an entitlement.
-     * Returns a value in the units of the meter (credit) (not always the same as defined limit units).
-     * Ex. limit.value = 2GB, but credit.stof_units = 'MB', limit(..) => MB
-     *
-     * If grants are included and id is a customer, return limit + current converted grants
-     */
-    fn limit(id: str!, entitlement: str!, grants: bool = true) -> float {
-        const pair = self.customer_entitlement(id, entitlement);
-        let limit;
-        if (pair != null) {
-            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        } else {
-            const ent = self.entitlement(id, entitlement);
-            limit = ent != null ? ent.limit : null;
-        }
-        if (limit != null && limit.mode != 'observe') {
-            const credit = self.credit(limit.credit);
-            const stof_units = credit != null ? credit.stof_units : 'float';
-            const lim = limit.value as float; // can be a str w units
-            let val = lim.to_units(stof_units);
-
-            if (grants && pair != null) {
-                const customer = pair[0];
-                const meter: Meter = customer.meters.get(entitlement);
-                const billable = max(0, (self.period_value(limit, meter) - val).remove_units());
-                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
-                if (remaining != null) val += remaining;
-            }
-            return Num::round(val, 9); // outgoing read: 1e-9 (storage keeps full precision)
-        }
-        null
-    }
-
-
-    /**
-     * Estimated time until a customer exhausts their entitlement at the current rate of consumption.
-     * Returns a future ms timestamp, or null if there is no consumption history,
-     * the rate is zero, or no meter exists yet.
-     * Uses the current rate from the meter's ring buffer — meaningful after at least
-     * two allow() calls have been made.
-     */
-    fn projected_exhaustion(id: str!, entitlement: str!, smoothed: bool = false, grants: bool = true) -> ms {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair == null) return null;
-        const customer = pair[0];
-        const meter: Meter = customer.meters.get(entitlement);
-        if (meter == null) return null;
-        const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-        if (limit == null) return null;
-        if (self.meter_reset_pending(limit, meter)) return null; // new period - no consumption history yet
-        const credit = self.credit(limit.credit);
-        const stof_units = credit != null ? credit.stof_units : 'float';
-        let limit_val = (limit.value as float).to_units(stof_units);
-        if (grants) {
-            const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (meter.value - limit_val).remove_units()));
-            if (remaining != null && remaining > 0) limit_val = max(meter.value, limit_val) + remaining;
-        }
-        meter.projected_exhaustion(limit_val, smoothed)
-    }
-
-
-    /**
-     * Current instantaneous consumption rate for a customer entitlement.
-     * Returns consumption per ms derived from the last two ring buffer entries.
-     * Returns 0 if no meter exists or fewer than two allow() calls have been made.
-     */
-    fn rate(id: str!, entitlement: str!) -> float {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair == null) return 0;
-        const meter: Meter = pair[0].meters.get(entitlement);
-        if (meter == null) return 0;
-        const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
-        meter.rate()
-    }
-
-
-    /**
-     * Rate of change between the two most recent consumption intervals.
-     * Positive means consumption is accelerating, negative means decelerating.
-     * Returns 0 if no meter exists or fewer than three allow() calls have been made.
-     */
-    fn acceleration(id: str!, entitlement: str!) -> float {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair == null) return 0;
-        const meter: Meter = pair[0].meters.get(entitlement);
-        if (meter == null) return 0;
-        const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
-        meter.acceleration()
-    }
-
-
-    /**
-     * Get the immediately available allowance for a customer entitlement.
-     * When a governor is configured, this is the minimum of the current governor
-     * token balance and the remaining period balance — i.e., how much can actually
-     * be consumed right now before either the governor or the hard limit fires.
-     * Falls back to remaining() if no governor is configured.
-     *
-     * Use this to pre-size operations before submitting them — e.g. max video
-     * duration, max token budget, max compute seconds — so the operation is
-     * sized to what will actually be allowed rather than discovering the limit
-     * mid-execution.
-     */
-    fn allowance(id: str!, entitlement: str!, grants: bool = true) -> float {
-        const period_remaining = self.remaining(id, entitlement, grants = grants);
-        if (period_remaining == null) return null;
-
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair != null) {
-            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-            if (limit != null && limit.governor_enabled && limit.governor_capacity != null) {
-                const meter: Meter = pair[0].meters.get(entitlement);
-                if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter)) {
-                    const available = meter.governor_available(limit.governor_capacity as float, limit.governor_refill_rate);
-                    return Num::round(min(available, period_remaining), 9);
-                }
-            }
-        }
-        period_remaining
-    }
-
-
-    /**
-     * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
-     * Returns a value in the units of the meter (not always the same as defined limit units).
-     */
-    fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair != null) {
-            const customer = pair[0];
-            const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-            if (limit != null && limit.mode != 'observe') {
-                const credit = self.credit(limit.credit);
-                const stof_units = credit != null ? credit.stof_units : 'float';
-
-                const meter: Meter = customer.meters.get(entitlement);
-                let mval = self.period_value(limit, meter);
-                let lval = (limit.value as float).to_units(stof_units);
-
-                if (grants) {
-                    const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (mval - lval).remove_units()));
-                    if (remaining != null && remaining > 0) lval = max(mval, lval) + remaining;
-                }
-
-                let res = lval - mval;
-                if (percent) {
-                    res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
-                }
-                return Num::round(res, 9); // outgoing read: 1e-9 (storage keeps full precision)
-            }
-        }
-        null
-    }
-
-
-    /**
-     * Get the current value of a metered entitlement for a customer ID.
-     * Returns null if the entitlement doesn't exist.
-     */
-    fn value(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
-        if (percent) return 100 - self.remaining(id, entitlement, true, grants);
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair != null) {
-            const customer = pair[0];
-            const meter: Meter = customer.meters.get(entitlement);
-            const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-            return Num::round(self.period_value(limit, meter), 9); // outgoing read: 1e-9
-        }
-        null
-    }
-
-
-    /**
-     * Get the standard increment "cost" of an "increment" operation for an entitlement.
-     * Will return null if the entitlement doesn't exist.
-     */
-    fn cost(id: str!, entitlement: str!) -> float {
-        const pair = self.customer_entitlement(id, entitlement);
-        let limit;
-        if (pair != null) {
-            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        } else {
-            const ent = self.entitlement(id, entitlement);
-            limit = ent != null ? ent.limit : null;
-        }
-        limit != null ? (limit.increment ?? 1) : null
-    }
-
-
-    /**
-     * Compute the next calendar period boundary after now for a given schedule.
-     * Uses Time::add_months or Time::add_days to step into the next period,
-     * then calls Time::start_of_period to find its start.
-     */
-    fn next_period_start(now: ms, reset_sch: str) -> ms {
-        let next_ts = now;
-        if (reset_sch.starts_with('weekly')) next_ts = Time::add_days(now, 7);
-        else if (reset_sch.starts_with('yearly')) next_ts = Time::add_months(now, 12);
-        else if (reset_sch.starts_with('quarterly')) next_ts = Time::add_months(now, 3);
-        else next_ts = Time::add_months(now, 1);
-        // Note: for nth_weekday schedules, returns null if the Nth occurrence
-        // doesn't exist in the target month (e.g. 5th Tuesday in a short month).
-        // Callers should handle null gracefully.
-        Time::start_of_period(next_ts, reset_sch)
-    }
-
-
-    /**
-     * Entitlement resets on this timestamp for the following customer ID.
-     */
-    fn resets(id: str!, entitlement: str!) -> ms {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair != null) {
-            const customer = pair[0];
-            const ent = pair[1];
-            const limit = self.customer_entitlement_limit(customer, entitlement, ent);
-            if (limit != null && limit.resets) {
-                const now = Time::now();
-                if (limit.reset_sch != null) {
-                    return self.next_period_start(now, limit.reset_sch);
-                }
-                const inc = limit.reset_increment();
-                if (inc != null) {
-                    // read-only: compute the current period, never move the meter (allow() resets it)
-                    const existing_meter: Meter = customer.meters.get(entitlement);
-                    if (existing_meter != null && existing_meter.started != null) {
-                        return limit.current_period_start(existing_meter.started, now) + inc;
-                    }
-                    return now + inc;
-                }
-            }
-        }
-        null
-    }
-
-
-    /**
-     * Change the value of a metered entitlement by a standard increment (defined in the Limit).
-     */
-    fn increment(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
-        const cost = self.cost(id, entitlement);
-        cost != null ? self.allow(id, entitlement, cost, event, cap) : false
-    }
-
-
-    /**
-     * Change the value of a metered entitlement by removing a standard increment (defined in the limit).
-     */
-    fn decrement(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
-        const cost = self.cost(id, entitlement);
-        cost != null ? self.allow(id, entitlement, cost * -1, event, cap) : false
-    }
 
 
     /**
@@ -1424,7 +155,7 @@ Limitr: {
 
             // Provider overhead for this call (runes): the host's actual cost, else the credit's cost function.
             // Caps work per unit (a grant can cover part of a call), so they get this call's effective rate.
-            const call_overhead: float = self.call_overhead(credit, value, event_data, overhead);
+            const call_overhead: float = self.call_overhead(value, credit, event_data, overhead);
             const credit_overhead: float = value != 0 ? call_overhead / value.remove_units() : (credit != null ? (credit.overhead_cost ?? 0) : 0);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
             const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
@@ -1495,6 +226,13 @@ Limitr: {
             const position = (meter_value - limit_value).remove_units();
             const billable = max(0, position);
 
+            // What the call is worth at list price (runes, events' meter.price_diff): the billable units it adds
+            // past the limit, priced from where the customer already is on the credit's tiers (the revenue margin
+            // breakdowns count). Before grants, so a grant-covered call still shows its worth. Null when the credit
+            // has no price. Only events carry it, so a call without events skips the pricing.
+            const billable_diff = max(0, (new_value - limit_value).remove_units()) - billable;
+            const call_price: float = event && credit_name != null ? self.price_units(credit_name, billable_diff, billable, credit) : null;
+
             // Cap gate: resolve any call-scoped ephemeral caps and check ALL
             // applicable caps (standing + ephemeral) BEFORE any mutation -
             // governor tokens, meters, and grants are all untouched at this
@@ -1509,8 +247,16 @@ Limitr: {
             let cap_overage = 0.0;
             // `force` records usage that already happened (Ex. settle()): caps, grants coverage, and the
             // governor can't stop it, and it is metered past a hard limit like a soft one.
-            if (!force && value > 0 && credit_name != null && !caller.check_caps(self, entitlement, credit_name, gate_rate, gate_value, gate_overage, cap_extras, stof_units, true, position)) {
-                return false;
+            if (!force && value > 0 && credit_name != null) {
+                const denied: Cap = caller.denying_cap(self, entitlement, credit_name, gate_rate, gate_value, gate_overage, cap_extras, stof_units, true, position);
+                if (denied != null) {
+                    if (event) await self.send_cap_limit(denied, caller, entitlement, new {
+                        value: meter_value, limit: limit_value, diff: value,
+                        overhead: overhead_base, overhead_diff: call_overhead,
+                        price_diff: call_price,
+                    } on scratch, scratch, plan, credit, event_data);
+                    return false;
+                }
             }
             if (!force && limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
@@ -1520,8 +266,16 @@ Limitr: {
                     // uncovered units are the tail of the call (grants cover from the first overage unit)
                     const diff_position = position + (gate_value - diff);
                     const diff_overage_position = billable + max(0, max(0, gate_overage) - diff_overage);
-                    if (diff > 0 && !caller.check_caps(self, entitlement, credit_name, gate_rate, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
-                        return false;
+                    if (diff > 0) { // will be overage even in the case of fully used grants
+                        const denied: Cap = caller.denying_cap(self, entitlement, credit_name, gate_rate, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position);
+                        if (denied != null) {
+                            if (event) await self.send_cap_limit(denied, caller, entitlement, new {
+                        value: meter_value, limit: limit_value, diff: value,
+                        overhead: overhead_base, overhead_diff: call_overhead,
+                        price_diff: call_price,
+                    } on scratch, scratch, plan, credit, event_data);
+                            return false;
+                        }
                     }
                 }
             }
@@ -1597,6 +351,7 @@ Limitr: {
                             diff: value,
                             overhead: overhead_total,
                             overhead_diff: call_overhead,
+                            price_diff: call_price,
                         },
                         customer,
                         entitlement,
@@ -1621,6 +376,11 @@ Limitr: {
                                 return false;
                             }
 
+                            // What to bill (runes): the overage grants didn't cover, priced from where their coverage
+                            // ended. With no grant applied, that is exactly the call's billable worth (price_diff).
+                            const covered = event_value.grant_value_applied ?? 0;
+                            event_value.overage_price = call_price == null || covered <= 0 ? call_price
+                                : self.price_units(credit_name, max(0, event_value.overage), billable + covered, credit);
                             sent_overage = true;
 
                             if (event) {
@@ -1662,6 +422,7 @@ Limitr: {
                         diff: value,
                         overhead: overhead_base,
                         overhead_diff: call_overhead,
+                        price_diff: call_price,
                     },
                     customer,
                     entitlement,
@@ -1690,6 +451,7 @@ Limitr: {
                                     diff: value,
                                     overhead: overhead_total,
                                     overhead_diff: call_overhead,
+                                    price_diff: call_price,
                                 },
                                 customer,
                                 entitlement,
@@ -1785,24 +547,6 @@ Limitr: {
 
 
     /**
-     * Check if changing the value of a metered entitlement by a standard increment would be allowed (defined in the Limit).
-     */
-    fn check_increment(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
-        const cost = self.cost(id, entitlement);
-        cost != null ? self.check(id, entitlement, cost, cap) : false
-    }
-
-
-    /**
-     * Check if changing the value of a metered entitlement by a negative standard increment would be allowed (defined in the Limit).
-     */
-    fn check_decrement(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
-        const cost = self.cost(id, entitlement);
-        cost != null ? self.check(id, entitlement, cost * -1, cap) : false
-    }
-
-
-    /**
      * If one were to call "allow" for this entitlement and value, would it be valid?
      * Does not change meters for this customer, nor any cap meter_values.
      *
@@ -1836,7 +580,7 @@ Limitr: {
             value = value.to_units(stof_units);
 
             // This call's overhead (runes) and its effective per-unit rate, same as allow()
-            const call_overhead: float = self.call_overhead(credit, value, context, overhead);
+            const call_overhead: float = self.call_overhead(value, credit, context, overhead);
             const credit_overhead: float = value != 0 ? call_overhead / value.remove_units() : (credit != null ? (credit.overhead_cost ?? 0) : 0);
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
@@ -1926,151 +670,46 @@ Limitr: {
     }
 
 
+    /**
+     * Change the value of a metered entitlement by a standard increment (defined in the Limit).
+     */
+    fn increment(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
+        const cost = self.cost(id, entitlement);
+        cost != null ? self.allow(id, entitlement, cost, event, cap) : false
+    }
+
+
+    /**
+     * Change the value of a metered entitlement by removing a standard increment (defined in the limit).
+     */
+    fn decrement(id: str!, entitlement: str!, event: bool | str | obj = true, cap: Cap | map = null) -> bool {
+        const cost = self.cost(id, entitlement);
+        cost != null ? self.allow(id, entitlement, cost * -1, event, cap) : false
+    }
+
+
+    /**
+     * Check if changing the value of a metered entitlement by a standard increment would be allowed (defined in the Limit).
+     */
+    fn check_increment(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
+        const cost = self.cost(id, entitlement);
+        cost != null ? self.check(id, entitlement, cost, cap) : false
+    }
+
+
+    /**
+     * Check if changing the value of a metered entitlement by a negative standard increment would be allowed (defined in the Limit).
+     */
+    fn check_decrement(id: str!, entitlement: str!, cap: Cap | map = null) -> bool {
+        const cost = self.cost(id, entitlement);
+        cost != null ? self.check(id, entitlement, cost * -1, cap) : false
+    }
+
+
     /*****************************************************************************
-     * Reservations & estimates.
+     * Reservations & estimates
+     * Hold room for calls whose usage is only known afterwards, and predict them.
      *****************************************************************************/
-
-    /**
-     * Resolve a context (event data) argument: an obj, a Stof/JSON string, or anything else (null).
-     * Returns (obj, created) - drop the obj when created is true.
-     */
-    fn resolve_context(context: obj | str | bool = null) -> (obj, bool) {
-        if (typeof context == 'obj') return (context, false);
-        if (typeof context == 'str' && context.len() > 0) {
-            const ctx = new {};
-            try {
-                parse(context, ctx, 'stof');
-                return (ctx, true);
-            } catch {
-                drop(ctx);
-            }
-        }
-        (null, false)
-    }
-
-
-    /**
-     * Estimates are keyed by segment; field names can't contain '.' (Ex. 'claude-sonnet-4.5').
-     */
-    fn segment_key(segment?: str) -> str {
-        if (segment == null || segment.len() < 1) return 'all';
-        segment.replace('.', '_').replace(' ', '_')
-    }
-
-
-    /**
-     * The policy-wide estimate for an entitlement and segment (created when `create`).
-     */
-    fn policy_estimate(entitlement: str!, segment?: str, create: bool = false) -> Estimate {
-        const key = self.segment_key(segment);
-        if (self.estimates == null) {
-            if (!create) return null;
-            self.estimates = new {};
-        }
-        let bucket = self.estimates.get(entitlement);
-        if (bucket == null) {
-            if (!create) return null;
-            bucket = new {} on self.estimates;
-            self.estimates.insert(entitlement, bucket);
-        }
-        let est: Estimate = bucket.get(key);
-        if (est == null && create) {
-            est = new Estimate {} on bucket;
-            bucket.insert(key, est);
-        }
-        est
-    }
-
-
-    /**
-     * A meter's own estimate for a segment (created when `create`).
-     */
-    fn meter_estimate(meter: Meter!, segment?: str, create: bool = false) -> Estimate {
-        const key = self.segment_key(segment);
-        if (meter.estimates == null) {
-            if (!create) return null;
-            const bucket = new {} on meter;
-            meter.insert('estimates', bucket);
-        }
-        let est: Estimate = meter.estimates.get(key);
-        if (est == null && create) {
-            est = new Estimate {} on meter.estimates;
-            meter.estimates.insert(key, est);
-        }
-        est
-    }
-
-
-    /**
-     * The customer's meter for an entitlement (on the scope owner), created if missing.
-     */
-    fn ensure_meter(customer: Customer!, entitlement: str!, credit?: str) -> Meter {
-        let meter: Meter = customer.meters.get(entitlement);
-        if (meter == null) {
-            meter = new Meter { started: Time::now(), credit: credit ?? '' } on customer.meters;
-            customer.meters.insert(entitlement, meter);
-        }
-        meter
-    }
-
-
-    /**
-     * Predict one call before it runs: map of 'value' (credit units), 'overhead' (runes), 'samples',
-     * 'source' ('local' or 'cloud'), and 'scope' ('customer' or 'policy'). Null when nothing has been learned yet.
-     *
-     * Uses this customer's own estimate once it has estimate_min_samples observations, otherwise the
-     * policy-wide one. `basis` scales per-basis estimates (Ex. input tokens - required for those), `segment`
-     * picks a sub-estimate (Ex. a model; keep segments few, see Limitr.estimates), and `quantile` picks how cautious it is (0.5 = typical call,
-     * 0.9 = 9 in 10 calls use this or less).
-     */
-    fn estimate(id: str!, entitlement: str!, basis?: float, segment?: str, quantile: float = 0.9) -> map {
-        const meter: Meter = self.meter_obj(id, entitlement);
-        if (meter != null) {
-            const own = self.meter_estimate(meter, segment);
-            if (own != null && own.samples >= (self.estimate_min_samples ?? 5)) {
-                const prediction = own.predict(basis, quantile);
-                if (prediction != null) {
-                    prediction.insert('scope', 'customer');
-                    return prediction;
-                }
-            }
-        }
-        const policy_wide = self.policy_estimate(entitlement, segment);
-        if (policy_wide == null) return null;
-        const prediction = policy_wide.predict(basis, quantile);
-        if (prediction != null) prediction.insert('scope', 'policy');
-        prediction
-    }
-
-
-    /**
-     * Record one call's usage for estimates (settle() does this for you). Updates this customer's estimate
-     * and the policy-wide one for the entitlement and segment. `overhead` defaults to the credit's cost
-     * function with `context`; `basis` (Ex. input tokens) makes a new estimate learn per unit of basis.
-     */
-    fn observe(id: str!, entitlement: str!, value: float | str, overhead?: float, basis?: float, segment?: str, context: obj | str = null) -> bool {
-        const pair = self.customer_entitlement(id, entitlement);
-        if (pair == null) return false;
-        const customer = pair[0];
-        const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-        const credit = limit != null ? self.credit(limit.credit) : null;
-        const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
-        if (typeof value == 'str') value = value as float;
-        value = value.to_units(stof_units);
-
-        let cost = overhead;
-        if (cost == null) {
-            const ctx = self.resolve_context(context);
-            using parsed_context = ctx[1] ? ctx[0] : null;
-            cost = self.call_overhead(credit, value, ctx[0]);
-        }
-
-        const policy_wide = self.policy_estimate(entitlement, segment, true);
-        const recorded = policy_wide.observe(value, cost, basis);
-        const meter = self.ensure_meter(customer, entitlement, limit?.credit);
-        const own = self.meter_estimate(meter, segment, true);
-        own.observe(value, cost, basis) || recorded
-    }
 
 
     /**
@@ -2081,10 +720,11 @@ Limitr: {
      * the policy's hold_ttl). Holds are never metered or billed.
      *
      * `value` is the amount to hold. Leave it null to hold the predicted amount: estimate() for this
-     * customer, `basis` (Ex. input tokens), and `segment` (Ex. the model) at `quantile`; with nothing
-     * learned yet, the entitlement's standard increment. `context` and `overhead` price the hold for
-     * overhead caps, same as allow() (a predicted hold uses the predicted overhead). `basis` and
-     * `segment` stay on the hold, so settle() learns from the call.
+     * customer and call at `quantile`; with nothing learned yet, the entitlement's standard increment.
+     * `context` is the call's event data: it prices the hold for overhead caps, same as allow() (a
+     * predicted hold uses the predicted overhead), and supplies the entitlement's estimate_basis and
+     * estimate_segment (`basis` and `segment` arguments win). Both stay on the hold, so settle() learns
+     * from the call.
      *
      * A hold counts on its own meter: this customer's (or scope owner's) limit for the entitlement, and the
      * caps checked on calls to it. Caps that span other entitlements or customers don't see it from there.
@@ -2098,9 +738,13 @@ Limitr: {
         const credit = self.credit(limit.credit);
         const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
 
+        const ctx = self.resolve_context(context);
+        using parsed_context = ctx[1] ? ctx[0] : null;
+        const inputs = pair[1].estimate_inputs(ctx[0], basis, segment, value == null);
+
         let hold_overhead = overhead;
         if (value == null) {
-            const prediction = self.estimate(id, entitlement, basis, segment, quantile);
+            const prediction = inputs[2] && inputs[0] == null ? null : self.estimate(id, entitlement, inputs[0], inputs[1], quantile);
             if (prediction != null) {
                 value = prediction.get('value');
                 if (hold_overhead == null) hold_overhead = prediction.get('overhead');
@@ -2112,12 +756,10 @@ Limitr: {
         value = value.to_units(stof_units);
         if (value <= 0) return null; // only usage is held (a negative hold would add room)
 
-        const ctx = self.resolve_context(context);
-        using parsed_context = ctx[1] ? ctx[0] : null;
-        if (hold_overhead == null) hold_overhead = self.call_overhead(credit, value, ctx[0]);
+        if (hold_overhead == null) hold_overhead = self.call_overhead(value, credit, ctx[0]);
         if (!self.check(id, entitlement, value, null, ctx[0], hold_overhead)) return null;
 
-        const meter = self.ensure_meter(customer, entitlement, limit.credit);
+        const meter = customer.ensure_meter(entitlement, limit.credit);
         if (meter.holds == null) meter.holds = map();
         else meter.held(true); // drop expired holds (reads never do)
         const hold_id = `hold_${nanoid(16)}`;
@@ -2125,8 +767,8 @@ Limitr: {
             ('value', value),
             ('overhead', hold_overhead),
             ('expires', Time::now() + (ttl ?? self.hold_ttl ?? 10min)),
-            ('basis', basis),
-            ('segment', segment)
+            ('basis', inputs[0]),
+            ('segment', inputs[1])
         ));
         hold_id
     }
@@ -2137,8 +779,8 @@ Limitr: {
      * happened is recorded even past a hard limit or a cap (allow's `force`), so the meter matches what
      * really ran. Then learns from the call (observe()) with the hold's basis and segment.
      * `event` and `overhead` are the same as allow() (`event` is also the cost function's context).
-     * An unknown or expired hold still records the usage; pass `basis` and `segment` to still learn from it
-     * (they override the hold's). Returns allow()'s result.
+     * An unknown or expired hold still records the usage, and learns from `event` (or `basis` and `segment`,
+     * which also override the hold's). Returns allow()'s result.
      */
     fn settle(id: str!, entitlement: str!, hold_id: str, value: float | str = 0, event: bool | str | obj = true, overhead?: float, basis?: float, segment?: str) -> bool {
         let hold_basis = basis;
@@ -2180,44 +822,354 @@ Limitr: {
     }
 
 
-    /*****************************************************************************
-     * Credits.
-     *****************************************************************************/
-    
     /**
-     * Get a global credit type.
+     * Predict one call before it runs: map of 'value' (credit units), 'overhead' (runes), 'samples',
+     * 'source' ('local' or 'cloud'), and 'scope' ('customer' or 'policy'). Null when nothing has been learned yet.
+     *
+     * Uses this customer's own estimate once it has estimate_min_samples observations, otherwise the
+     * policy-wide one. `quantile` picks how cautious it is (0.5 = a typical call, 0.9 = 9 in 10 calls use
+     * this or less). `context` is the call's event data: when the entitlement declares estimate_basis (Ex.
+     * 'input'), the prediction scales by that field (required), and estimate_segment (Ex. 'model') picks the
+     * segment. `basis` and `segment` arguments win over the context.
      */
-    fn credit(id: str!) -> Credit {
-        self.credits.get(id)
+    fn estimate(id: str!, entitlement: str!, basis?: float, segment?: str, quantile: float = 0.9, context: obj | str = null) -> map {
+        const ent = self.entitlement(id, entitlement);
+        if (ent == null) return null;
+        const ctx = self.resolve_context(context);
+        using parsed_context = ctx[1] ? ctx[0] : null;
+        const inputs = ent.estimate_inputs(ctx[0], basis, segment);
+        if (inputs[2] && inputs[0] == null) return null; // per basis, and the call has none
+
+        const meter: Meter = self.meter_obj(id, entitlement);
+        const own = meter?.estimate(inputs[1]);
+        if (own != null && own.samples >= (self.estimate_min_samples ?? 5)) {
+            const prediction = own.predict(inputs[0], quantile);
+            if (prediction != null) {
+                prediction.insert('scope', 'customer');
+                return prediction;
+            }
+        }
+        const prediction = self.policy_estimate(entitlement, inputs[1])?.predict(inputs[0], quantile);
+        if (prediction != null) prediction.insert('scope', 'policy');
+        prediction
     }
 
 
     /**
-     * Get a credit type for a specific entitlement (that has a limit).
-     * ID can be a plan ID or a customer ID.
+     * Record one call's usage for estimates (settle() does this for you). Updates this customer's estimate
+     * and the policy-wide one for the entitlement and segment. `overhead` defaults to the credit's cost
+     * function with `context` (the call's event data), which also supplies the entitlement's estimate_basis
+     * and estimate_segment fields. `basis` and `segment` arguments win over the context.
+     * False when nothing was recorded (Ex. a per-basis entitlement and no basis).
      */
-    fn credit_for(id: str!, entitlement: str!) -> Credit {
+    fn observe(id: str!, entitlement: str!, value: float | str, overhead?: float, basis?: float, segment?: str, context: obj | str = null) -> bool {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return false;
+        const customer = pair[0];
+        const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
+        const credit = limit != null ? self.credit(limit.credit) : null;
+        const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+        if (typeof value == 'str') value = value as float;
+        value = value.to_units(stof_units);
+
+        const ctx = self.resolve_context(context);
+        using parsed_context = ctx[1] ? ctx[0] : null;
+        const inputs = pair[1].estimate_inputs(ctx[0], basis, segment);
+        if (inputs[2] && inputs[0] == null) return false; // per basis, and the call has none (logged)
+        const cost = overhead ?? self.call_overhead(value, credit, ctx[0]);
+
+        const policy_wide = self.policy_estimate(entitlement, inputs[1], true);
+        const recorded = policy_wide.observe(value, cost, inputs[0], inputs[2]);
+        const own = customer.ensure_meter(entitlement, limit?.credit).estimate(inputs[1], true);
+        own.observe(value, cost, inputs[0], inputs[2]) || recorded
+    }
+
+
+    /*****************************************************************************
+     * Reads
+     * Usage, limits, and balances for the current period. Reads never meter anything.
+     *****************************************************************************/
+
+
+    /**
+     * Get the current value of a metered entitlement for a customer ID.
+     * Returns null if the entitlement doesn't exist.
+     */
+    fn value(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
+        if (percent) return 100 - self.remaining(id, entitlement, true, grants);
         const pair = self.customer_entitlement(id, entitlement);
         if (pair != null) {
-            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-            if (limit != null) return self.credit(limit.credit);
+            const customer = pair[0];
+            const meter: Meter = customer.meters.get(entitlement);
+            const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
+            return Num::round(self.period_value(limit, meter), 9); // outgoing read: 1e-9
         }
         null
     }
 
 
     /**
-     * Exchange some of one credit for another (if possible).
+     * Get the remaining entitlement balance value for a customer ID (limit - current (metered) value).
+     * Returns a value in the units of the meter (not always the same as defined limit units).
      */
-    fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
-        self.exchange.exchange(value, in_currency, out_currency)
+    fn remaining(id: str!, entitlement: str!, percent: bool = false, grants: bool = true) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const customer = pair[0];
+            const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
+            if (limit != null && limit.mode != 'observe') {
+                const credit = self.credit(limit.credit);
+                const stof_units = credit != null ? credit.stof_units : 'float';
+
+                const meter: Meter = customer.meters.get(entitlement);
+                let mval = self.period_value(limit, meter);
+                let lval = (limit.value as float).to_units(stof_units);
+
+                if (grants) {
+                    const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (mval - lval).remove_units()));
+                    if (remaining != null && remaining > 0) lval = max(mval, lval) + remaining;
+                }
+
+                let res = lval - mval;
+                if (percent) {
+                    res = lval != 0 ? (max(0, res) / lval * 100).remove_units() : 0;
+                }
+                return Num::round(res, 9); // outgoing read: 1e-9 (storage keeps full precision)
+            }
+        }
+        null
+    }
+
+
+    /**
+     * Get the limit value for an entitlement.
+     * Returns a value in the units of the meter (credit) (not always the same as defined limit units).
+     * Ex. limit.value = 2GB, but credit.stof_units = 'MB', limit(..) => MB
+     *
+     * If grants are included and id is a customer, return limit + current converted grants
+     */
+    fn limit(id: str!, entitlement: str!, grants: bool = true) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        let limit;
+        if (pair != null) {
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
+        }
+        if (limit != null && limit.mode != 'observe') {
+            const credit = self.credit(limit.credit);
+            const stof_units = credit != null ? credit.stof_units : 'float';
+            const lim = limit.value as float; // can be a str w units
+            let val = lim.to_units(stof_units);
+
+            if (grants && pair != null) {
+                const customer = pair[0];
+                const meter: Meter = customer.meters.get(entitlement);
+                const billable = max(0, (self.period_value(limit, meter) - val).remove_units());
+                const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
+                if (remaining != null) val += remaining;
+            }
+            return Num::round(val, 9); // outgoing read: 1e-9 (storage keeps full precision)
+        }
+        null
+    }
+
+
+    /**
+     * Get the immediately available allowance for a customer entitlement.
+     * When a governor is configured, this is the minimum of the current governor
+     * token balance and the remaining period balance — i.e., how much can actually
+     * be consumed right now before either the governor or the hard limit fires.
+     * Falls back to remaining() if no governor is configured.
+     *
+     * Use this to pre-size operations before submitting them — e.g. max video
+     * duration, max token budget, max compute seconds — so the operation is
+     * sized to what will actually be allowed rather than discovering the limit
+     * mid-execution.
+     */
+    fn allowance(id: str!, entitlement: str!, grants: bool = true) -> float {
+        const period_remaining = self.remaining(id, entitlement, grants = grants);
+        if (period_remaining == null) return null;
+
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+            if (limit != null && limit.governor_enabled && limit.governor_capacity != null) {
+                const meter: Meter = pair[0].meters.get(entitlement);
+                if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter)) {
+                    const available = meter.governor_available(limit.governor_capacity as float, limit.governor_refill_rate);
+                    return Num::round(min(available, period_remaining), 9);
+                }
+            }
+        }
+        period_remaining
+    }
+
+
+    /**
+     * Get the standard increment "cost" of an "increment" operation for an entitlement.
+     * Will return null if the entitlement doesn't exist.
+     */
+    fn cost(id: str!, entitlement: str!) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        let limit;
+        if (pair != null) {
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
+        }
+        limit != null ? (limit.increment ?? 1) : null
+    }
+
+
+    /**
+     * Entitlement resets on this timestamp for the following customer ID.
+     */
+    fn resets(id: str!, entitlement: str!) -> ms {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const customer = pair[0];
+            const ent = pair[1];
+            const limit = self.customer_entitlement_limit(customer, entitlement, ent);
+            if (limit != null && limit.resets) {
+                const now = Time::now();
+                if (limit.reset_sch != null) {
+                    return self.next_period_start(now, limit.reset_sch);
+                }
+                const inc = limit.reset_increment();
+                if (inc != null) {
+                    // read-only: compute the current period, never move the meter (allow() resets it)
+                    const existing_meter: Meter = customer.meters.get(entitlement);
+                    if (existing_meter != null && existing_meter.started != null) {
+                        return limit.current_period_start(existing_meter.started, now) + inc;
+                    }
+                    return now + inc;
+                }
+            }
+        }
+        null
+    }
+
+
+    /**
+     * Current instantaneous consumption rate for a customer entitlement.
+     * Returns consumption per ms derived from the last two ring buffer entries.
+     * Returns 0 if no meter exists or fewer than two allow() calls have been made.
+     */
+    fn rate(id: str!, entitlement: str!) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return 0;
+        const meter: Meter = pair[0].meters.get(entitlement);
+        if (meter == null) return 0;
+        const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
+        meter.rate()
+    }
+
+
+    /**
+     * Rate of change between the two most recent consumption intervals.
+     * Positive means consumption is accelerating, negative means decelerating.
+     * Returns 0 if no meter exists or fewer than three allow() calls have been made.
+     */
+    fn acceleration(id: str!, entitlement: str!) -> float {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return 0;
+        const meter: Meter = pair[0].meters.get(entitlement);
+        if (meter == null) return 0;
+        const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
+        meter.acceleration()
+    }
+
+
+    /**
+     * Estimated time until a customer exhausts their entitlement at the current rate of consumption.
+     * Returns a future ms timestamp, or null if there is no consumption history,
+     * the rate is zero, or no meter exists yet.
+     * Uses the current rate from the meter's ring buffer — meaningful after at least
+     * two allow() calls have been made.
+     */
+    fn projected_exhaustion(id: str!, entitlement: str!, smoothed: bool = false, grants: bool = true) -> ms {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair == null) return null;
+        const customer = pair[0];
+        const meter: Meter = customer.meters.get(entitlement);
+        if (meter == null) return null;
+        const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
+        if (limit == null) return null;
+        if (self.meter_reset_pending(limit, meter)) return null; // new period - no consumption history yet
+        const credit = self.credit(limit.credit);
+        const stof_units = credit != null ? credit.stof_units : 'float';
+        let limit_val = (limit.value as float).to_units(stof_units);
+        if (grants) {
+            const remaining = customer.remaining_grant_credit(self, limit.credit, max(0, (meter.value - limit_val).remove_units()));
+            if (remaining != null && remaining > 0) limit_val = max(meter.value, limit_val) + remaining;
+        }
+        meter.projected_exhaustion(limit_val, smoothed)
+    }
+
+
+    /**
+     * Credit remaining for this customer through grants.
+     */
+    fn credit_remaining(customer_id: str!, credit: str!) -> float {
+        const customer = self.customer(customer_id);
+        const remaining = customer != null ? customer.remaining_grant_credit(self, credit) : null;
+        remaining != null ? Num::round(remaining, 9) : null // outgoing read: 1e-9
+    }
+
+
+    /**
+     * Customer meter object.
+     * Resolved to the correct customer given the entitlement scope.
+     */
+    fn meter_obj(id: str!, entitlement: str!) -> Meter {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const customer = pair[0];
+            return customer.meters.get(entitlement);
+        }
+        null
+    }
+
+
+    /**
+     * Get the customer's limit object.
+     * Could be overridden, hence the helper.
+     */
+    fn limit_obj(id: str!, entitlement: str!) -> Limit {
+        const pair = self.customer_entitlement(id, entitlement);
+        let limit;
+        if (pair != null) {
+            limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+        } else {
+            const ent = self.entitlement(id, entitlement);
+            limit = ent != null ? ent.limit : null;
+        }
+        limit
+    }
+
+
+    /**
+     * Get a plan entitlement from either a customer ID or plan ID.
+     */
+    fn entitlement(id: str!, entitlement: str!) -> Entitlement {
+        const pn: Plan = self.plan(id);
+        if (pn != null) {
+            return pn.entitlements.get(entitlement);
+        }
+        null
     }
 
 
     /*****************************************************************************
-     * Customers.
+     * Customers
      *****************************************************************************/
-    
+
+
     /**
      * Get a global customer by ID.
      */
@@ -2228,134 +1180,6 @@ Limitr: {
             if (alt != null) return self.customer(alt);
         }
         sub
-    }
-
-
-    /**
-     * Get a customer's metadata object.
-     */
-    fn customer_metadata(id: str!) -> obj {
-        const customer = self.customer(id);
-        customer != null ? customer.metadata : null
-    }
-
-
-    /**
-     * Get the customer refs for this customer ID.
-     */
-    fn customer_refs(id: str!) -> list {
-        const sub = self.customer(id);
-        sub != null ? sub.refs : null
-    }
-
-
-    /**
-     * Set customer refs for this customer ID.
-     */
-    fn set_customer_refs(id: str!, refs: list!) -> bool {
-        const sub = self.customer(id);
-        if (sub != null) sub.refs = refs;
-        sub != null
-    }
-
-
-    /**
-     * Change a customer's plan ID.
-     * Will initialize any meters for the new plan, optionally overwritting previous usage.
-     */
-    fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
-        const sub = self.customer(id);
-        const prev = self.plan_for(id);
-        const pn: Plan = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
-        if (pn != null && sub != null && prev != pn) {
-            sub.plan = plan;
-            pn.name = plan;
-
-            // init all plan entitlement meters for this new plan
-            // all plan meters are a synced starting point
-            let now = Time::now();
-
-            // if not overwritting existing meters, try getting the first meter started on the current plan to set as "now" for new meters
-            // this will mean that the meters will be relatively synced, depending on the new entitlement resets (might be immediately expired which is okay)
-            if (!overwrite_meters && prev != null) {
-                for (const pair in sub.meters.fields()) {
-                    const entitlement = pair[0];
-                    const met: Meter = pair[1];
-                    // prev plan must include the entitlement to prevent ancient syncs
-                    if (prev.entitlements.get(entitlement) != null && met.started < now) {
-                        now = met.started;
-                    }
-                }
-            }
-
-            for (const pair in pn.entitlements.fields()) {
-                const name = pair[0];
-                const ent = pair[1];
-                if (typeof ent == 'obj' && ent.limit != null) {
-                    ent as Entitlement;
-                    const existing = sub.meters.get(name);
-                    if (overwrite_meters || existing == null) {
-                        if (existing != null) drop(existing); // replaced below (it would stay in the document otherwise)
-                        const met = new Meter {
-                            credit: ent.limit.credit,
-                            started: now,
-                        } on sub.meters;
-                        sub.meters.insert(name, met);
-                    }
-                }
-            }
-
-            await <Event>.send('customer-set', sub);
-            await <Event>.send_tmp('customer-plan-changed', new {
-                previous_plan: prev != null ? prev.name : null,
-                new_plan: plan,
-                customer: sub,
-            });
-            return true;
-        }
-        false
-    }
-
-
-    /**
-     * Ensure this customer has the included plan topups created as grants.
-     * Call this for customers that should have included topup grants (maybe not all customers).
-     * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
-     */
-    fn ensure_included_topups(customer_id: str!, event: bool = true) {
-        const customer = self.customer(customer_id);
-        const plan = self.plan_for(customer_id);
-        if (customer != null && plan != null && customer.update_topup_plan_grants(self, plan)) {
-            if (event) await <Event>.send('customer-set', customer);
-        }
-    }
-
-
-    /**
-     * Ensure this customer is charged for one plan "subscription" credit quantity.
-     * Call this for customers that should be accountable for a plan base subscripton price.
-     * Not called automatically anywhere!
-     *
-     * Note: must create a credit and assign as the "subscription" entitlement on this plan.
-     * Best practice is to call this just for the customers that are accountable for plan pricing (e.g. org).
-     * Ex. pro plan with a monthly price of $200/mo.
-     */
-    fn ensure_plan_subscription(customer_id: str!) -> bool {
-        const customer = self.customer(customer_id);
-        if (customer != null) {
-            // do not contemplate refs here... plan must be actually ON this customer
-            // this is because not all customers will be accountable for a base plan price
-            let pn = self.plans.get(customer.plan);
-            if (pn != null) {
-                const meter = customer.meters.get(pn.subscription);
-                if (meter != null && meter.value < 1 && meter.started != null) {
-                    if (pn.trial_period == null || (Time::now() - meter.started) >= (pn.trial_period as float)) {
-                        return self.increment(customer_id, pn.subscription);
-                    }
-                }
-            }
-        }
-        false
     }
 
 
@@ -2484,6 +1308,92 @@ Limitr: {
 
 
     /**
+     * Change a customer's plan ID.
+     * Will initialize any meters for the new plan, optionally overwritting previous usage.
+     */
+    fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
+        const sub = self.customer(id);
+        const prev = self.plan_for(id);
+        const pn: Plan = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
+        if (pn != null && sub != null && prev != pn) {
+            sub.plan = plan;
+            pn.name = plan;
+
+            // init all plan entitlement meters for this new plan
+            // all plan meters are a synced starting point
+            let now = Time::now();
+
+            // if not overwritting existing meters, try getting the first meter started on the current plan to set as "now" for new meters
+            // this will mean that the meters will be relatively synced, depending on the new entitlement resets (might be immediately expired which is okay)
+            if (!overwrite_meters && prev != null) {
+                for (const pair in sub.meters.fields()) {
+                    const entitlement = pair[0];
+                    const met: Meter = pair[1];
+                    // prev plan must include the entitlement to prevent ancient syncs
+                    if (prev.entitlements.get(entitlement) != null && met.started < now) {
+                        now = met.started;
+                    }
+                }
+            }
+
+            for (const pair in pn.entitlements.fields()) {
+                const name = pair[0];
+                const ent = pair[1];
+                if (typeof ent == 'obj' && ent.limit != null) {
+                    ent as Entitlement;
+                    const existing = sub.meters.get(name);
+                    if (overwrite_meters || existing == null) {
+                        if (existing != null) drop(existing); // replaced below (it would stay in the document otherwise)
+                        const met = new Meter {
+                            credit: ent.limit.credit,
+                            started: now,
+                        } on sub.meters;
+                        sub.meters.insert(name, met);
+                    }
+                }
+            }
+
+            await <Event>.send('customer-set', sub);
+            await <Event>.send_tmp('customer-plan-changed', new {
+                previous_plan: prev != null ? prev.name : null,
+                new_plan: plan,
+                customer: sub,
+            });
+            return true;
+        }
+        false
+    }
+
+
+    /**
+     * Get a customer's metadata object.
+     */
+    fn customer_metadata(id: str!) -> obj {
+        const customer = self.customer(id);
+        customer != null ? customer.metadata : null
+    }
+
+
+    /**
+     * Get the customer refs for this customer ID.
+     */
+    fn customer_refs(id: str!) -> list {
+        const sub = self.customer(id);
+        sub != null ? sub.refs : null
+    }
+
+
+    /**
+     * Set customer refs for this customer ID.
+     */
+    fn set_customer_refs(id: str!, refs: list!) -> bool {
+        const sub = self.customer(id);
+        if (sub != null) sub.refs = refs;
+        sub != null
+    }
+
+
+    /**
      * Set an alternative customer ID (must be unique).
      */
     fn set_alt_customer_id(customer_id: str!, alt_id: str!, event: bool = true) -> bool {
@@ -2572,6 +1482,85 @@ Limitr: {
         }
         false
     }
+
+
+    /**
+     * Apply a plan topup to a customer.
+     * Creates a credit grant with a topup/one-time-purchase if found.
+     */
+    fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
+        const customer = self.customer(customer_id);
+        const plan = self.plan_for(customer_id);
+        if (plan != null && customer != null) {
+            const top: Topup = plan.topups.get(topup);
+            if (top != null) {
+                const cred = self.credit(top.credit);
+                if (cred != null) {
+                    const units = cred.stof_units ?? 'float';
+                    const grant = top.create_grant(units, customer.grants);
+                    grant.topup = topup;
+                    customer.grants.insert(grant.id, grant);
+
+                    // Just the customer-topup-granted event, no customer-set here
+                    await <Event>.send_tmp('customer-topup-granted', new {
+                        customer,
+                        topup_name: topup,
+                        plan_name: plan.name,
+                        topup: top,
+                    });
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+
+    /**
+     * Ensure this customer has the included plan topups created as grants.
+     * Call this for customers that should have included topup grants (maybe not all customers).
+     * If not created here (recommended when using included grants), they will be lazily created when overage occurs.
+     */
+    fn ensure_included_topups(customer_id: str!, event: bool = true) {
+        const customer = self.customer(customer_id);
+        const plan = self.plan_for(customer_id);
+        if (customer != null && plan != null && customer.update_topup_plan_grants(self, plan)) {
+            if (event) await <Event>.send('customer-set', customer);
+        }
+    }
+
+
+    /**
+     * Ensure this customer is charged for one plan "subscription" credit quantity.
+     * Call this for customers that should be accountable for a plan base subscripton price.
+     * Not called automatically anywhere!
+     *
+     * Note: must create a credit and assign as the "subscription" entitlement on this plan.
+     * Best practice is to call this just for the customers that are accountable for plan pricing (e.g. org).
+     * Ex. pro plan with a monthly price of $200/mo.
+     */
+    fn ensure_plan_subscription(customer_id: str!) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer != null) {
+            // do not contemplate refs here... plan must be actually ON this customer
+            // this is because not all customers will be accountable for a base plan price
+            let pn = self.plans.get(customer.plan);
+            if (pn != null) {
+                const meter = customer.meters.get(pn.subscription);
+                if (meter != null && meter.value < 1 && meter.started != null) {
+                    if (pn.trial_period == null || (Time::now() - meter.started) >= (pn.trial_period as float)) {
+                        return self.increment(customer_id, pn.subscription);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+
+    /*****************************************************************************
+     * Spend caps
+     *****************************************************************************/
 
 
     /**
@@ -2734,52 +1723,159 @@ Limitr: {
     }
 
 
-    /**
-     * Apply a plan topup to a customer.
-     * Creates a credit grant with a topup/one-time-purchase if found.
-     */
-    fn apply_customer_topup(customer_id: str!, topup: str!) -> bool {
-        const customer = self.customer(customer_id);
-        const plan = self.plan_for(customer_id);
-        if (plan != null && customer != null) {
-            const top: Topup = plan.topups.get(topup);
-            if (top != null) {
-                const cred = self.credit(top.credit);
-                if (cred != null) {
-                    const units = cred.stof_units ?? 'float';
-                    const grant = top.create_grant(units, customer.grants);
-                    grant.topup = topup;
-                    customer.grants.insert(grant.id, grant);
+    /*****************************************************************************
+     * Plans & credits
+     *****************************************************************************/
 
-                    // Just the customer-topup-granted event, no customer-set here
-                    await <Event>.send_tmp('customer-topup-granted', new {
-                        customer,
-                        topup_name: topup,
-                        plan_name: plan.name,
-                        topup: top,
-                    });
-                    return true;
-                }
-            }
+
+    /**
+     * Get a plan by ID (either a plan ID or a customer ID).
+     */
+    fn plan(id: str!, default: bool = true) -> Plan {
+        let pn = self.plans.get(id);
+        if (pn != null) {
+            pn.name = id;
+            return pn;
         }
-        false
+        pn = self.plan_for(id, false);
+        if (pn == null && default) pn = self.default_plan();
+        pn
     }
 
 
     /**
-     * Credit remaining for this customer through grants.
+     * Get a plan by customer ID.
      */
-    fn credit_remaining(customer_id: str!, credit: str!) -> float {
+    fn plan_for(customer_id: str!, default: bool = true) -> Plan {
         const customer = self.customer(customer_id);
-        const remaining = customer != null ? customer.remaining_grant_credit(self, credit) : null;
-        remaining != null ? Num::round(remaining, 9) : null // outgoing read: 1e-9
+        if (customer != null) {
+            let pn = self.plans.get(customer.plan);
+            if (pn != null) pn.name = customer.plan;
+
+            if (pn == null && customer.refs.any()) {
+                for (const ref in customer.refs) {
+                    pn = self.plan_for(ref, false);
+                    if (pn != null) break;
+                }
+            }
+            if (pn == null && default) pn = self.default_plan();
+            return pn;
+        }
+        null
+    }
+
+
+    /**
+     * Get the (first) default plan in this policy.
+     */
+    fn default_plan() -> Plan {
+        for (const pair in self.plans.fields()) {
+            const plan: Plan = pair[1];
+            if (plan.default) {
+                plan.name = pair[0];
+                return plan;
+            }
+        }
+        null
+    }
+
+
+    /**
+     * Set/create a plan with a name & internal Stof.
+     */
+    fn set_plan(id: str!, internal_stof: str!) -> Plan {
+        self.delete_plan(id);
+        const plan = new {} on self.plans;
+        try {
+            parse(internal_stof, plan, 'stof');
+        } catch {
+            drop(plan);
+            return null;
+        }
+        plan.name = id;
+        self.plans.insert(id, plan);
+        await <Event>.send('plan-set', plan as Plan);
+        plan
+    }
+
+
+    /**
+     * Delete a plan by plan ID.
+     * Be careful, as customers that have this plan will no longer work as expected.
+     */
+    fn delete_plan(id: str!) -> bool {
+        const plan = self.plans.get(id);
+        if (plan != null) {
+            await <Event>.send('plan-removed', plan);
+        }
+        self.plans.remove(id, shallow = false)
+    }
+
+
+    /**
+     * Plan period.
+     */
+    fn plan_period(id: str!) -> str {
+        const plan = self.plan(id);
+        plan != null ? plan.period : null
+    }
+
+
+    /**
+     * Plan trial period in ms (optional).
+     * Accepts a plan ID or customer ID. Unitless trial_period values are treated as ms.
+     */
+    fn plan_trial_period(id: str!) -> ms {
+        const plan = self.plan(id);
+        plan != null && plan.trial_period != null ? (plan.trial_period as float) : null
+    }
+
+
+    /**
+     * Plan subscription entitlement.
+     * This is the entitlement to update for a base plan price (typically only once).
+     */
+    fn plan_sub_entitlement_name(id: str!) -> str {
+        const plan = self.plan(id);
+        plan != null ? plan.subscription : null
+    }
+
+
+    /**
+     * Get a global credit type.
+     */
+    fn credit(id: str!) -> Credit {
+        self.credits.get(id)
+    }
+
+
+    /**
+     * Get a credit type for a specific entitlement (that has a limit).
+     * ID can be a plan ID or a customer ID.
+     */
+    fn credit_for(id: str!, entitlement: str!) -> Credit {
+        const pair = self.customer_entitlement(id, entitlement);
+        if (pair != null) {
+            const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
+            if (limit != null) return self.credit(limit.credit);
+        }
+        null
+    }
+
+
+    /**
+     * Exchange some of one credit for another (if possible).
+     */
+    fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
+        self.exchange.exchange(value, in_currency, out_currency)
     }
 
 
     /*****************************************************************************
-     * Margin snapshots.
+     * Margins
      *****************************************************************************/
-    
+
+
     /**
      * Get a customer's local & current snapshot margin (((revenue - cost)/revenue) * 100).
      * Meant to be a quick & rough "are we making money on this customer right now?" check.
@@ -2907,7 +2003,7 @@ Limitr: {
 
                     // explicit overhead (runes) for the modeled usage, else the credit's cost function (optional context)
                     let ent_cost: float = ent_overhead;
-                    if (ent_cost == null) ent_cost = self.call_overhead(credit, current, ent_context);
+                    if (ent_cost == null) ent_cost = self.call_overhead(current, credit, ent_context);
                     else if (adjusted_meter_period != null) ent_cost *= (plan_period/adjusted_meter_period).remove_units();
                     cost += ent_cost;
                     let ent_rev = 0;
@@ -2932,5 +2028,580 @@ Limitr: {
             'margin': revenue > 0 ? (((revenue - cost)/revenue) * 100).round(2) : -100,
             'entitlements': entitlements_map,
         };
+    }
+
+
+    /*****************************************************************************
+     * Notifications & capabilities
+     *****************************************************************************/
+
+
+    /**
+     * Set a policy notification observer (overwrites existing if any).
+     */
+    fn set_notification(name: str!, note: Notification!) {
+        const old = self.notifications.get(name);
+        if (old != null) drop(old);
+        note.move(self.notifications);
+        self.notifications.insert(name, note);
+    }
+
+
+    /**
+     * Set many imported notifications at once.
+     * Goes through fields and sets all objects as notification observers in this self.
+     */
+    fn set_notifications(contents: unknown, format: str = 'stof') {
+        using tmp = new {};
+        try {
+            parse(contents, tmp, format);
+            for (const field in tmp.fields()) {
+                const note = field[1];
+                if (typeof note == 'obj') {
+                    self.set_notification(field[0], note as Notification);
+                }
+            }
+        } catch {
+            // Nada..
+        }
+    }
+
+
+    /**
+     * Get a policy capability by name.
+     */
+    fn capability(name: str!) -> Capability {
+        let cp = self.capabilities.get(name);
+        if (cp != null) {
+            cp.name = name;
+            return cp;
+        }
+        null
+    }
+
+
+    /**
+     * Set a policy capability (overwrites existing if any).
+     */
+    fn set_capability(cap: Capability!) {
+        const old = self.capability(cap.name);
+        if (old != null) drop(old);
+        cap.move(self.capabilities);
+        self.capabilities.insert(cap.name, cap);
+    }
+
+
+    /**
+     * Set many imported capabilities at once.
+     * Goes through fields and sets all objects as capabilities in this self.
+     */
+    fn set_capabilities(contents: unknown, format: str = 'stof') {
+        using tmp = new {};
+        try {
+            parse(contents, tmp, format);
+            for (const field in tmp.fields()) {
+                const cap = field[1];
+                if (typeof cap == 'obj') {
+                    // name, cast, & move to the correct location in doc
+                    if (cap.name == null || cap.name.len() < 1) cap.name = field[0];
+                    self.set_capability(cap as Capability);
+                }
+            }
+        } catch {
+            // Nada..
+        }
+    }
+
+
+    /**
+     * Run capability.
+     * Args is map<string, unknown>.
+     */
+    fn run_capability(name: str!, args: map = map(), customer_id?: str) -> unknown {
+        const cp = self.capability(name);
+        if (cp != null) {
+            if (customer_id != null) {
+                const pn = self.plan_for(customer_id);
+                const plan = pn == null ? null : pn.name;
+                if (!cp.access(plan, customer_id)) return null;
+            }
+
+            drop(cp.input);
+            cp.input = new {} on cp;
+            for (const pair in args) {
+                cp.input.insert(pair[0], copy(pair[1]));
+            }
+            drop(cp.output);
+            cp.output = new {} on cp;
+            cp.run();
+            return cp.get_result();
+        }
+        null
+    }
+
+
+    /**
+     * Claude tool definitions for this policy's capabilities, as JSON ({ "tools": [...] }).
+     * With a customer ID, only the capabilities that customer can use.
+     */
+    fn claude_tools(customer_id?: str) -> str {
+        using arena = new {};
+        const pn = customer_id == null ? null : self.plan_for(customer_id);
+        const plan = pn == null ? null : pn.name;
+        const tools = [];
+        for (const pair in self.capabilities.fields()) {
+            const cp: Capability = pair[1];
+            if (customer_id == null || cp.access(plan, customer_id)) tools.push_back(cp.claude_tool(arena));
+        }
+        arena.tools = tools;
+        stringify('json', arena)
+    }
+
+
+    /**
+     * Run a Claude tool_use block (JSON) against the matching capability and return the tool_result as JSON.
+     * Null if no capability matches, or the customer can't use it.
+     */
+    fn claude_tool_use(tool_use_json: str!, customer_id?: str) -> str {
+        using arena = new {};
+        parse(tool_use_json, arena, 'json');
+        const cp = arena.name != null ? self.capability(arena.name) : null;
+        if (cp == null) return null;
+        if (customer_id != null) {
+            const pn = self.plan_for(customer_id);
+            if (!cp.access(pn == null ? null : pn.name, customer_id)) return null;
+        }
+        if (!cp.claude_tool_use(arena)) return null;
+        cp.run();
+        stringify('json', cp.claude_tool_result(arena, arena))
+    }
+
+
+    /*****************************************************************************
+     * Sync
+     * Used by SDKs and Limitr Cloud to update a running policy and its customers.
+     *****************************************************************************/
+
+
+    /**
+     * Get self BSTF.
+     */
+    fn policy_bstf() -> blob {
+        blobify('bstf', self)
+    }
+
+
+    /**
+     * Generate a diff JSON string with a different self BSTF.
+     * This self is treated as the "schema" for this operation, and will not be modified.
+     */
+    fn difference_bstf(bstf: blob, symmetric: bool = false) -> str {
+        let out = '{}';
+        try {
+            using other = new {};
+            parse(bstf, other, 'bstf');
+            self.diff(other, symmetric);
+            out = stringify('json', other);
+        } catch {
+            out = '{ "error": "could not process BSTF for self diff" }';
+        }
+        out
+    }
+
+
+    /**
+     * Replace the current active self internals in this document with a new one.
+     */
+    fn update_policy_internals(updated: unknown!, format: str! = 'json') {
+        using p = new {}; // what's left of it after moving the parts in is dropped on return
+        try {
+            parse(updated, p, format);
+            if (typeof p.policy.plans == 'obj') {
+                self.remove('plans', shallow = false);
+                self.plans = p.policy.plans;
+                p.policy.plans.move(self);
+            }
+            if (typeof p.policy.credits == 'obj') {
+                self.remove('credits', shallow = false);
+                self.credits = p.policy.credits;
+                p.policy.credits.move(self);
+            }
+            if (typeof p.policy.notifications == 'obj') {
+                for (const pair in p.policy.notifications.fields()) {
+                    self.set_notification(pair[0], pair[1]);
+                }
+            }
+            if (typeof p.policy.exchange == 'obj') {
+                self.exchange.grant_strategy = p.policy.exchange.grant_strategy ?? 'expires_first';
+                for (const pair in p.policy.exchange.fields()) {
+                    const name = pair[0];
+                    const val = pair[1];
+                    if (typeof val == 'obj') {
+                        self.exchange.remove(name, shallow = false);
+                        self.exchange.insert(name, val);
+                        val.move(self.exchange);
+                    }
+                }
+            }
+            if (typeof p.limitr_cloud == 'obj') {
+                root.remove('limitr_cloud', shallow = false);
+                root.limitr_cloud = p.limitr_cloud;
+                p.limitr_cloud.move(root);
+            }
+            if (typeof p.policy.capabilities == 'obj') {
+                for (const pair in p.policy.capabilities.fields()) {
+                    const name = pair[0];
+                    const cap: Capability = pair[1];
+                    if (cap.name == null || cap.name.len() < 1) cap.name = name;
+                    self.set_capability(cap);
+                }
+            }
+            if (typeof p.policy.customers == 'obj') {
+                for (const pair in p.policy.customers.fields()) {
+                    const id = pair[0];
+                    const existing = self.customers.get(id);
+                    if (existing == null) {
+                        const c = pair[1];
+                        self.customers.insert(id, c);
+                        c.move(self.customers);
+                        for (const alt in c.alt_ids) self.alt_customer_ids.insert(alt, id);
+                    }
+                }
+            }
+
+            await <Event>.send('internal-self-updated');
+        } catch {
+            // Nada...
+        }
+    }
+
+
+    /**
+     * Replace a customer internals within this Limitr self.
+     */
+    fn update_customer_internals(customer: str!, format: str! = 'json') {
+        const c = new {} on self.customers;
+        try {
+            parse(customer, c, format);
+            const id = c.id ?? nanoid();
+            c.id = id;
+            self.customers.remove(id, shallow = false);
+            self.customers.insert(id, c as Customer);
+            for (const alt in c.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
+            if (c.metadata != null && c.metadata.limitr_voucher != null && c.metadata.limitr_voucher_expires != null) {
+                if (c.metadata.limitr_voucher_expires <= Time::now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
+                    const vchr = c.metadata.limitr_voucher;
+                    for (const pair in self.capabilities.fields()) {
+                        const cap: Capability = pair[1];
+                        if (cap.voucher == vchr || (cap.customers != null && cap.customers.len() == 1 && cap.customers.contains(vchr))) {
+                            self.capabilities.remove(pair[0], shallow = false);
+                        } else if (cap.customers != null) {
+                            cap.customers.remove_all(vchr);
+                        }
+                    }
+                }
+            }
+            await <Event>.send('internal-customer-updated', c);
+        } catch {
+            drop(c);
+        }
+    }
+
+
+    /**
+     * Set customer invoices data within this self.
+     */
+    fn update_customer_invoices(content: str!, format: str! = 'json') {
+        const i = new {} on self;
+        try {
+            parse(content, i, format);
+            const id = i.id ?? nanoid();
+            i.id = id;
+            if (self.invoices == null) self.invoices = new {} on self;
+            self.invoices.remove(id, shallow = false);
+            i.move(self.invoices);
+            self.invoices.insert(id, i);
+            await <Event>.send('internal-customer-invoices-updated', i);
+        } catch {
+            drop(i);
+        }
+    }
+
+
+    /*****************************************************************************
+     * Internal
+     * Helpers for the functions above. Not part of the public API: they may change in any release.
+     *****************************************************************************/
+
+
+    // Resolving a call --------------------------------------------------------
+
+
+    /**
+     * Customer entitlement pair.
+     */
+    fn customer_entitlement(customer_id: str!, entitlement: str!) -> (Customer, Entitlement) {
+        let customer = self.customer(customer_id);
+        if (customer != null) {
+            const ent = self.entitlement(customer_id, entitlement);
+            if (ent != null) {
+                // Entitlement scope: the nearest customer of that type through the refs chain.
+                // No such customer -> no entitlement (never metered on the caller instead).
+                if (ent.scope != null && ent.scope != customer.type) {
+                    let scoped = null;
+                    for (const candidate in self.ref_customers(customer)) {
+                        if (candidate.type == ent.scope) {
+                            scoped = candidate;
+                            break;
+                        }
+                    }
+                    if (scoped == null) return null;
+                    customer = scoped;
+                }
+                return (customer, ent);
+            }
+        }
+        null
+    }
+
+
+    /**
+     * Customer entitlement limit.
+     */
+    fn customer_entitlement_limit(customer?: Customer, entitlement?: str, ent?: Entitlement) -> Limit {
+        if (customer == null || entitlement == null || ent == null) return null;
+        let limit = ent.limit;
+        const override: Limit = customer.overrides.get(entitlement);
+        if (override != null) {
+            if (override.override_expires_on != null && Time::now() >= override.override_expires_on) {
+                customer.overrides.remove(entitlement, shallow = false);
+            } else {
+                limit = override;
+            }
+        }
+        limit
+    }
+
+
+    /**
+     * Customers reachable through `customer`'s refs, transitively and nearest first
+     * (breadth-first). Each customer appears once; cycles and repeats are skipped;
+     * `customer` itself is never included.
+     */
+    fn ref_customers(customer: Customer!) -> list {
+        const out = [];
+        const seen = set(customer.id);
+        const queue = [customer];
+        while (queue.any()) {
+            const current = queue.pop_front();
+            for (const ref in current.refs) {
+                const found = self.customer(ref);
+                if (found != null && !seen.contains(found.id)) {
+                    seen.insert(found.id);
+                    out.push_back(found);
+                    queue.push_back(found);
+                }
+            }
+        }
+        out
+    }
+
+
+    /**
+     * Shared caps that apply to a call made by `caller`: every current `shared` cap on the
+     * customers reachable through its refs, filtered by `shared_with` (caller type).
+     * Expired shared caps are removed from their holder.
+     */
+    fn shared_caps_for(caller: Customer!) -> list {
+        const out = [];
+        for (const holder in self.ref_customers(caller)) {
+            for (const pair in holder.caps.fields()) {
+                const cap: Cap = pair[1];
+                if (!cap.shared) continue;
+                if (cap.shared_with != null && cap.shared_with.any() && !cap.shared_with.contains(caller.type)) continue;
+                if (!cap.ensure_current()) {
+                    holder.caps.remove(pair[0], shallow = false);
+                    continue;
+                }
+                out.push_back(cap);
+            }
+        }
+        out
+    }
+
+
+    /**
+     * The customer holding a stored cap (null for ephemeral/unattached caps).
+     */
+    fn cap_holder(cap: Cap!) -> Customer {
+        const caps_obj = cap.parent();
+        const holder = caps_obj != null ? caps_obj.parent() : null;
+        holder != null && holder.instance_of('Customer') ? holder : null
+    }
+
+
+    // Periods -----------------------------------------------------------------
+
+
+    /**
+     * Is a period reset pending for this meter (the next allow() will start a new period)?
+     * Read-only.
+     */
+    fn meter_reset_pending(limit?: Limit, meter?: Meter) -> bool {
+        limit != null && meter != null && meter.started != null && limit.reset_pending(meter.started, Time::now())
+    }
+
+
+    /**
+     * Meter value for the current period - 0 when a period reset is pending.
+     * Read-only: reads see the new period without having to wait for an allow().
+     */
+    fn period_value(limit?: Limit, meter?: Meter) -> float {
+        if (meter == null) return 0;
+        self.meter_reset_pending(limit, meter) ? 0 : meter.value
+    }
+
+
+    /**
+     * Provider overhead spent on a meter in the current period (runes) - 0 when a period reset is pending.
+     * Meters from before 0.7.0 have no record, so they fall back to value * the credit's fixed rate.
+     */
+    fn period_overhead(limit?: Limit, meter?: Meter, credit?: Credit) -> float {
+        if (meter == null || self.meter_reset_pending(limit, meter)) return 0;
+        if (meter.overhead != null) return meter.overhead;
+        credit != null ? (meter.value * (credit.overhead_cost ?? 0)).remove_units() : 0
+    }
+
+
+    /**
+     * Compute the next calendar period boundary after now for a given schedule.
+     * Uses Time::add_months or Time::add_days to step into the next period,
+     * then calls Time::start_of_period to find its start.
+     */
+    fn next_period_start(now: ms, reset_sch: str) -> ms {
+        let next_ts = now;
+        if (reset_sch.starts_with('weekly')) next_ts = Time::add_days(now, 7);
+        else if (reset_sch.starts_with('yearly')) next_ts = Time::add_months(now, 12);
+        else if (reset_sch.starts_with('quarterly')) next_ts = Time::add_months(now, 3);
+        else next_ts = Time::add_months(now, 1);
+        // Note: for nth_weekday schedules, returns null if the Nth occurrence
+        // doesn't exist in the target month (e.g. 5th Tuesday in a short month).
+        // Callers should handle null gracefully.
+        Time::start_of_period(next_ts, reset_sch)
+    }
+
+
+    // Pricing & events --------------------------------------------------------
+
+
+    /**
+     * Provider overhead (runes) for one call of `units` of a credit.
+     * The host's actual cost (`overhead`) wins; otherwise the credit's overhead() cost function with the
+     * call's context (event data). If that function throws or returns a non-number, the fixed rate is used.
+     */
+    fn call_overhead(units: float, credit?: Credit, context?: obj, overhead?: float) -> float {
+        if (overhead != null) return (overhead as float).remove_units();
+        if (credit == null || units == 0) return 0;
+        try {
+            const cost = credit.overhead(units, context);
+            if (cost != null) return (cost as float).remove_units();
+        } catch (e: str) {
+            err(`Limitr: overhead() for credit '${Obj::name(credit)}' failed, using overhead_cost: ${e}`);
+        }
+        (units * (credit.overhead_cost ?? 0)).remove_units()
+    }
+
+
+    /**
+     * Runes for `units` of a credit from billable position `position` (Exchange.to_runes). A priced credit
+     * with no exchange pair of its own prices itself, which is what the exchange would resolve to anyway.
+     * Null when it has no price.
+     */
+    fn price_units(credit_name: str!, units: float, position: float = 0, credit?: Credit) -> float {
+        if (credit != null && credit.priced() && self.exchange.get_pair(credit_name) == null) return credit.price_of(units, position);
+        self.exchange.to_runes(units, credit_name, position)
+    }
+
+
+    /**
+     * Round an outgoing event's numbers to 1e-9 (top level, plus its `meter` and `governor`
+     * objects). Storage keeps full precision so sub-nano amounts still accumulate; this only
+     * keeps drift like 0.30000000000000004 out of notifications, host handlers, and Cloud.
+     */
+    fn round_event(event: obj) {
+        for (const target in [event, event.meter, event.governor]) {
+            if (typeof target != 'obj') continue;
+            for (const pair in target.fields()) {
+                if (typeof pair[1] == 'float') target.insert(pair[0], Num::round(pair[1], 9));
+            }
+        }
+    }
+
+
+    /**
+     * Send a cap-limit event: `cap` denied a call before anything changed. `customer` is the customer
+     * holding the cap (the caller for call-scoped caps), `caller` the customer the call was made as.
+     */
+    fn send_cap_limit(cap: Cap!, caller: Customer!, entitlement: str!, meter: obj!, arena: obj!, plan?: str, credit?: Credit, event_data?: obj) {
+        const event_value = new {
+            customer: self.cap_holder(cap) ?? caller,
+            caller,
+            entitlement,
+            plan,
+            credit,
+            cap,
+            meter,
+            event_data,
+        } on arena;
+        const notes: Notifications = self.notifications;
+        self.round_event(event_value);
+        await notes.handle_event('cap-limit', event_value);
+        await <Event>.send('cap-limit', event_value);
+    }
+
+
+    /**
+     * Resolve a context (event data) argument: an obj, a Stof/JSON string, or anything else (null).
+     * Returns (obj, created) - drop the obj when created is true.
+     */
+    fn resolve_context(context: obj | str | bool = null) -> (obj, bool) {
+        if (typeof context == 'obj') return (context, false);
+        if (typeof context == 'str' && context.len() > 0) {
+            const ctx = new {};
+            try {
+                parse(context, ctx, 'stof');
+                return (ctx, true);
+            } catch {
+                drop(ctx);
+            }
+        }
+        (null, false)
+    }
+
+
+    // Estimates ---------------------------------------------------------------
+
+
+    /**
+     * The policy-wide estimate for an entitlement and segment (created when `create`).
+     */
+    fn policy_estimate(entitlement: str!, segment?: str, create: bool = false) -> Estimate {
+        const key = <Estimate>.key(segment);
+        if (self.estimates == null) {
+            if (!create) return null;
+            self.estimates = new {};
+        }
+        let bucket = self.estimates.get(entitlement);
+        if (bucket == null) {
+            if (!create) return null;
+            bucket = new {} on self.estimates;
+            self.estimates.insert(entitlement, bucket);
+        }
+        let est: Estimate = bucket.get(key);
+        if (est == null && create) {
+            est = new Estimate {} on bucket;
+            bucket.insert(key, est);
+        }
+        est
     }
 }

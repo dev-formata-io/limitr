@@ -49,6 +49,24 @@ Meter: {
 
 
     /**
+     * This meter's estimate for a segment (see Estimate.key), created when `create`.
+     */
+    fn estimate(segment?: str, create: bool = false) -> Estimate {
+        const key = <Estimate>.key(segment);
+        if (self.estimates == null) {
+            if (!create) return null;
+            self.insert('estimates', new {} on self);
+        }
+        let est: Estimate = self.estimates.get(key);
+        if (est == null && create) {
+            est = new Estimate {} on self.estimates;
+            self.estimates.insert(key, est);
+        }
+        est
+    }
+
+
+    /**
      * Room held by unexpired reservations, as (value, overhead).
      * `prune` drops expired holds (reads pass false so they never change the meter).
      */

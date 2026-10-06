@@ -21,7 +21,8 @@
 // concurrent calls can't overspend together. settle() records the actual usage (even past a hard
 // limit - it already happened) and learns from it; release() drops a hold; holds expire.
 // estimate() predicts a call from running statistics (per customer once there are enough samples,
-// else policy-wide), optionally per unit of a basis (Ex. input tokens) and per segment (Ex. a model).
+// else policy-wide), per unit of a basis when the entitlement declares one (estimate_basis, Ex. input
+// tokens) and per segment (estimate_segment or a segment argument, Ex. a model).
 //
 Limitr TestReservationsPolicy: {
     credits: {
@@ -49,6 +50,12 @@ Limitr TestReservationsPolicy: {
                 ai: { limit: { credit: 'ai_token', mode: 'soft', value: 1000000 } }
                 chat: { limit: { credit: 'tok', mode: 'soft', value: 1000000 } }
                 predicted: { limit: { credit: 'tok', mode: 'hard', value: 100 } } // only test_reserve_predicted learns this one
+                // estimates per input token, one per model (only test_declared_basis learns this one)
+                per_input: {
+                    estimate_basis: 'input'
+                    estimate_segment: 'model'
+                    limit: { credit: 'tok', mode: 'soft', value: 1000000 }
+                }
             }
         }
     }
@@ -235,15 +242,59 @@ Limitr TestReservationsPolicy: {
      */
     fn test_estimate_per_basis() {
         const est = new Estimate {};
-        assert(est.observe(300, 0.003, basis = 100));
-        assert(est.observe(600, 0.006, basis = 200));
-        assert_not(est.observe(50, 0));                        // per basis needs a basis
+        assert(est.observe(300, 0.003, basis = 100, per_basis = true));
+        assert(est.observe(600, 0.006, basis = 200, per_basis = true));
+        assert_not(est.observe(50, 0, per_basis = true));      // per basis needs a basis
         assert(est.per_basis);
+        assert_eq(est.samples, 2);
         const p = est.predict(1000, 0.5);
         assert_eq(p.get('value'), 3000);
         assert_eq(Num::round(p.get('overhead'), 9), 0.03);
         assert_null(est.predict());
+
+        // the entitlement stopped declaring a basis: earlier samples are in other units, so start over
+        assert(est.observe(50, 0));
+        assert_not(est.per_basis);
+        assert_eq(est.samples, 1);
+        assert_eq(est.value_mean, 50);
         drop(est);
+    }
+
+
+    #[test]
+    /**
+     * An entitlement that declares estimate_basis and estimate_segment learns from the call's event data:
+     * reserve() and settle() need nothing else.
+     */
+    fn test_declared_basis() {
+        const id = 'res_declared';
+        self.create_customer(id, 'p');
+        for (const i in [1, 2, 3, 4, 5]) {
+            const hold = self.reserve(id, 'per_input', 10, using new { model: 'm-1.5', input: 100 });
+            assert(self.settle(id, 'per_input', hold, 300, false));   // basis and segment come from the hold
+        }
+        const policy_wide = self.policy_estimate('per_input', 'm-1.5');
+        assert(policy_wide.per_basis);
+        assert_eq(policy_wide.samples, 5);
+
+        // 3 per input token, scaled by this call's input
+        const p = self.estimate(id, 'per_input', quantile = 0.5, context = using new { model: 'm-1.5', input: 200 });
+        assert_eq(p.get('value'), 600);
+        assert_eq(p.get('scope'), 'customer');
+        assert_null(self.estimate(id, 'per_input', context = using new { model: 'other', input: 200 })); // nothing learned
+        assert_null(self.estimate(id, 'per_input', context = using new { model: 'm-1.5' }));             // no basis
+
+        // a predicted hold sized by the call
+        const hold = self.reserve(id, 'per_input', null, using new { model: 'm-1.5', input: 50 });
+        assert_eq(self.held(id, 'per_input'), 150);
+        assert(self.settle(id, 'per_input', hold, 150, using new { model: 'm-1.5', input: 50, output: 0 }));
+        assert_eq(self.policy_estimate('per_input', 'm-1.5').samples, 6);
+
+        // a call without its basis can't be learned from (logged), but is still metered
+        assert_not(self.observe(id, 'per_input', 100, null, null, null, using new { model: 'm-1.5' }));
+        assert(self.settle(id, 'per_input', null, 100, using new { model: 'm-1.5' }));
+        assert_eq(self.value(id, 'per_input'), 1750);
+        assert_eq(self.policy_estimate('per_input', 'm-1.5').samples, 6);
     }
 
 
