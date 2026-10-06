@@ -7,104 +7,98 @@
         </picture>
     </a>
     <br>
-    <a href="https://limitr.dev"><img src="https://img.shields.io/badge/Limitr-Pricing%20Runtime-purple?logo=gitbook&logoColor=white"></a>
+    <a href="https://limitr.dev"><img src="https://img.shields.io/badge/Limitr-Monetization%20Layer-purple?logo=gitbook&logoColor=white"></a>
     <a href="https://github.com/dev-formata-io/limitr"><img src="https://img.shields.io/github/stars/dev-formata-io/limitr"></a>
     <a href="https://www.npmjs.com/package/@formata/limitr"><img src="https://img.shields.io/npm/d18m/%40formata%2Flimitr?label=npm%3A%40formata%2Flimitr&color=darkorange"></a>
     <a href="https://stof.dev"><img src="https://img.shields.io/badge/Stof-Data%20Runtime-darkgreen?logoColor=white"></a>
 </h1>
 
 <p align="center">
-    <em><b>Limitr</b> is an <b>in-process usage runtime</b> that decides what every <b>user</b> and <b>agent</b> is <b>allowed to do</b>, and what it <b>costs</b>.</em>
+    <em><b>Limitr</b> is open-source <b>usage-based billing</b> that runs inside your app: one policy decides what every customer can use, what it costs you, and what you charge, on every call.</em>
 </p>
 
-## Quickstart
+## Install
+
 ```bash
 npm i @formata/limitr
 ```
 
-```typescript
-// wasm runtime, works anywhere, no system dependencies
+Works in Node, Bun, Deno, and the browser. The engine is WebAssembly with no system dependencies, and every check
+runs in your process: no network call, no service to run.
+
+## Quick start
+
+```ts
 import { Limitr } from '@formata/limitr';
 
-// Tell Limitr what users can do, how much they have, and what you charge for it
-const policy = await Limitr.new(`policy: {
-  credits: {
-    claude_sonnet_5: { overhead_cost: 2e-6, price: { amount: 3e-6 } }
-  }
-  exchange: { euro: { value: 1.14, currency: 'usd' } }
-  plans: {
-    pro: {
-      entitlements: {
-        ai_chat: { limit: { credit: 'claude_sonnet_5', value: 10_000, resets: true } }
-      }
+const limitr = await Limitr.new(`
+policy: {
+    credits: {
+        ai_token: {
+            price: { amount: 0.00002 }      // you charge $20 per million tokens
+            overhead_cost: 0.000008         // the model costs you $8 per million
+        }
     }
-  }
-}}`);
+    plans: {
+        pro: {
+            default: true
+            entitlements: {
+                export_pdf: {}                                                   // a feature flag
+                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 1_000_000, resets: true, reset_sch: 'monthly:1' } }
+            }
+        }
+    }
+}`);
 
-// High-level observability & enforcement caps - credit grants, overages, credit exchanges, etc.
-await policy.startMarginMeasurement(userId, 'ai_pipeline', 'euro');
+limitr.addHandler('billing', (name, value) => {
+    if (name === 'meter-overage') console.log('bill it:', JSON.parse(value as string).overage_price);
+});
 
-// Enforce usage limits and block calls that you or users don't want to pay for
-if (await policy.allow(userId, 'ai_chat', tokens)) {
-  callLLM(prompt);
-} else {
-  alert('Limit hit, purchase more or wait');
+await limitr.ensureCustomer(userId);
+if (await limitr.allow(userId, 'chat', tokens)) {
+    // call the model
 }
-
-const { charged, costs, margin } = await policy.captureMarginMeasurement(userId, 'ai_pipeline');
-// User charged: €0.03 · Overhead cost: €0.04 · Pipeline Margin: -28.51%
 ```
 
-### Cloud
-> **Limitr Cloud** adds managed policies, alerting, billing & payment integrations, and per-customer/per-feature/per-vendor analytics on top of the same engine. [Learn more →](https://limitr.dev)
+- `allow` checks the customer's plan, limits, budgets, and credits, records the usage when the answer is yes, and
+  sends events (`meter-overage` above is the one to bill from).
+- The policy can be Stof (above), JSON, YAML, or TOML.
+- Create the engine once and keep it: it holds every customer's state in memory, which is why checks are fast. Save
+  customers to your database from the events and load them back on startup (`loadCustomers`).
 
-```typescript
-import { Limitr } from '@formata/limitr';
+## What's in it
 
-// Managed & always in-sync - no-code & versioned policy changes without redeploys
-// No network calls in any hot paths, just a web socket in the background
-const policy = await Limitr.cloud({ token });
+- **Limits:** feature flags, hard limits that deny, soft limits that bill overage, and observe-only limits, with
+  daily, monthly, or calendar resets.
+- **Pricing and margins:** prices and costs per credit, tiered and volume pricing, currencies, and the margin of every
+  call in its events.
+- **AI calls:** per-model cost functions in the policy, and `reserve` / `settle` to hold room before a call whose size
+  you only know afterwards, with estimates that learn from real usage.
+- **Customers:** plans, orgs and their users, seats counted on the org, per-customer overrides, and alternate IDs.
+- **Credits and budgets:** credit packs (top-ups) as grants, and spend caps per customer or shared across an org.
+- **Rate limits:** a governor on any limit, kept separate from what customers pay for.
 
-// Everything else stays the same
+## Learn
+
+- [Tutorial](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial): short, runnable chapters
+  from your first policy to production.
+- **Skills for AI coding agents** ship in this package, in `node_modules/@formata/limitr/skill/`: `limitr` (the
+  policy reference, every engine function, and every event) and `limitr-ts` (this API). Point Claude Code or any
+  other agent at them.
+- [Docs](https://limitr.dev/spec/welcome) and [limitr.dev](https://limitr.dev)
+
+## Limitr Cloud
+
+[Limitr Cloud](https://limitr.dev) runs the same engine with versioned policies you publish without a deploy,
+shared customer state, ledgers and invoicing, and usage, cost, and margin analytics.
+
+```ts
+const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
+// Everything else stays the same. Checks still run in your process; Cloud syncs in the background.
 ```
 
-## What Limitr Is
-
-Everything that used to live in scattered code, webhooks, and spreadsheets now lives in one place — a policy document that Limitr reads and uses to decide what every user and agent is allowed to do, and what it costs.
-
-Define plans, entitlements, credits, prices, overhead, and governance as a single config. Limitr manages user state, checks, and balances inside a local WebAssembly container.
-
-It's a fast, secure, and maintainable way to ship pricing and packaging for modern software.
-
-## Why It's Different
-
-- **Usage policy as config** — <em>a maintainable config document instead of custom code.</em>
-- **Native execution** — <em>executes 100% locally, in-process, event-driven, sandboxed, extensible, & flexible.</em>
-- **Hybrid models** — <em>any pricing model, in the same policy without having to choose.</em>
-- **Real per-user margins** — <em>maps vendor costs to your prices for margins computed on every request.</em>
-- **Credit exchange** — <em>define credit exchanges/rollups for credit burndown models & currency exchanges.</em>
-
-## Where This Came From
-
-[Stof](https://stof.dev) comes out of a decade spent building parametric and geometry formats for CAD and graphics systems.
-
-Limitr started as an internal Stof project while trying to control margins at the pace of AI model development and at the pace we now ship code.
-
-We really wanted a config that was easy to reason about and collaborate on, that when changed, our marketing sites, front-end apps, and backend services all enforce and reflect the new usage limits, packaging, and prices immediately, without redeploys & coordination.
-
-Friends wanted it available to them, and thus it's available to you, too.
-
-## Advanced & Enterprise
-
-Larger orgs, product, finance, sales, and engineering teams have requested a platform beyond embedded enforcement, where they can manage custom dealflow, product agility, and per-customer/vendor margin & analytics.
-
-If this describes you, your org, or your needs, [Limitr Cloud](https://limitr.dev) is for you.
-
-## Learn More
-
-- [Limitr Docs](https://limitr.dev) — install docs, the full spec, references, use-cases, and examples.
-- [GitHub Issues](https://github.com/dev-formata-io/limitr/issues) — bugs and feature requests
-- [Stof Data Runtime](https://stof.dev) — wasm data runtime at the core of Limitr
+A `Limitr.new` policy is fully sandboxed: no network, file, or environment access unless you allow it. A Cloud policy
+can only reach Limitr Cloud (`api.limitr.dev`) unless you pass `httpHosts`.
 
 ## License
 

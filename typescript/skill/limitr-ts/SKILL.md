@@ -24,6 +24,8 @@ npm i @formata/limitr
 ```
 
 The package depends on `@formata/stof` (0.10.4 or later for Limitr 0.7). Import only from `@formata/limitr`.
+It ships this skill and the limitr skill in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
+runnable examples is in the repo's `typescript/tutorial`.
 
 ## Create the engine
 
@@ -190,7 +192,8 @@ Customer records hold all state (meters, grants, caps, overrides). Without Cloud
 `difference(otherLimitr)` (a diff of two policies). For anything else, call the engine directly:
 `await limitr.docCall('policy.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
 registering host functions the policy can call (`limitr.doc.lib('App', 'name', fn)`) or allowing HTTP from the
-policy (`limitr.doc.allowHttp()`).
+policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any host).
+A `Limitr.new` policy is sandboxed: no network, file system, or environment access unless you add it.
 
 ## Limitr Cloud
 
@@ -200,7 +203,9 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 
 - Cloud sends the active policy (and updates to it), and customers on demand. Everything else is the same API.
 - Options: `policy` (an ID, or `'active'`), `connectTimeout` (5s), `denyUnconnected` (default true: deny `allow`
-  while disconnected, to protect shared state), `validate`.
+  while disconnected, to protect shared state), `validate`, `httpHosts`.
+- A Cloud policy can only reach Limitr Cloud (`api.limitr.dev`) over HTTP. `httpHosts` replaces that list
+  (Ex. `['api.limitr.dev', 'api.example.com']`); `true` allows any host and `false` none.
 - A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), and `ensureCustomer`
   creates it only when Cloud doesn't have it. `addVoucher(code)` redeems a Limitr voucher as a customer.
 - Call `await limitr.close()` on shutdown to flush pending updates.

@@ -15,7 +15,7 @@
 //
 
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
-import { limitrApi } from "./limitr.js";
+import { limitrEngine } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
 import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
@@ -45,6 +45,13 @@ export interface LimitrCloudInit {
 
     /** Validate the cloud policy once loaded (recommended and on by default)? */
     validate?: boolean;
+
+    /**
+     * Hosts the policy can reach over HTTP. Only Limitr Cloud (api.limitr.dev) by default.
+     * Pass a list to replace it (Ex. ['api.limitr.dev', 'api.example.com']), true for any host, or false for none.
+     * Limitr.new() policies have no network access unless you call limitr.doc.allowHttp(...).
+     */
+    httpHosts?: string[] | boolean;
 }
 
 
@@ -66,6 +73,9 @@ export class Limitr {
 
     /** Deny allows if cloud connection interrupted (recommended)? */
     denyUnconnected: boolean = true;
+
+    /** Hosts a Cloud policy can reach over HTTP (see LimitrCloudInit.httpHosts). */
+    protected cloudHttpHosts: string[] | boolean = ['api.limitr.dev'];
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
     protected wsTimeout?: ReturnType<typeof setTimeout>;
@@ -83,7 +93,7 @@ export class Limitr {
             console.warn('Warning: Limitr created before Stof initialization. Call await initStof() or use Limitr.new() instead.');
         }
         this.doc = new StofDoc();
-        this.doc.parse(limitrApi, 'bstf');
+        this.doc.parse(limitrEngine, 'bstf'); // the compiled engine (src/spec)
         this.doc.parse(policy, format);
         this.doc.sync_call('<Limitr>.load'); // root.policy becomes a Limitr (JSON, YAML, and TOML policies have no type)
     }
@@ -1119,6 +1129,7 @@ export class Limitr {
 
         const limitr = await Limitr.new();
         limitr.denyUnconnected = denyUnconnected;
+        if (typeof options !== 'string' && options.httpHosts !== undefined) limitr.cloudHttpHosts = options.httpHosts;
         const awaitInit = async () => {
             await new Promise<boolean>((resolve, reject) => {
                 const intervalMs = 50;
@@ -1393,7 +1404,9 @@ export class Limitr {
                             this.doc.sync_call('<Limitr>.load');
                             this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
                             this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
-                            this.doc.allowHttp(); // Http::fetch (Stof's built-in, backed by the JS fetch API)
+                            // Http::fetch (Stof's built-in, on the JS fetch API), limited to the allowed hosts
+                            if (this.cloudHttpHosts === true) this.doc.allowHttp();
+                            else if (this.cloudHttpHosts !== false) this.doc.allowHttp(this.cloudHttpHosts);
                             this.doc.lib('CloudWS', 'send', (data: string) => {
                                 this.wsSend(data);
                             });

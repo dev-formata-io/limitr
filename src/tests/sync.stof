@@ -62,6 +62,24 @@ SyncTests: {
 
     #[test]
     /**
+     * A BSTF update holding the same objects as this policy (Ex. Cloud resending a policy this engine loaded from
+     * Cloud) replaces plans and credits without emptying the policy.
+     */
+    fn test_update_policy_internals_same_objects() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.create_customer('sync_c3', 'p');
+        const update = blobify('bstf', holder);
+        policy.update_policy_internals(update, 'bstf');
+        assert_not_null(policy.plans.p);
+        assert_not_null(policy.credits.tok);
+        assert(policy.valid());
+        assert(policy.allow('sync_c3', 'a', 1, false));
+    }
+
+
+    #[test]
+    /**
      * A customer record from Cloud replaces the local one, with its alt IDs.
      */
     fn test_update_customer_internals() {

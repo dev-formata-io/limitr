@@ -91,7 +91,13 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
   holds, and estimate segments.
 - **Event data passed as an empty string** (`allow(..., event = '')`) gives a cost function a null context. Before,
   it was an empty object.
-- **TypeScript:** HTTP requests from the policy use Stof's `allowHttp()` instead of a custom fetch library.
+- **TypeScript:** HTTP requests from the policy use Stof's `allowHttp()` instead of a custom fetch library. A Cloud
+  policy can only reach Limitr Cloud (`api.limitr.dev`); `Limitr.cloud({ httpHosts })` changes the list (`true` for
+  any host, `false` for none). A `Limitr.new` policy has no network access unless you allow it
+  (`limitr.doc.allowHttp([...])`).
+- **TypeScript:** the compiled engine export is `limitrEngine` (was `limitrApi`), and the npm package ships the
+  `limitr` and `limitr-ts` skills in `skill/`. `typescript/tutorial` is a step-by-step tutorial with runnable
+  examples, and `content/limitr.zip` and `content/limitr-ts.zip` are the skills packaged for upload.
 
 ### Fixed
 
@@ -105,6 +111,9 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
   tiers), since it compared the objects by ID. They now match by value (Stof 0.10.4).
 - `difference_bstf` with an export of the same policy (or one loaded from the same BSTF) overwrote the policy's
   objects while diffing, leaving it empty. The export is now parsed as a copy (Stof 0.10.4).
+- `update_policy_internals(bstf, 'bstf')` with an update holding the same objects as the running policy (Ex. Cloud
+  resending a policy this engine loaded from Cloud) emptied the policy's plans and credits. It now replaces them
+  (Stof 0.10.4).
 
 ## 0.6.21
 

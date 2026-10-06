@@ -12,12 +12,14 @@
     },
     "files": [
         "dist",
+        "skill",
         "README.md",
         "LICENSE"
     ],
     "scripts": {
         "build": "tsc",
-        "prepublishOnly": "npm run build",
+        "skills": "cpy \"limitr/**\" ../typescript/skill/limitr --cwd=../skill",
+        "prepublishOnly": "npm run skills && npm run build",
         "clean": "rimraf dist"
     },
     "license": "Apache-2.0",
