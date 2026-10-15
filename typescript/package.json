@@ -1,6 +1,8 @@
 {
     "name": "@formata/limitr",
     "version": "0.7.0",
+    "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
+    "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",
     "main": "./dist/main.js",
     "types": "./dist/main.d.ts",
@@ -25,9 +27,13 @@
     "license": "Apache-2.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/dev-formata-io/limitr"
+        "url": "git+https://github.com/dev-formata-io/limitr.git",
+        "directory": "typescript"
     },
     "homepage": "https://limitr.dev",
+    "bugs": {
+        "url": "https://github.com/dev-formata-io/limitr/issues"
+    },
     "dependencies": {
         "@formata/stof": "^0.10.6"
     },
@@ -40,8 +46,14 @@
         "limitr",
         "pricing",
         "usage-based-pricing",
+        "usage-based-billing",
         "metering",
         "billing",
+        "monetization",
+        "credits",
+        "quotas",
+        "usage-limits",
+        "spend-caps",
         "rate-limiting",
         "entitlements",
         "feature-flags",
@@ -50,6 +62,8 @@
         "cost-tracking",
         "margin",
         "ai-cost-management",
+        "llm",
+        "token-metering",
         "stof"
     ]
 }
