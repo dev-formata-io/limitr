@@ -4,6 +4,16 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.7.1
+
+### Changed
+
+- **The npm package's README is the repository's README.** `npm run readme` (part of `prepublishOnly`) copies
+  `README.md` and `LICENSE` from the repository root into the package, so the two can't drift apart. The README was
+  rewritten, and the package now ships its license file.
+- **npm package details:** a description, author, issue tracker, the `typescript` directory in `repository`, and
+  more keywords.
+
 ## 0.7.0
 
 Dynamic provider costs, reservations with usage prediction, feature flags with per-customer access, and memory-safe

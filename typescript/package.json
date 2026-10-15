@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",
@@ -21,7 +21,8 @@
     "scripts": {
         "build": "tsc",
         "skills": "cpy \"limitr/**\" ../typescript/skill/limitr --cwd=../skill",
-        "prepublishOnly": "npm run skills && npm run build",
+        "readme": "cpy README.md LICENSE typescript --cwd=..",
+        "prepublishOnly": "npm run skills && npm run readme && npm run build",
         "clean": "rimraf dist"
     },
     "license": "Apache-2.0",
