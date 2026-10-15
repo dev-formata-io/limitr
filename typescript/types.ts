@@ -27,6 +27,10 @@ export interface LimitrCustomer {
     label: string;
     meters: Record<string, unknown>,
     overrides: Record<string, unknown>,
+    /** Entitlements given on top of the plan: entitlement -> { plan, expires_on }. */
+    given?: Record<string, { plan: string, expires_on: number | null }> | null,
+    /** Entitlements taken away, even though the plan has them: entitlement -> { expires_on }. */
+    taken?: Record<string, { expires_on: number | null }> | null,
     grants: Record<string, unknown>,
     metadata: Record<string, unknown> | null,
     

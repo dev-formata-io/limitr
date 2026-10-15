@@ -98,6 +98,8 @@ self.seats.limit.value = 10; }`.
 | `limit` | Limit | null | No limit: a feature flag. |
 | `scope` | str | null | Meter on the nearest customer of this type through refs (Ex. `'org'`). |
 | `hidden` | bool | false | |
+| `enabled` | bool, fn | (absent) | Whether it's on for a call, after plan, gives, and takes. Absent: on. A bool: everyone (`false` is a kill switch). A function `(customer: Customer, entitlement: str, context?: obj) -> bool`, inline (`fn enabled`) or a field pointing at a shared one (`enabled: <Rollouts>.x`). Only narrows; gates usage only; failing is off. |
+| `track` | bool | false | Send `feature-checked` each time it's checked (`check`, `allow`, `features`). |
 | `estimate_basis` | str | null | Event data field a call's size depends on (Ex. `'input'`). Estimates learn a fixed amount per call plus an amount per unit of it. Same in every plan. |
 | `estimate_segment` | str | null | Event data field that picks the estimate segment (Ex. `'model'`). Keep its values few. |
 
@@ -155,6 +157,8 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `refs` | list! | IDs of related customers (Ex. a user's team and org). |
 | `meters` | obj! | Entitlement -> `Meter`. |
 | `overrides` | obj! | Entitlement -> `Limit`. |
+| `given` | obj | Entitlement -> `{ plan, expires_on }`: given on top of the plan (`give_entitlement`). Null until the first. |
+| `taken` | obj | Entitlement -> `{ expires_on }`: taken even though the plan has it (`take_entitlement`). Null until the first. |
 | `grants` | obj! | Grant ID -> `Grant`. |
 | `caps` | obj! | Cap ID -> `Cap`. |
 | `metadata` | obj | Anything. `limitr_voucher*` fields are used by Cloud vouchers. |

@@ -1,0 +1,286 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Access tests: giving and taking entitlements per customer.
+//
+// give_entitlement() gives a customer an entitlement its plan doesn't have (or keeps one through a plan
+// change), using a plan's definition of it: entitlements can't be invented. take_entitlement() takes one
+// away even though the plan has it. restore_entitlement() undoes either. Both live on the customer, can
+// expire, and are inherited the way plans are: users on their org's plan get the org's gives and takes.
+// Limit overrides still apply on top, including to an entitlement with no limit (a feature flag).
+//
+Limitr TestAccessPolicy: {
+    credits: {
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        free: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 10 } }
+            }
+        }
+        pro: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 100 } }
+                sso: {}
+                export: { limit: { credit: 'req', mode: 'hard', value: 50 } }
+            }
+        }
+        enterprise: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 1000 } }
+                sso: {}
+                audit_log: {}
+            }
+        }
+        org_plan: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 100 } }
+                export: { limit: { credit: 'req', mode: 'hard', value: 50 } }
+            }
+        }
+    }
+
+
+    // customer id -> list of 'given:<entitlement>:<plan>', 'taken:<entitlement>', 'restored:<entitlement>'
+    map changes: map();
+
+
+    fn record(id: str, change: str) {
+        let seen = self.changes.get(id);
+        if (seen == null) {
+            seen = [];
+            self.changes.insert(id, seen);
+        }
+        seen.push_back(change);
+    }
+
+
+    #[customer-entitlement-given]
+    fn on_given(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        self.record(event.customer.id, `given:${event.entitlement}:${event.plan}`);
+    }
+
+
+    #[customer-entitlement-taken]
+    fn on_taken(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        self.record(event.customer.id, `taken:${event.entitlement}`);
+    }
+
+
+    #[customer-entitlement-restored]
+    fn on_restored(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        self.record(event.customer.id, `restored:${event.entitlement}`);
+    }
+
+
+    #[test]
+    /**
+     * A free customer gets SSO without changing plans: the definition comes from the closest plan that has it.
+     */
+    fn test_give_from_closest_plan() {
+        const id = 'acc_give';
+        self.create_customer(id, 'free');
+        assert_not(self.check(id, 'sso'));
+        assert(self.give_entitlement(id, 'sso'));
+        assert(self.check(id, 'sso'));
+        assert_eq(self.customer(id).given.sso.plan, 'pro');     // the first plan in the policy with sso
+        assert_eq(self.changes.get(id), ['given:sso:pro']);
+    }
+
+
+    #[test]
+    /**
+     * Giving from a named plan uses that plan's definition, even over the customer's own plan's.
+     */
+    fn test_give_from_named_plan() {
+        const id = 'acc_named';
+        self.create_customer(id, 'pro');
+        assert_eq(self.limit(id, 'api'), 100);
+        assert(self.give_entitlement(id, 'api', 'enterprise'));
+        assert_eq(self.limit(id, 'api'), 1000);
+        assert(self.give_entitlement(id, 'audit_log'));         // only enterprise has it
+        assert_eq(self.customer(id).given.audit_log.plan, 'enterprise');
+    }
+
+
+    #[test]
+    /**
+     * Entitlements can't be invented: only ones some plan defines can be given, and only from a plan that has it.
+     */
+    fn test_give_needs_a_plan() {
+        const id = 'acc_invent';
+        self.create_customer(id, 'free');
+        assert_not(self.give_entitlement(id, 'teleport'));
+        assert_not(self.give_entitlement(id, 'audit_log', 'pro'));  // pro doesn't have it
+        assert_not(self.give_entitlement(id, 'sso', 'nope'));       // no such plan
+        assert_not(self.give_entitlement('nobody', 'sso'));
+        assert_null(self.customer(id).given?.sso);
+        assert_null(self.changes.get(id));
+    }
+
+
+    #[test]
+    /**
+     * Taking an entitlement denies it even though the plan has it. Its meter is kept, so restoring picks up
+     * where it left off.
+     */
+    fn test_take_and_restore() {
+        const id = 'acc_take';
+        self.create_customer(id, 'pro');
+        assert(self.allow(id, 'export', 20, false));
+        assert(self.take_entitlement(id, 'export'));
+        assert(self.take_entitlement(id, 'sso'));
+        assert_not(self.check(id, 'sso'));
+        assert_not(self.check(id, 'export', 1));
+        assert_not(self.allow(id, 'export', 1, false));
+        assert_null(self.limit(id, 'export'));
+
+        assert(self.restore_entitlement(id, 'export'));
+        assert_not(self.restore_entitlement(id, 'export'));     // nothing left to restore
+        assert_eq(self.value(id, 'export'), 20);
+        assert(self.allow(id, 'export', 1, false));
+        assert_not(self.check(id, 'sso'));                       // still taken
+        assert_eq(self.changes.get(id), ['taken:export', 'taken:sso', 'restored:export']);
+    }
+
+
+    #[test]
+    /**
+     * The latest give or take of an entitlement replaces the one before.
+     */
+    fn test_give_and_take_replace() {
+        const id = 'acc_replace';
+        self.create_customer(id, 'free');
+        assert(self.give_entitlement(id, 'sso'));
+        assert(self.take_entitlement(id, 'sso'));
+        assert_not(self.check(id, 'sso'));
+        assert_null(self.customer(id).given.sso);
+        assert(self.give_entitlement(id, 'sso'));
+        assert(self.check(id, 'sso'));
+        assert_null(self.customer(id).taken.sso);
+    }
+
+
+    #[test]
+    /**
+     * Gives and takes can expire.
+     */
+    fn test_expiring_give_and_take() {
+        const id = 'acc_expire';
+        self.create_customer(id, 'pro');
+        assert(self.give_entitlement(id, 'audit_log', expires = Time::now() + 1hr));
+        assert(self.check(id, 'audit_log'));
+        assert(self.give_entitlement(id, 'audit_log', expires = Time::now() - 1ms));
+        assert_not(self.check(id, 'audit_log'));
+        assert_null(self.customer(id).given.audit_log);         // removed once expired
+
+        assert(self.take_entitlement(id, 'sso', Time::now() - 1ms));
+        assert(self.check(id, 'sso'));                           // an expired take is gone
+    }
+
+
+    #[test]
+    /**
+     * A give lives on the customer, so it stays through plan changes (Ex. keeping SSO after a downgrade).
+     */
+    fn test_give_survives_plan_change() {
+        const id = 'acc_downgrade';
+        self.create_customer(id, 'pro');
+        assert(self.give_entitlement(id, 'sso', 'pro'));
+        assert(self.set_customer_plan(id, 'free'));
+        assert(self.check(id, 'sso'));
+        assert_not(self.check(id, 'export'));
+    }
+
+
+    #[test]
+    /**
+     * An org's give or take reaches the users on its plan (they get their plan from it); a user's own give or
+     * take wins. A user on a plan of its own isn't affected, just as it doesn't get the org's plan.
+     */
+    fn test_org_reaches_users() {
+        self.create_customer('acc_org', 'org_plan', 'org', 'Acme');
+        self.create_customer('acc_user_a', '', 'user', 'A', ['acc_org']);
+        self.create_customer('acc_user_b', '', 'user', 'B', ['acc_org']);
+        assert_not(self.check('acc_user_a', 'sso'));
+
+        assert(self.give_entitlement('acc_org', 'sso'));
+        assert(self.check('acc_user_a', 'sso'));
+        assert(self.check('acc_user_b', 'sso'));
+
+        assert(self.take_entitlement('acc_org', 'export'));
+        assert_not(self.check('acc_user_a', 'export', 1));
+        assert(self.give_entitlement('acc_user_b', 'export'));  // the user's own give wins
+        assert(self.check('acc_user_b', 'export', 1));
+        assert_not(self.check('acc_user_a', 'export', 1));
+
+        const names = [];
+        for (const pair in self.customer_entitlements('acc_user_a')) names.push_back(pair[0]);
+        assert_eq(names, ['api', 'sso']);
+
+        self.create_customer('acc_user_own', 'pro', 'user', 'Own', ['acc_org']);
+        assert(self.check('acc_user_own', 'export', 1));       // its own plan: the org's take doesn't apply
+        assert(self.take_entitlement('acc_org', 'sso'));
+        assert(self.check('acc_user_own', 'sso'));
+        assert_not(self.check('acc_user_a', 'sso'));
+    }
+
+
+    #[test]
+    /**
+     * Overrides are limit definitions, so they work on given entitlements, and can give a feature flag
+     * (an entitlement with no limit) a limit for one customer. That needs a credit.
+     */
+    fn test_overrides_with_gives() {
+        const id = 'acc_override';
+        self.create_customer(id, 'free');
+        assert(self.give_entitlement(id, 'export'));
+        assert_not_null(self.create_customer_override(id, 'export', value = 2));
+        assert_eq(self.limit(id, 'export'), 2);
+        assert(self.allow(id, 'export', 2, false));
+        assert_not(self.allow(id, 'export', 1, false));
+
+        assert(self.give_entitlement(id, 'sso'));
+        assert_null(self.create_customer_override(id, 'sso', value = 3));            // no credit to meter it in
+        assert_not_null(self.create_customer_override(id, 'sso', credit = 'req', value = 3));
+        assert(self.allow(id, 'sso', 3, false));
+        assert_not(self.allow(id, 'sso', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * Gives and takes are customer state: a customer record from Cloud (or storage) carries them, and a
+     * record from before they existed still loads.
+     */
+    fn test_customer_record_round_trip() {
+        self.update_customer_internals('{ "id": "acc_synced", "plan": "free", "given": { "sso": { "plan": "pro" } }, "taken": { "api": {} } }');
+        assert(self.check('acc_synced', 'sso'));
+        assert_not(self.check('acc_synced', 'api', 1));
+
+        self.update_customer_internals('{ "id": "acc_old", "plan": "free" }');
+        assert(self.check('acc_old', 'api', 1));
+        assert(self.give_entitlement('acc_old', 'sso'));
+        assert(self.check('acc_old', 'sso'));
+    }
+}

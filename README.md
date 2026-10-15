@@ -89,7 +89,8 @@ if (await limitr.allow(userId, 'chat', tokens)) {
 ```
 
 The [tutorial](typescript/tutorial) walks through everything else in short, runnable chapters: limits and resets,
-hard and soft limits, pricing and margins, AI calls, seats, credit packs, spend caps, and running it in production.
+hard and soft limits, pricing and margins, AI calls, seats, credit packs, spend caps, running it in production, and
+feature flags.
 
 ## What you can build with it
 
@@ -98,7 +99,10 @@ hard and soft limits, pricing and margins, AI calls, seats, credit packs, spend 
 - **Prepaid credits:** credit packs with expiry, resets, and rollover, spent across features at their own rates.
 - **Org-level budgets and seats:** limits and caps shared by every user in a team or org.
 - **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.
-- **Custom deals:** per-customer limits and terms, with expiry, without a new plan for each one.
+- **Custom deals:** per-customer limits and terms, or a feature given or taken away, with expiry, without a new plan
+  for each one.
+- **Feature flags and rollouts:** kill switches, percentage rollouts, and per-call rules in the same policy as the
+  plans, with events to measure them.
 - **Billing events:** overage, limits hit, thresholds crossed, sent to your code as they happen.
 
 ## Open source and Limitr Cloud

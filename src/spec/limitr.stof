@@ -144,6 +144,11 @@ Limitr: {
         if (pair != null) {
             const customer = pair[0];
             const ent = pair[1];
+
+            // Is the entitlement on for this call (Ex. a rollout)? Only usage is gated: never a forced
+            // record of usage that already happened (settle) or a decrement.
+            if ((ent.enabled != null || ent.track == true) && !force && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, event_data)) return false;
+
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
             // get the credit & existing meter & cast value to credit units
@@ -570,6 +575,10 @@ Limitr: {
         if (pair != null) {
             const customer = pair[0];
             const ent = pair[1];
+
+            // Is the entitlement on for this call (Ex. a rollout)? Decrements aren't gated.
+            if ((ent.enabled != null || ent.track == true) && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, context)) return false;
+
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
             // get the credit & existing meter & cast value to credit units
@@ -1154,14 +1163,80 @@ Limitr: {
 
 
     /**
-     * Get a plan entitlement from either a customer ID or plan ID.
+     * Get an entitlement from either a plan ID or a customer ID.
+     * For a customer: none if it was taken, the given definition if it was given, otherwise its plan's.
      */
     fn entitlement(id: str!, entitlement: str!) -> Entitlement {
-        const pn: Plan = self.plan(id);
-        if (pn != null) {
-            return pn.entitlements.get(entitlement);
+        const plan: Plan = self.plans.get(id);
+        if (plan != null) return plan.entitlements.get(entitlement);
+
+        // Field reads, not calls: this runs on every call
+        let customer: Customer = self.customers.get(id);
+        if (customer == null) {
+            const alt = self.alt_customer_ids.get(id);
+            if (alt != null) customer = self.customers.get(alt);
         }
-        null
+        if (customer != null) {
+            const found = self.customer_access(customer, entitlement);
+            if (found[0]) return found[1];
+        }
+        self.default_plan()?.entitlements.get(entitlement)
+    }
+
+
+    /**
+     * A customer's entitlement, found the way its plan is: the customer's own give or take, else its plan,
+     * else (when it has no plan of its own) the same from each customer it refs, in order. So a customer that
+     * gets its plan from another (Ex. users on their org's plan) also gets that customer's gives and takes.
+     * Returns (found, entitlement): found is false when no give, take, or plan applies (the default plan does).
+     */
+    fn customer_access(customer: Customer!, entitlement: str!, depth: int = 0) -> (bool, Entitlement) {
+        if (customer.given != null || customer.taken != null) {
+            const change = customer.entitlement_change(entitlement);
+            if (change != null) {
+                if (change[0] == 'taken') return (true, null);
+                // The plan it was given from, or the closest plan that still has it (plans can change)
+                const from: Plan = self.plans.get(change[1].plan ?? '');
+                const ent = from?.entitlements.get(entitlement);
+                if (ent != null) return (true, ent);
+                return (true, self.closest_plan_with(customer, entitlement)?.entitlements.get(entitlement));
+            }
+        }
+        const plan: Plan = self.plans.get(customer.plan);
+        if (plan != null) return (true, plan.entitlements.get(entitlement));
+        if (depth < 8) for (const ref in customer.refs) { // the depth guard stops ref cycles
+            const other = self.customers.get(ref) ?? self.customer(ref);
+            if (other == null) continue;
+            const found = self.customer_access(other, entitlement, depth + 1);
+            if (found[0]) return found;
+        }
+        (false, null)
+    }
+
+
+    /**
+     * Every entitlement a customer has, as (name, Entitlement) pairs: its plan's, less any taken, plus any
+     * given (to it or a customer it refs). Null if there's no such customer.
+     */
+    fn customer_entitlements(customer_id: str!) -> list {
+        const customer = self.customer(customer_id);
+        if (customer == null) return null;
+        const names = [];
+        const plan = self.plan_for(customer_id);
+        if (plan != null) for (const pair in plan.entitlements.fields()) names.push_back(pair[0]);
+        const holders = [customer];
+        if (customer.refs.any()) for (const other in self.ref_customers(customer)) holders.push_back(other);
+        for (const holder in holders) {
+            if (holder.given != null) for (const pair in holder.given.fields()) {
+                if (!names.contains(pair[0])) names.push_back(pair[0]);
+            }
+        }
+        const out = [];
+        for (const name in names) {
+            const ent = self.entitlement(customer.id, name);
+            if (ent != null) out.push_back((name, ent));
+        }
+        out
     }
 
 
@@ -1440,6 +1515,7 @@ Limitr: {
 
         // get the entitlement limit (potentially overridden for a customer)
         // use these values for defaults if set
+        // (an entitlement with no limit, like a feature flag, can be given one: then it needs a credit)
         let existing_limit = ent.limit;
         const override: Limit = customer.overrides.get(entitlement);
         if (override != null) existing_limit = override;
@@ -1447,14 +1523,14 @@ Limitr: {
         // Create the limit
         if (reset_inc != null && reset_sch != null) return null; // mutually exclusive
         const limit = new Limit {
-            credit: credit ?? existing_limit.credit ?? '',
-            mode: mode ?? existing_limit.mode ?? 'hard',
-            value: value ?? existing_limit.value ?? 0,
-            increment: increment ?? existing_limit.increment ?? 0,
-            resets: resets ?? existing_limit.resets ?? false,
-            reset_inc: reset_inc ?? existing_limit.reset_inc,
-            reset_sch: reset_sch ?? existing_limit.reset_sch,
-            override_expires_on: expires ?? existing_limit.override_expires_on,
+            credit: credit ?? existing_limit?.credit ?? '',
+            mode: mode ?? existing_limit?.mode ?? 'hard',
+            value: value ?? existing_limit?.value ?? 0,
+            increment: increment ?? existing_limit?.increment ?? 0,
+            resets: resets ?? existing_limit?.resets ?? false,
+            reset_inc: reset_inc ?? existing_limit?.reset_inc,
+            reset_sch: reset_sch ?? existing_limit?.reset_sch,
+            override_expires_on: expires ?? existing_limit?.override_expires_on,
         };
 
         // Make sure a credit exists for this override (need to know what we're tracking)
@@ -1481,6 +1557,120 @@ Limitr: {
             return removed;
         }
         false
+    }
+
+
+    /**
+     * Give a customer an entitlement, whatever its plan says (Ex. SSO for one customer on the free plan, or
+     * keeping a feature through a downgrade). The entitlement must already exist in a plan: its definition
+     * comes from `plan`, or from the closest plan that has it (the customer's own plan, then the plans of the
+     * customers it refs, nearest first, then the policy's plans in order). Limit overrides still apply on top.
+     * Replaces an earlier give or take of the entitlement; `expires` ends it. False if no plan has it.
+     */
+    fn give_entitlement(customer_id: str!, entitlement: str!, plan?: str, expires?: ms) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer == null) return false;
+        let from: Plan = null;
+        if (plan != null) {
+            from = self.plans.get(plan);
+            if (from?.entitlements.get(entitlement) == null) return false;
+            from.name = plan;
+        } else {
+            from = self.closest_plan_with(customer, entitlement);
+            if (from == null) return false;
+        }
+        customer.give(entitlement, from.name, expires);
+        await <Event>.send('customer-set', customer);
+        await <Event>.send_tmp('customer-entitlement-given', new {
+            customer,
+            entitlement,
+            plan: from.name,
+            expires_on: expires,
+        });
+        true
+    }
+
+
+    /**
+     * Take an entitlement away from a customer, even though its plan (or a give) has it: every call for it
+     * is denied, like an entitlement the customer doesn't have. Replaces an earlier give or take of the
+     * entitlement; `expires` ends it. Meters and overrides are kept, so restoring picks up where it left off.
+     */
+    fn take_entitlement(customer_id: str!, entitlement: str!, expires?: ms) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer == null) return false;
+        customer.take(entitlement, expires);
+        await <Event>.send('customer-set', customer);
+        await <Event>.send_tmp('customer-entitlement-taken', new {
+            customer,
+            entitlement,
+            expires_on: expires,
+        });
+        true
+    }
+
+
+    /**
+     * Undo a give or take: the customer's plan decides again. False when there was neither.
+     */
+    fn restore_entitlement(customer_id: str!, entitlement: str!) -> bool {
+        const customer = self.customer(customer_id);
+        if (customer == null || !customer.restore(entitlement)) return false;
+        await <Event>.send('customer-set', customer);
+        await <Event>.send_tmp('customer-entitlement-restored', new {
+            customer,
+            entitlement,
+        });
+        true
+    }
+
+
+    /**
+     * The entitlements a customer can use right now, by name: its plan's, less any taken, plus any given,
+     * that are on for this call (`enabled`, with `context` as the call's event data). It's about access: a
+     * metered entitlement is listed even when its limit is used up (check() answers that). Sends
+     * feature-checked for tracked entitlements. Null if there's no such customer.
+     */
+    fn features(id: str!, context: obj | str = null) -> list {
+        const pairs = self.customer_entitlements(id);
+        if (pairs == null) return null;
+        const ctx = self.resolve_context(context);
+        using parsed_context = ctx[1] ? ctx[0] : null;
+        const names = [];
+        for (const pair in pairs) {
+            const name = pair[0];
+            const found = self.customer_entitlement(id, name); // the customer it belongs to (Ex. the org)
+            if (found == null) continue;
+            const ent: Entitlement = found[1];
+            if ((ent.enabled != null || ent.track == true) && !self.entitlement_on(found[0], id, name, ent, ctx[0])) continue;
+            names.push_back(name);
+        }
+        names
+    }
+
+
+    /**
+     * The closest plan that defines an entitlement, for a customer: its own plan, then the plans of the
+     * customers it refs (nearest first), then the policy's plans in order. Null if no plan has it.
+     */
+    fn closest_plan_with(customer: Customer!, entitlement: str!) -> Plan {
+        const own = self.plan_for(customer.id);
+        if (own?.entitlements.get(entitlement) != null) return own;
+        for (const other in self.ref_customers(customer)) {
+            const plan: Plan = self.plans.get(other.plan);
+            if (plan?.entitlements.get(entitlement) != null) {
+                plan.name = other.plan;
+                return plan;
+            }
+        }
+        for (const pair in self.plans.fields()) {
+            const plan: Plan = pair[1];
+            if (plan.entitlements.get(entitlement) != null) {
+                plan.name = pair[0];
+                return plan;
+            }
+        }
+        null
     }
 
 
@@ -1890,7 +2080,7 @@ Limitr: {
         let cost: float = 0;
         let revenue: float = 0;
         const entitlements_map: map = map();
-        for (const pair in plan.entitlements.fields()) {
+        for (const pair in self.customer_entitlements(customer_id)) { // the plan's, less taken, plus given
             const name = pair[0];
             const ent: Entitlement = pair[1];
             const meter: Meter = customer.meters.get(name);
@@ -2535,6 +2725,29 @@ Limitr: {
                 if (typeof pair[1] == 'float') target.insert(pair[0], Num::round(pair[1], 9));
             }
         }
+    }
+
+
+    /**
+     * Is an entitlement on for a call (its `enabled`)? Sends feature-checked when the entitlement is tracked.
+     * `customer` is the one the entitlement belongs to for the call, `caller_id` the customer the call is for.
+     */
+    fn entitlement_on(customer: Customer!, caller_id: str!, entitlement: str!, ent: Entitlement!, context?: obj) -> bool {
+        const on = ent.enabled_for(customer, entitlement, context);
+        if (ent.track == true) {
+            using event_value = new {
+                customer,
+                caller: self.customer(caller_id) ?? customer,
+                entitlement,
+                enabled: on,
+                plan: self.plan_for(caller_id)?.name,
+                event_data: context,
+            };
+            const notes: Notifications = self.notifications;
+            await notes.handle_event('feature-checked', event_value);
+            await <Event>.send('feature-checked', event_value);
+        }
+        on
     }
 
 

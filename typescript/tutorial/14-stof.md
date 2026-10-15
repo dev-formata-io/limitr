@@ -88,4 +88,4 @@ in another (your code, a billing service), and the two drift apart. Stof keeps t
 To go further, [stof.dev](https://stof.dev) has the language guide and a playground where you can paste a policy and
 run Stof in your browser.
 
-Back to the [table of contents](README.md).
+Next: [Feature flags and custom deals](15-feature-flags.md)

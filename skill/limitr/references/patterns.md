@@ -13,6 +13,48 @@ plans: {
 }
 ```
 
+## Rollouts, kill switches, and experiments
+
+`enabled` narrows a flag (or any entitlement) per call; `track: true` measures it. Keep shared rules in a type:
+
+```stof
+#[type]
+Rollouts: {
+    #[static]
+    /// The beta (customer metadata), plus a share of everyone else that grows with `percent`.
+    fn share(customer: Customer, entitlement: str, percent: int) -> bool {
+        (customer.metadata?.beta ?? false) || customer.bucket(entitlement) < percent
+    }
+
+    #[static]
+    fn quarter(customer: Customer, entitlement: str, context?: obj) -> bool {
+        <Rollouts>.share(customer, entitlement, 25)
+    }
+}
+
+plans: {
+    pro: {
+        entitlements: {
+            ai_assistant: { enabled: <Rollouts>.quarter, track: true }
+            old_editor: { enabled: false }              // kill switch
+            new_checkout: {
+                fn enabled(customer: Customer, entitlement: str, context?: obj) -> bool {
+                    context?.country == 'US'            // from the call's event data
+                }
+            }
+        }
+    }
+}
+```
+
+- **Widen a rollout** by raising the number: everyone already in stays in. Each entitlement name buckets
+  independently, so the same customers aren't first for everything.
+- **An A/B test** is a rollout at 50 with `track: true`: `feature-checked` says who saw which side, and meter events
+  say what they did next.
+- **Per-customer targeting** (a beta, a design partner) goes in customer metadata, which the rule reads.
+- **Front end:** send `features(id, context)` to the browser; it lists what the customer can use right now.
+- A rule only narrows. To give a feature outside the plan, give the entitlement (below).
+
 ## Seats on the org
 
 Meter seats on the org, whatever customer calls. Users ref their org.
@@ -177,6 +219,12 @@ calls made by users.
   temporary override: `create_customer_override(id, 'chat', Time::now() + 14days, null, null, 1_000_000)`.
 - **Custom deal:** a permanent override for one customer (`value`, `mode`, or reset schedule), or a hidden plan
   (`hidden: true`) for a group of customers.
+- **A feature outside the plan:** `give_entitlement(id, 'sso')` (from the closest plan with it) or
+  `give_entitlement(id, 'api', 'enterprise')` (that plan's limit). Add `expires` for a trial of a higher plan's
+  feature. Overrides still apply on top.
+- **Keep a feature through a downgrade:** give it before `set_customer_plan`; gives are stored on the customer.
+- **Pause one feature** (abuse, unpaid invoice): `take_entitlement(id, 'exports')`, then `restore_entitlement`.
+  Usage so far is kept. On an org, it applies to the users on the org's plan.
 
 ## Soft limits with a spend ceiling
 

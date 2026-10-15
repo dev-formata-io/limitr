@@ -74,7 +74,10 @@ if (await limitr.allow(userId, 'chat', tokens)) {
   call in its events.
 - **AI calls:** per-model cost functions in the policy, and `reserve` / `settle` to hold room before a call whose size
   you only know afterwards, with estimates that learn from real usage.
-- **Customers:** plans, orgs and their users, seats counted on the org, per-customer overrides, and alternate IDs.
+- **Customers:** plans, orgs and their users, seats counted on the org, per-customer overrides, features given or
+  taken per customer, and alternate IDs.
+- **Feature flags:** kill switches, percentage rollouts, and per-call rules on any entitlement, `features()` for the
+  front end, and events to measure a rollout.
 - **Credits and budgets:** credit packs (top-ups) as grants, and spend caps per customer or shared across an org.
 - **Rate limits:** a governor on any limit, kept separate from what customers pay for.
 

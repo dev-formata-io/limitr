@@ -1,0 +1,325 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Feature flag tests: an entitlement's optional `enabled`.
+//
+// `enabled` decides whether an entitlement is on for a call, after the customer's plan, gives, and takes:
+// absent (on), a bool (a kill switch), or a function (customer, entitlement, context?) -> bool, inline or
+// pointing at a shared one. It only narrows, and only gates usage: check(), allow(), and reserve(), never
+// a settle() of usage that already happened or a decrement. customer.bucket(key) gives each customer a
+// stable 0-99 number per key for percentage rollouts. features() lists what a customer can use right now,
+// and `track: true` sends a feature-checked event (with whether it was on) each time one is checked.
+//
+
+#[type]
+/**
+ * Rollout rules shared by several entitlements.
+ */
+FlagHelpers: {
+    #[static]
+    /// On for customers in the beta (their metadata says so), and for half of everyone else.
+    fn beta_or_half(customer: Customer, entitlement: str, context?: obj) -> bool {
+        (customer.metadata?.beta ?? false) || customer.bucket(entitlement) < 50
+    }
+
+    #[static]
+    /// Off everywhere in the EU for now.
+    fn not_in_eu(customer: Customer, entitlement: str, context?: obj) -> bool {
+        context?.region != 'eu'
+    }
+}
+
+
+Limitr TestFlagsPolicy: {
+    credits: {
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        p: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 100 } }
+                killed: { enabled: false, limit: { credit: 'req', mode: 'hard', value: 100 } }
+                on: { enabled: true }
+                regional: {
+                    fn enabled(customer: Customer, entitlement: str, context?: obj) -> bool {
+                        context?.region != 'eu'
+                    }
+                }
+                regional_api: { enabled: <FlagHelpers>.not_in_eu, limit: { credit: 'req', mode: 'hard', value: 100 } }
+                rollout_a: { enabled: <FlagHelpers>.beta_or_half }
+                rollout_b: { enabled: <FlagHelpers>.beta_or_half }
+                broken: {
+                    fn enabled(customer: Customer, entitlement: str, context?: obj) -> bool {
+                        context?.count * 2 > 1      // null arithmetic: an error
+                    }
+                }
+                switchable: { enabled: true, limit: { credit: 'req', mode: 'hard', value: 100 } }
+                org_feature: {
+                    scope: 'org'
+                    fn enabled(customer: Customer, entitlement: str, context?: obj) -> bool {
+                        customer.type == 'org'
+                    }
+                }
+            }
+        }
+        other: {
+            entitlements: {
+                beta_only: { enabled: true }
+                given_killed: { enabled: false }
+            }
+        }
+        site: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 1 } }
+                dark_mode: {}
+                old_editor: { enabled: false }
+                eu_checkout: { enabled: <FlagHelpers>.not_in_eu }
+                ai_assistant: { track: true, enabled: <FlagHelpers>.beta_or_half }
+                tracked_on: { track: true }
+            }
+        }
+    }
+
+
+    // caller id -> list of '<entitlement>:<on|off>' from feature-checked events
+    map checked: map();
+
+
+    #[feature-checked]
+    fn on_feature_checked(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        const id = event.caller.id;
+        let seen = self.checked.get(id);
+        if (seen == null) {
+            seen = [];
+            self.checked.insert(id, seen);
+        }
+        seen.push_back(`${event.entitlement}:${event.enabled ? 'on' : 'off'}`);
+    }
+
+
+    #[test]
+    /**
+     * A policy with conditions is valid, and an entitlement with none is on as before.
+     */
+    fn test_flags_policy_valid() {
+        assert(self.valid());
+        self.create_customer('flg_valid', 'p');
+        assert(self.check('flg_valid', 'api', 1));
+        assert(self.check('flg_valid', 'on'));
+    }
+
+
+    #[test]
+    /**
+     * `enabled: false` turns an entitlement off for everyone: nothing is allowed or metered.
+     */
+    fn test_kill_switch() {
+        const id = 'flg_kill';
+        self.create_customer(id, 'p');
+        assert_not(self.check(id, 'killed'));
+        assert_not(self.check(id, 'killed', 1));
+        assert_not(self.allow(id, 'killed', 1, false));
+        assert_null(self.reserve(id, 'killed', 1));
+        assert_eq(self.value(id, 'killed'), 0);
+    }
+
+
+    #[test]
+    /**
+     * An inline condition reads the call's event data, the same way a shared one does.
+     */
+    fn test_conditions_read_the_call() {
+        const id = 'flg_region';
+        self.create_customer(id, 'p');
+        assert(self.check(id, 'regional', context = using new { region: 'us' }));
+        assert_not(self.check(id, 'regional', context = using new { region: 'eu' }));
+        assert(self.check(id, 'regional'));                                             // no context: not in the EU
+
+        assert(self.allow(id, 'regional_api', 1, using new { region: 'us' }));
+        assert_not(self.allow(id, 'regional_api', 1, using new { region: 'eu' }));
+        assert_eq(self.value(id, 'regional_api'), 1);
+    }
+
+
+    #[test]
+    /**
+     * One shared rule serves several entitlements: it's told which one, so each rolls out to a different half.
+     * Customers in the beta always have both.
+     */
+    fn test_shared_rollout() {
+        let a = 0;
+        let b = 0;
+        let both = 0;
+        for (const i in 40) {
+            const id = `flg_roll_${i}`;
+            self.create_customer(id, 'p');
+            const in_a = self.check(id, 'rollout_a');
+            const in_b = self.check(id, 'rollout_b');
+            if (in_a) a += 1;
+            if (in_b) b += 1;
+            if (in_a && in_b) both += 1;
+            assert_eq(in_a, self.customer(id).bucket('rollout_a') < 50);    // the same answer every time
+        }
+        assert(a > 10 && a < 30);
+        assert(b > 10 && b < 30);
+        assert(both < a && both < b);                                       // not the same customers
+
+        self.create_customer('flg_beta', 'p', metadata = '{ "beta": true }');
+        assert(self.check('flg_beta', 'rollout_a'));
+        assert(self.check('flg_beta', 'rollout_b'));
+    }
+
+
+    #[test]
+    /**
+     * Buckets are stable, spread evenly, and differ per key. Raising a rollout keeps everyone already in it.
+     */
+    fn test_buckets() {
+        let quarter = 0;
+        let same = 0;
+        for (const i in 1000) {
+            using customer = new Customer { id: `cus_${i}` };
+            const bucket = customer.bucket('ai_assistant');
+            assert(bucket >= 0 && bucket < 100);
+            assert_eq(bucket, customer.bucket('ai_assistant'));
+            if (bucket < 25) quarter += 1;
+            if (bucket == customer.bucket('bulk_export')) same += 1;
+        }
+        assert(quarter > 200 && quarter < 300);   // about 25%
+        assert(same < 25);                        // each key splits customers its own way (about 1% match)
+
+        // FNV-1a then fmix32, of '<key>:<customer id>', modulo 100: a server can compute the same number
+        assert_eq(<Customer>.hash(''), 2872998923);
+        assert_eq(<Customer>.hash('a'), 444641715);
+        assert_eq(<Customer>.hash('foobar'), 202221276);
+        assert_eq(<Customer>.hash('beta:é✓'), 1799836211);
+        using known = new Customer { id: 'cus_123' };
+        assert_eq(known.bucket('ai_assistant'), 2);   // hash('ai_assistant:cus_123') = 2186231802
+    }
+
+
+    #[test]
+    /**
+     * Conditions only narrow: they can't give an entitlement the customer doesn't have, or undo a take,
+     * and a kill switch also stops a given entitlement.
+     */
+    fn test_conditions_only_narrow() {
+        const id = 'flg_narrow';
+        self.create_customer(id, 'p');
+        assert_not(self.check(id, 'beta_only'));            // enabled: true, but not on the customer's plan
+        assert(self.take_entitlement(id, 'on'));
+        assert_not(self.check(id, 'on'));                   // enabled: true, but taken
+        assert(self.give_entitlement(id, 'given_killed'));
+        assert_not(self.check(id, 'given_killed'));         // given, but switched off for everyone
+    }
+
+
+    #[test]
+    /**
+     * A condition that fails counts as off (and is logged).
+     */
+    fn test_failing_condition_is_off() {
+        const id = 'flg_broken';
+        self.create_customer(id, 'p');
+        assert_not(self.check(id, 'broken'));
+    }
+
+
+    #[test]
+    /**
+     * Only new usage is gated: switching a feature off mid-call still settles the call, and decrements
+     * still work.
+     */
+    fn test_only_usage_is_gated() {
+        const id = 'flg_settle';
+        self.create_customer(id, 'p');
+        const ent = self.plans.p.entitlements.switchable;
+        const hold = self.reserve(id, 'switchable', 10);
+        assert_not_null(hold);
+        ent.enabled = false;
+        assert_not(self.check(id, 'switchable', 1));
+        assert(self.settle(id, 'switchable', hold, 10, false));   // it already happened
+        assert_eq(self.value(id, 'switchable'), 10);
+        assert(self.allow(id, 'switchable', -4, false));          // a refund
+        assert_eq(self.value(id, 'switchable'), 6);
+        ent.enabled = true;
+        assert(self.check(id, 'switchable', 1));
+    }
+
+
+    #[test]
+    /**
+     * An org-scoped entitlement's condition gets the org, the customer it belongs to for the call.
+     */
+    fn test_scoped_condition_gets_the_org() {
+        self.create_customer('flg_org', 'p', 'org', 'Acme');
+        self.create_customer('flg_member', '', 'user', 'Member', ['flg_org']);
+        assert(self.check('flg_member', 'org_feature'));
+    }
+
+
+    #[test]
+    /**
+     * features() lists what a customer can use right now: its plan's entitlements, less taken, plus given,
+     * that are on for the call. A metered entitlement stays listed when its limit is used up.
+     */
+    fn test_features() {
+        const id = 'flg_features';
+        self.create_customer(id, 'site', metadata = '{ "beta": true }');
+        assert(self.allow(id, 'api', 1, false));
+        assert_not(self.check(id, 'api', 1));                      // used up, still a feature
+        assert_eq(self.features(id), ['api', 'dark_mode', 'eu_checkout', 'ai_assistant', 'tracked_on']);
+        assert_eq(self.features(id, using new { region: 'eu' }), ['api', 'dark_mode', 'ai_assistant', 'tracked_on']);
+        assert_eq(self.features(id, '{ "region": "eu" }'), ['api', 'dark_mode', 'ai_assistant', 'tracked_on']);
+
+        assert(self.take_entitlement(id, 'dark_mode'));
+        assert(self.give_entitlement(id, 'beta_only'));
+        assert_eq(self.features(id), ['api', 'eu_checkout', 'ai_assistant', 'tracked_on', 'beta_only']);
+        assert_null(self.features('nobody'));
+    }
+
+
+    #[test]
+    /**
+     * A tracked entitlement sends feature-checked each time it's checked, on or off; others send nothing.
+     */
+    fn test_feature_checked_events() {
+        self.create_customer('flg_track_beta', 'site', metadata = '{ "beta": true }');
+        assert(self.check('flg_track_beta', 'ai_assistant'));
+        assert(self.check('flg_track_beta', 'dark_mode'));            // not tracked
+        assert(self.allow('flg_track_beta', 'tracked_on', 0, false));
+        self.features('flg_track_beta');
+        assert_eq(self.checked.get('flg_track_beta'), ['ai_assistant:on', 'tracked_on:on', 'ai_assistant:on', 'tracked_on:on']);
+
+        // someone outside the rollout: the event says it was off
+        let outside = null;
+        for (const i in 40) {
+            const id = `flg_track_${i}`;
+            self.create_customer(id, 'site');
+            if (self.customer(id).bucket('ai_assistant') >= 50) {
+                outside = id;
+                break;
+            }
+        }
+        assert_not_null(outside);
+        assert_not(self.check(outside, 'ai_assistant'));
+        assert_eq(self.checked.get(outside), ['ai_assistant:off']);
+    }
+}

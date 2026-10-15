@@ -15,12 +15,15 @@ arguments: `policy.add_customer_cap('org_1', 50, id = 'monthly', resets = true, 
 |---|---|---|
 | `allow(id, entitlement, value = 0, event = true, cap = null, overhead?, force = false)` | bool | Decide and meter. See SKILL.md. |
 | `check(id, entitlement, value = 0, cap = null, context = null, overhead?)` | bool | Same decision, no changes. |
+| `features(id, context = null)` | list | Entitlement names the customer can use now (plan, less taken, plus given, `enabled`). Access, not capacity. Null if no customer. |
 | `increment(id, entitlement, event = true, cap = null)` | bool | `allow` with the limit's `increment`. |
 | `decrement(id, entitlement, event = true, cap = null)` | bool | `allow` with minus the increment. |
 | `check_increment(id, entitlement, cap = null)` / `check_decrement(...)` | bool | |
 
 `value` can be a string with units. `event` is true, false, an object, or a Stof/JSON string (event data and cost
 function context). `cap` is a `Cap` or a map of credit to ceiling. `overhead` is the actual cost in runes.
+`check`, `allow` (unless `force`), and `features` apply an entitlement's `enabled` rule to usage (value >= 0) and
+send `feature-checked` for `track: true` entitlements.
 
 ## Reservations and estimates
 
@@ -51,7 +54,8 @@ These meter nothing and show the current period (0 after a pending reset).
 | `rate(id, entitlement)` / `acceleration(...)` | float | Consumption per ms, and its change. |
 | `projected_exhaustion(id, entitlement, smoothed = false, grants = true)` | ms | When the limit is reached at the current rate, or null. |
 | `meter_obj(id, entitlement)` / `limit_obj(...)` | Meter / Limit | The live objects (scope and overrides resolved). Don't mutate. |
-| `entitlement(id, entitlement)` | Entitlement | `id` can be a plan. |
+| `entitlement(id, entitlement)` | Entitlement | For a customer: as it has it (gives and takes resolved, `enabled` not applied). `id` can be a plan. |
+| `customer_entitlements(id)` | list | `(name, Entitlement)` pairs the customer has (plan, less taken, plus given). |
 | `credit(id)` / `credit_for(id, entitlement)` | Credit | |
 | `credit_exchange(in, out, value = 1)` | float | Convert between credits and currencies. |
 | `credit_remaining(customer_id, credit)` | float | Grant balance in `credit` (other credits converted). |
@@ -69,6 +73,10 @@ These meter nothing and show the current period (0 after a pending reset).
 | `set_alt_customer_id(id, alt, event = true)` / `delete_alt_customer_id(alt, event = true)` | bool | |
 | `create_customer_override(id, entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)` | Limit | Per-customer limit. Unset fields copy the current limit. |
 | `remove_customer_override(id, entitlement)` | bool | |
+| `give_entitlement(id, entitlement, plan?, expires?)` | bool | Give an entitlement whatever the plan says, defined by `plan` or the closest plan that has it. False if no plan has it. |
+| `take_entitlement(id, entitlement, expires?)` | bool | Deny it even though the plan has it. Meters and overrides are kept. |
+| `restore_entitlement(id, entitlement)` | bool | Undo a give or take. False when there was neither. |
+| `closest_plan_with(customer, entitlement)` | Plan | The plan a give without `plan` uses. |
 | `apply_customer_topup(id, topup)` | bool | Grant a plan topup (after the customer paid for it). |
 | `ensure_included_topups(id, event = true)` | | Create grants for `included` topups now. |
 | `ensure_plan_subscription(id)` | bool | Charge the plan's subscription entitlement once (after the trial). |

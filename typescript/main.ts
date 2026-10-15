@@ -546,6 +546,35 @@ export class Limitr {
 
 
     /**
+     * Give a customer an entitlement, whatever its plan says (Ex. SSO for one customer on the free plan, or
+     * keeping a feature through a downgrade). It must already exist in a plan: the definition comes from
+     * `plan`, or from the closest plan that has it. Limit overrides still apply on top. Customers on this
+     * customer's plan through refs (Ex. an org's users) get it too. `expiresOn` (ms) ends it.
+     * False if no plan has the entitlement.
+     */
+    async giveEntitlement(customer: string, entitlement: string, plan?: string, expiresOn?: number): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.give_entitlement', customer, entitlement, plan ?? null, expiresOn ?? null)) as boolean;
+    }
+
+
+    /**
+     * Take an entitlement away from a customer, even though its plan (or a give) has it. Meters and overrides
+     * are kept, so restoring picks up where it left off. `expiresOn` (ms) ends it.
+     */
+    async takeEntitlement(customer: string, entitlement: string, expiresOn?: number): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.take_entitlement', customer, entitlement, expiresOn ?? null)) as boolean;
+    }
+
+
+    /**
+     * Undo a give or take: the customer's plan decides again. False when there was neither.
+     */
+    async restoreEntitlement(customer: string, entitlement: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.restore_entitlement', customer, entitlement)) as boolean;
+    }
+
+
+    /**
      * Apply a plan topup to a customer.
      * Creates a credit grant from a topup (by name) if found on this customer's plan.
      */
@@ -1007,6 +1036,19 @@ export class Limitr {
         if (!await this.cloudPreCheckContinue(customer)) return false;
         const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
         return await this.gate.run(() => this.doc.call('policy.check', customer, entitlement, value, null, ctx, overhead ?? null)) as boolean;
+    }
+
+
+    /**
+     * The entitlements a customer can use right now, by name: its plan's, less any taken, plus any given, that are
+     * on for this call (each entitlement's optional `enabled` rule, with `context` as the call's event data).
+     * It's about access: a metered entitlement is listed even when its limit is used up (`check` answers that).
+     * Ex. send the list to your front end to decide what to show. Null if there's no such customer.
+     */
+    async features(customer: string, context?: string | Record<string, unknown>): Promise<string[] | null> {
+        if (!await this.cloudPreCheckContinue(customer)) return null;
+        const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
+        return await this.gate.run(() => this.doc.call('policy.features', customer, ctx)) as string[] | null;
     }
 
 

@@ -45,6 +45,14 @@ Customer: {
     /// Override limits (entitlement -> Limit).
     obj! overrides: {};
 
+    /// Entitlements given to this customer on top of its plan: entitlement -> { plan, expires_on }.
+    /// `plan` is the plan whose definition of the entitlement is used. Null until the first give.
+    obj given: null;
+
+    /// Entitlements taken from this customer, even when its plan (or a give) has them:
+    /// entitlement -> { expires_on }. Null until the first take.
+    obj taken: null;
+
     /// Credit grants.
     obj! grants: {};
 
@@ -63,6 +71,112 @@ Customer: {
         self.overrides.remove(entitlement, shallow = false);
         self.overrides.insert(entitlement, limit);
         limit.move(self.overrides);
+    }
+
+
+    /**
+     * Give an entitlement (its definition from `plan`), replacing an earlier give or take of it.
+     */
+    fn give(entitlement: str!, plan: str!, expires?: ms) {
+        self.restore(entitlement);
+        if (self.given == null) self.insert('given', new {} on self);
+        self.given.insert(entitlement, new { plan, expires_on: expires } on self.given);
+    }
+
+
+    /**
+     * Take an entitlement away, replacing an earlier give or take of it.
+     */
+    fn take(entitlement: str!, expires?: ms) {
+        self.restore(entitlement);
+        if (self.taken == null) self.insert('taken', new {} on self);
+        self.taken.insert(entitlement, new { expires_on: expires } on self.taken);
+    }
+
+
+    /**
+     * Undo a give or take of an entitlement (back to what the plan says). False when there was neither.
+     */
+    fn restore(entitlement: str!) -> bool {
+        const had_given = self.given?.remove(entitlement, shallow = false) ?? false;
+        const had_taken = self.taken?.remove(entitlement, shallow = false) ?? false;
+        had_given || had_taken
+    }
+
+
+    /**
+     * This customer's give or take of an entitlement, as ('given', { plan, expires_on }) or ('taken', null).
+     * Null when there's neither (or it expired). Cheap when there are none: it runs on every call.
+     */
+    fn entitlement_change(entitlement: str!) -> (str, obj) {
+        if (self.taken != null && self.taken.get(entitlement) != null && self.taken_entitlement(entitlement)) return ('taken', null);
+        if (self.given == null || self.given.get(entitlement) == null) return null;
+        const given = self.given_entitlement(entitlement);
+        given != null ? ('given', given) : null
+    }
+
+
+    /**
+     * The give of an entitlement ({ plan, expires_on }), or null. An expired one is removed.
+     */
+    fn given_entitlement(entitlement: str!) -> obj {
+        const given = self.given?.get(entitlement);
+        if (given != null && given.expires_on != null && Time::now() >= given.expires_on) {
+            self.given.remove(entitlement, shallow = false);
+            return null;
+        }
+        given
+    }
+
+
+    /**
+     * Was an entitlement taken from this customer (and not expired)? An expired take is removed.
+     */
+    fn taken_entitlement(entitlement: str!) -> bool {
+        const taken = self.taken?.get(entitlement);
+        if (taken == null) return false;
+        if (taken.expires_on != null && Time::now() >= taken.expires_on) {
+            self.taken.remove(entitlement, shallow = false);
+            return false;
+        }
+        true
+    }
+
+
+    /**
+     * A stable number from 0 to 99 for this customer and a key (Ex. a feature name), for percentage rollouts:
+     * `customer.bucket('ai_assistant') < 25` is true for about 25% of customers, always the same ones, and
+     * raising it to 50 keeps them. Each key splits customers independently, so the same customers aren't
+     * first in line for every rollout. It's <Customer>.hash('<key>:<customer id>') modulo 100, so a server
+     * (Ex. Limitr Cloud) can compute the same number.
+     */
+    fn bucket(key: str!) -> int {
+        <Customer>.hash(`${key}:${self.id}`) % 100
+    }
+
+
+    #[static]
+    /**
+     * A 32-bit hash of a string, the same in any language: FNV-1a (32-bit) over its UTF-8 bytes, then
+     * MurmurHash3's 32-bit finalizer (fmix32), which mixes every bit so similar strings hash far apart.
+     */
+    fn hash(text: str!) -> int {
+        let h = 2166136261;                                         // FNV-1a
+        for (const byte in text as blob) h = ((h ^ byte) * 16777619) % 4294967296;
+        h = h ^ (h >> 16);                                          // fmix32
+        h = <Customer>.mul32(h, 2246822507);                        // 0x85ebca6b
+        h = h ^ (h >> 13);
+        h = <Customer>.mul32(h, 3266489909);                        // 0xc2b2ae35
+        h ^ (h >> 16)
+    }
+
+
+    #[static]
+    /**
+     * a * b modulo 2^32, for 32-bit a and b, in two halves so it never overflows a 64-bit integer.
+     */
+    fn mul32(a: int, b: int) -> int {
+        ((a * (b & 65535)) + (((a * (b >> 16)) % 4294967296) << 16)) % 4294967296
     }
 
 

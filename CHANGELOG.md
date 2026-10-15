@@ -6,7 +6,8 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ## 0.7.0
 
-Dynamic provider costs, reservations with usage prediction, and memory-safe API calls. Requires Stof 0.10.6.
+Dynamic provider costs, reservations with usage prediction, feature flags with per-customer access, and memory-safe
+API calls. Requires Stof 0.10.6.
 
 ### Added
 
@@ -63,10 +64,30 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
     `Meter.estimates.<segment>`. A customer's own estimate is used once it has `Limitr.estimate_min_samples`
     (default 5) observations. Segments must stay low-cardinality: a model or a feature, never a user or request ID.
   - Estimates are plain policy data, so Cloud can seed them or replace them with pooled numbers (`source: 'cloud'`).
+- **Feature flag rules.** An entitlement's optional `enabled` decides whether it's on for a call, after the
+  customer's plan, gives, and takes: absent (on), a bool (`false` is a kill switch for everyone), or a function
+  `(customer, entitlement, context?) -> bool`, written inline or as a field pointing at a shared one (Ex.
+  `enabled: <Rollouts>.beta_or_quarter`). It only narrows, gates new usage only (`check`, `allow`, `reserve`; never
+  `settle` or a decrement), and a rule that fails is off (logged).
+- **Stable rollout buckets.** `customer.bucket(key)` is a number from 0 to 99 that never changes for a customer and
+  key, and each key splits customers independently. It's `<Customer>.hash('<key>:<customer id>') % 100`, where
+  `hash` is FNV-1a (32-bit, UTF-8) then MurmurHash3's fmix32, so a server computes the same number.
+- **`features(id, context?)`** lists the entitlements a customer can use right now.
+- **`track: true`** on an entitlement sends `feature-checked` (`customer`, `caller`, `entitlement`, `enabled`,
+  `plan`, `event_data`) each time it's checked, for measuring rollouts and experiments.
+- **Give and take entitlements per customer.** `give_entitlement(id, entitlement, plan?, expires?)` gives a customer
+  an entitlement whatever its plan says, using the definition from `plan` or the closest plan that has it (no plan
+  defines it: false). `take_entitlement(id, entitlement, expires?)` denies one the plan has, keeping its meter and
+  overrides. `restore_entitlement` undoes either. Both are stored on the customer (`given`, `taken`), last through
+  plan changes, and are inherited the way plans are (users on their org's plan get the org's). Events:
+  `customer-entitlement-given`, `-taken`, and `-restored`.
+- **Shared cost functions.** A credit's `overhead` can be a field pointing at a shared function (Ex.
+  `overhead: <Costs>.per_model`).
 - **TypeScript:** `allow(..., overhead?, force?)`, `check(..., context?, overhead?)`, and new `reserve(customer,
-  entitlement, options)`, `settle`, `release`, `held`, `estimate(customer, entitlement, options)`, and
-  `observe(customer, entitlement, value, options)` methods, with the `LimitrEstimate`, `LimitrReserveOptions`,
-  `LimitrEstimateOptions`, and `LimitrObserveOptions` types.
+  entitlement, options)`, `settle`, `release`, `held`, `estimate(customer, entitlement, options)`,
+  `observe(customer, entitlement, value, options)`, `features(customer, context?)`, `giveEntitlement`,
+  `takeEntitlement`, and `restoreEntitlement` methods, with the `LimitrEstimate`, `LimitrReserveOptions`,
+  `LimitrEstimateOptions`, and `LimitrObserveOptions` types. `LimitrCustomer` has `given` and `taken`.
 
 ### Changed
 
@@ -111,6 +132,12 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
 ### Fixed
 
 - A Claude `tool_use` with input left an object in the document on every call (`Capability.claude_tool_use`).
+- `create_customer_override` on an entitlement with no limit (a feature flag) failed. It now creates a limit
+  (given a `credit`).
+- `customer_local_margin_breakdown` only counted the customer's plan's entitlements. It now uses the entitlements
+  the customer has (given ones included, taken ones left out).
+- Entitlement lookups for a customer took several engine calls per `allow`/`check`. Resolving gives, takes, and the
+  plan in one pass makes them slightly faster than before.
 - A call denied right after a period boundary left last period's usage on the meter, so the next call added to it.
   The new period now starts from zero even when the first call in it is denied.
 - `set_customer_plan(..., overwrite_meters = true)` left each replaced meter in the document, unreferenced. It is

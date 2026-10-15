@@ -2,10 +2,12 @@
 name: limitr
 description: >
   Write, review, and debug Limitr policies: the credits, plans, entitlements, limits, caps, grants, topups, overhead
-  costs, reservations, usage estimates, and notifications that decide what each customer may do and what it costs.
+  costs, reservations, usage estimates, feature flags, and notifications that decide what each customer may do and
+  what it costs.
   Limitr policies are Stof documents run by the embedded Limitr engine, so use this together with the stof skill.
   Use for any `Limitr policy: {...}` document, pricing or usage-limit design, allow()/check()/reserve()/settle()
-  semantics, predicting a call's usage before it runs (Ex. output tokens from input tokens), meter or cap behavior,
+  semantics, predicting a call's usage before it runs (Ex. output tokens from input tokens), feature flags and
+  rollouts, giving or taking a customer's entitlements, meter or cap behavior,
   Limitr events, margin questions, or tests in the Limitr repo (src/spec, src/tests). For calling Limitr from an
   application, also load the SDK skill for that language (Ex. limitr-ts).
 ---
@@ -179,7 +181,10 @@ A **governor** shapes the rate below a hard limit: `governor_enabled: true`, `go
 
 **Overrides** replace an entitlement's limit for one customer (custom deals, trials): `create_customer_override(id,
 entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)`. Unset fields copy the
-current limit (the plan's, or an existing override), and a new override replaces the old one. An override past `override_expires_on` is removed on the next read or call.
+current limit (the plan's, or an existing override), and a new override replaces the old one. An override past
+`override_expires_on` is removed on the next read or call. Overrides change how much; to change whether a customer
+has an entitlement at all, give or take it (below). An override can put a limit on an entitlement with no limit (a
+flag), given a `credit`.
 
 ## Customers, plans, and scope
 
@@ -193,6 +198,70 @@ current limit (the plan's, or an existing override), and a new override replaces
 - `set_customer_plan(id, plan, overwrite_meters = false)` changes plans and fires `customer-plan-changed`.
 - **Plan subscription:** `ensure_plan_subscription(id)` increments the plan's `subscription` entitlement once
   (after the `trial_period`), so a credit priced as the plan fee bills it. Never called automatically.
+
+## Feature flags and per-customer access
+
+An entitlement with no limit is a feature flag. Three things refine who has a feature:
+
+```stof
+#[type]
+Rollouts: {
+    #[static]
+    fn beta_or_quarter(customer: Customer, entitlement: str, context?: obj) -> bool {
+        (customer.metadata?.beta ?? false) || customer.bucket(entitlement) < 25
+    }
+}
+
+policy: {
+    plans: {
+        pro: {
+            entitlements: {
+                ai_assistant: { enabled: <Rollouts>.beta_or_quarter, track: true }   // a shared rule
+                new_checkout: {                                                     // an inline rule
+                    fn enabled(customer: Customer, entitlement: str, context?: obj) -> bool { context?.country == 'US' }
+                }
+                old_editor: { enabled: false }                                      // a kill switch
+                sso: {}
+            }
+        }
+    }
+}
+```
+
+- **`enabled`** (optional) decides whether an entitlement is on for a call: absent is on; a bool is on or off for
+  everyone; a function `(customer, entitlement, context?) -> bool` decides per call. Write it inline (`fn enabled`)
+  or point at a shared one (`enabled: <Rollouts>.x`), so one rule serves many features: it gets the entitlement's
+  name. `customer` is the one the entitlement belongs to for the call (the org for `scope: 'org'`); `context` is
+  the call's event data.
+- It **only narrows**: it runs after the plan, gives, and takes, so it can't give a feature the customer doesn't
+  have. It gates new usage only (`check`, `allow`, `reserve`); `settle` (usage that happened) and decrements always
+  go through. Anything but `true` is off, and a failing rule is off and logged.
+- **`customer.bucket(key)`** is a stable 0 to 99 per customer and key (Ex. the entitlement name) for percentage
+  rollouts: `bucket < 25` is always the same quarter, raising it keeps them, and each key splits customers
+  independently. It's `<Customer>.hash('<key>:<customer id>') % 100`, where `hash` is FNV-1a (32-bit, UTF-8) then
+  MurmurHash3's fmix32, so a server can compute the same number.
+- **Targeting one customer** (a beta list): put it in customer metadata (`create_customer(..., metadata)`,
+  `set_customer`) and read `customer.metadata` in the rule.
+- **`features(id, context?)`** lists the entitlements a customer can use right now (plan, less taken, plus given,
+  that are on). It's access, not capacity: a used-up metered entitlement is listed; `check` answers capacity.
+- **`track: true`** sends `feature-checked` (`customer`, `caller`, `entitlement`, `enabled`, `plan`,
+  `event_data`) each time the entitlement is checked (`check`, `allow`, `features`). Opt-in, since checks are
+  frequent; it's how a rollout or experiment is measured.
+
+**Give and take** change whether one customer has an entitlement, whatever its plan says (custom deals, keeping a
+feature through a downgrade, pausing one feature):
+
+- `give_entitlement(id, entitlement, plan?, expires?)` uses a plan's definition of the entitlement: `plan`, or the
+  closest plan that has it (the customer's own, then its refs' plans nearest first, then the policy's plans in
+  order). Entitlements can't be invented: false when no plan has it. A give beats the customer's plan.
+- `take_entitlement(id, entitlement, expires?)` denies it even though the plan (or a give) has it. Meters and
+  overrides are kept, so a restore picks up where it left off.
+- `restore_entitlement(id, entitlement)` undoes either. The latest give or take of an entitlement replaces the last.
+- They're stored on the customer (`given`, `taken`), so they last through plan changes and sync with it. They're
+  inherited the way plans are: a customer on its refs' plan (Ex. users on their org's plan) gets that customer's
+  gives and takes; its own win. Overrides still apply on top.
+- Events: `customer-entitlement-given`, `customer-entitlement-taken`, `customer-entitlement-restored`, plus
+  `customer-set`.
 
 ## Pricing and margins
 
@@ -227,7 +296,9 @@ Override `overhead(units, context?) -> float` on a credit when the cost differs 
 returns runes for `units` of the credit. `context` is the call's event data (the object or parsed string passed as
 `event`), or null. It can read anything in the policy, such as a rate table that Cloud updates. If it throws or
 returns a non-number, the engine logs it (`err`, the console in JavaScript) and uses `units * overhead_cost`. When the
-host knows the real cost after the call, pass it as `allow(..., overhead)` instead.
+host knows the real cost after the call, pass it as `allow(..., overhead)` instead. Several credits can share one
+cost function: `overhead: <Costs>.per_model` (a field pointing at a function in a `#[type]`) works like defining it
+inline.
 
 `reserve` also calls it before the call runs when it has no learned overhead to hold (the first calls, or when you
 pass `value`), with the held `units` and only the context passed to `reserve`, so fields known only afterwards (Ex.
@@ -343,3 +414,7 @@ compiled spec with `stof run project.stof` (writes `typescript/limitr.ts`), and 
 9. **Mutating the policy from a cost function.** Cost functions run on every call (and on `check`); keep them pure
    and allocation-free.
 10. **Creating objects per call without `using`.** See Memory above.
+11. **Expecting `enabled` to give a feature.** It only turns one off; give the entitlement (or change the plan) to
+    add it.
+12. **Random rollouts.** A random number per call flips a feature between calls; use `customer.bucket(key)`.
+13. **Tracking every entitlement.** `track: true` sends an event per check; track what you're measuring.

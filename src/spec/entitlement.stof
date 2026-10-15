@@ -203,6 +203,11 @@ Entitlement: {
     /// Hidden entitlement?
     bool hidden: false;
 
+    /// Send a feature-checked event each time this entitlement is checked for a customer (check(), allow(),
+    /// and features()), with whether it was on. For measuring a rollout or an experiment (Ex. in Limitr
+    /// Cloud); off by default, since checks are frequent.
+    bool track: false;
+
     /// Event data field holding this entitlement's estimate basis (Ex. 'input' for input tokens).
     /// When set, estimates learn usage per unit of that value and scale each prediction by it, so a
     /// larger call gets a larger hold. It is read from the context or event data given to reserve(),
@@ -213,6 +218,35 @@ Entitlement: {
     /// estimate. A `segment` argument wins. Keep the values few: a model or a feature, never a user or
     /// request ID.
     str estimate_segment: null;
+
+    // `enabled` (optional, not declared so a function can take its place): whether this entitlement is on
+    // for a call, after the customer's plan, gives, and takes. It can only turn a feature off.
+    // - Absent: on.
+    // - A bool: on or off for everyone (Ex. `enabled: false` is a kill switch).
+    // - A function (customer: Customer, entitlement: str, context?: obj) -> bool, written inline
+    //   (`fn enabled(..) {..}`) or as a field pointing at a shared one (`enabled: <Helpers>.beta_rollout`).
+    //   `customer` is the one the entitlement belongs to for the call (the org for an org-scoped one),
+    //   `entitlement` is this entitlement's name, and `context` is the call's event data.
+    // See enabled_for().
+
+
+    /**
+     * Is this entitlement on for a call (see `enabled`)? Anything but true is off, and so is a function
+     * that fails (logged).
+     */
+    fn enabled_for(customer: Customer, entitlement: str, context?: obj) -> bool {
+        const rule = self.enabled;
+        if (rule == null) return true;
+        if (typeof rule == 'fn') {
+            try {
+                return rule(customer, entitlement, context) == true;
+            } catch (e: str) {
+                err(`Limitr: enabled() for '${entitlement}' failed, so it is off: ${e}`);
+                return false;
+            }
+        }
+        rule == true
+    }
 
 
     /**

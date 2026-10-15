@@ -26,6 +26,8 @@ import './precision' as TestPrecision;
 import './shared_caps' as TestSharedCaps;
 import './overhead' as TestOverhead;
 import './reservations' as TestReservations;
+import './access' as TestAccess;
+import './flags' as TestFlags;
 import './billing_events' as TestBillingEvents;
 import './sync' as TestSync;
 

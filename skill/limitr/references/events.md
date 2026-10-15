@@ -82,12 +82,21 @@ scoped entitlement), that holder also gets a `customer-set`.
 
 | Event | Payload | From |
 |---|---|---|
-| `customer-set` | the Customer | create, set, plan change, overrides, alt IDs, caps, included topups |
+| `customer-set` | the Customer | create, set, plan change, overrides, gives and takes, alt IDs, caps, included topups |
 | `customer-removed` | the Customer | `delete_customer` |
 | `customer-plan-changed` | `previous_plan`, `new_plan`, `customer` | `set_customer_plan` |
 | `customer-topup-granted` | `customer`, `topup_name`, `plan_name`, `topup` | `apply_customer_topup` |
+| `customer-entitlement-given` | `customer`, `entitlement`, `plan` (whose definition), `expires_on` | `give_entitlement` |
+| `customer-entitlement-taken` | `customer`, `entitlement`, `expires_on` | `take_entitlement` |
+| `customer-entitlement-restored` | `customer`, `entitlement` | `restore_entitlement` |
 | `plan-set` | the Plan | `set_plan` |
 | `plan-removed` | the Plan | `delete_plan` |
+
+## Feature events
+
+| Event | Payload | From |
+|---|---|---|
+| `feature-checked` | `customer` (the one the entitlement belongs to for the call), `caller`, `entitlement`, `enabled` (bool), `plan` (the caller's), `event_data` | `check`, `allow`, and `features`, for entitlements with `track: true`. Also reaches policy notifications. |
 
 `internal-*` events (`internal-policy-updated`, `internal-customer-updated`, `internal-customer-invoices-updated`)
 come from the Cloud sync helpers.
@@ -101,4 +110,7 @@ come from the Cloud sync helpers.
 - **Upsell or warn:** a notification on `meter-changed` with a `remaining` threshold, or an `observe_only` cap
   (its `value` is the threshold) and `cap-threshold-crossed`.
 - **Rate-limit telemetry:** `meter-governed`, `meter-limit`, and `cap-limit`.
+- **Measure a rollout or experiment:** `feature-checked` (who was checked, and whether the feature was on), joined
+  with the meter events for what they did next.
+- **Audit custom deals:** `customer-entitlement-given`, `-taken`, and `-restored`.
 - **Cost and margin per call:** `meter.overhead_diff` and `meter.price_diff` on every meter event.

@@ -5,7 +5,7 @@ A policy has two main parts:
 - **Credits** are the things you count: requests, tokens, seats, exports, megabytes. Each credit can have a price and
   a cost, which we'll get to in chapter 6.
 - **Plans** list **entitlements**: what a customer on that plan can do. An entitlement with no limit is a feature
-  flag. An entitlement with a limit is metered in one of your credits.
+  flag (chapter 15 adds rollouts and kill switches). An entitlement with a limit is metered in one of your credits.
 
 ```ts
 import { Limitr } from '@formata/limitr';

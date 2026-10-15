@@ -2,8 +2,9 @@
 name: limitr-ts
 description: >
   Use Limitr from TypeScript or JavaScript with the @formata/limitr package: create the engine, load policies and
-  customers, gate calls with allow/check, reserve and settle LLM calls, predict output tokens before a call, handle
-  events, persist customer state, and connect to Limitr Cloud. Use for code that imports @formata/limitr or calls
+  customers, gate calls with allow/check, feature flags and rollouts, give or take a customer's features, reserve
+  and settle LLM calls, predict output tokens before a call, handle events, persist customer state, and connect to
+  Limitr Cloud. Use for code that imports @formata/limitr or calls
   Limitr.new / Limitr.cloud, and for integrating usage limits, credits, or pricing into a Node, Deno, Bun, or browser
   app. Load the limitr skill for policy semantics and the stof skill for Stof syntax.
 ---
@@ -100,6 +101,35 @@ Each method call is atomic (calls go through a promise queue, one at a time), bu
 request can run between a `check` and the following `allow`. When concurrent requests must not overspend, use
 `reserve`.
 
+## Feature flags and custom deals
+
+Rollouts, kill switches, and per-call rules live in the policy (an entitlement's `enabled`, see the limitr skill),
+so the app code stays the same `check`/`allow`:
+
+```ts
+if (!(await limitr.check(userId, 'ai_assistant'))) return notFound();            // rollout decided by the policy
+const show = await limitr.check(userId, 'new_checkout', 0, { country: req.geo.country }); // rule reads event data
+
+// Everything this customer can use right now, for the front end
+res.json({ features: await limitr.features(userId, { country: req.geo.country }) });
+
+// Custom deals: whether one customer has a feature, whatever the plan says
+await limitr.giveEntitlement(orgId, 'sso');                          // from the closest plan that has it
+await limitr.giveEntitlement(orgId, 'api', 'enterprise', Date.now() + 14 * 86_400_000); // that plan's limit, 14 days
+await limitr.takeEntitlement(orgId, 'exports');                      // pause one feature
+await limitr.restoreEntitlement(orgId, 'exports');
+```
+
+- `features(customer, context?)` returns entitlement names (or null for an unknown customer). It's access, not
+  capacity: a used-up metered entitlement is listed, so still `allow` usage.
+- Give/take return false for an unknown customer, and give returns false when no plan defines the entitlement.
+  Gives and takes are stored on the customer (`given`, `taken`), so persisting customers persists them. An org's
+  apply to the users on its plan.
+- Per-customer targeting (a beta list) is customer metadata: `createCustomer(id, plan, type, label, refs, alts,
+  { beta: true })` or `setCustomer`, read by the rule as `customer.metadata`.
+- Entitlements with `track: true` send `feature-checked` (`caller.id`, `entitlement`, `enabled`) on every check:
+  forward it to your analytics to measure a rollout or A/B test.
+
 ## LLM calls: reserve, then settle
 
 The policy's `chat` entitlement declares `estimate_basis: 'input'` and `estimate_segment: 'model'` (see the limitr
@@ -193,13 +223,13 @@ limitr.addHandler('billing', async (key, value) => {
   `allow` returns.
 - Event names and payloads are in the limitr skill (`references/events.md`). Common ones: `meter-changed`,
   `meter-overage`, `meter-limit`, `meter-governed`, `meter-reset`, `cap-limit`, `cap-threshold-crossed`,
-  `customer-set`. Meter events carry the call's cost (`meter.overhead_diff`) and list price (`meter.price_diff`) in
+  `customer-set`, `feature-checked`, and `customer-entitlement-given`/`-taken`/`-restored`. Meter events carry the call's cost (`meter.overhead_diff`) and list price (`meter.price_diff`) in
   runes, which together give its margin.
 - In Cloud mode, `topup-purchase-failed` also arrives from Cloud.
 
 ## Persist customer state
 
-Customer records hold all state (meters, grants, caps, overrides). Without Cloud, save them and load them back:
+Customer records hold all state (meters, grants, caps, overrides, gives and takes). Without Cloud, save them and load them back:
 
 - Save on `customer-set` and on meter events (their `customer` carries its meters), or periodically via
   `limitr.customers()`.
@@ -251,3 +281,6 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 7. **Losing state on restart** without Cloud. Persist customers from events and load them on boot.
 8. **Forgetting `overhead` when the provider reports cost.** Without it, the credit's cost function or fixed
    `overhead_cost` prices the call.
+9. **Hard-coding rollouts in the app.** Put the rule in the entitlement's `enabled` so every server, the front end
+   (via `features`), and Cloud agree.
+10. **Treating `features` as permission to use.** It lists access; metered usage still goes through `allow`.
