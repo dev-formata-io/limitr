@@ -52,6 +52,9 @@ export interface LimitrCloudInit {
      * Limitr.new() policies have no network access unless you call limitr.doc.allowHttp(...).
      */
     httpHosts?: string[] | boolean;
+
+    /** How long a policy call can run before it fails, in milliseconds (null for no limit). Defaults to 5 seconds. */
+    maxExecutionTime?: number | null;
 }
 
 
@@ -73,6 +76,13 @@ export class Limitr {
 
     /** Deny allows if cloud connection interrupted (recommended)? */
     denyUnconnected: boolean = true;
+
+    /**
+     * How long a policy call can run before it fails, in milliseconds (null for no limit).
+     * Engine calls take a few milliseconds; the limit stops a policy function that never returns
+     * (Ex. a loop in a custom cost function) from blocking every call after it. Set with setMaxExecutionTime().
+     */
+    protected maxExecutionTime: number | null = 5000;
 
     /** Hosts a Cloud policy can reach over HTTP (see LimitrCloudInit.httpHosts). */
     protected cloudHttpHosts: string[] | boolean = ['api.limitr.dev'];
@@ -96,6 +106,16 @@ export class Limitr {
         this.doc.parse(limitrEngine, 'bstf'); // the compiled engine (src/spec)
         this.doc.parse(policy, format);
         this.doc.sync_call('<Limitr>.load'); // root.policy becomes a Limitr (JSON, YAML, and TOML policies have no type)
+        this.doc.setMaxExecutionTime(this.maxExecutionTime);
+    }
+
+
+    /**
+     * How long a policy call can run before it fails, in milliseconds (null for no limit). Defaults to 5 seconds.
+     */
+    setMaxExecutionTime(ms: number | null) {
+        this.maxExecutionTime = ms;
+        this.doc.setMaxExecutionTime(ms);
     }
 
 
@@ -1130,6 +1150,7 @@ export class Limitr {
         const limitr = await Limitr.new();
         limitr.denyUnconnected = denyUnconnected;
         if (typeof options !== 'string' && options.httpHosts !== undefined) limitr.cloudHttpHosts = options.httpHosts;
+        if (typeof options !== 'string' && options.maxExecutionTime !== undefined) limitr.setMaxExecutionTime(options.maxExecutionTime);
         const awaitInit = async () => {
             await new Promise<boolean>((resolve, reject) => {
                 const intervalMs = 50;
@@ -1395,15 +1416,13 @@ export class Limitr {
                     await this.gate.run(async () => {
                         if (this.wsInit) {
                             // drop initial types - users can override rules locally and that logic should stay
-                            doc.parse(`fn before_policy_update_clean() { root.remove('LimitrTypes', shallow = false); drop(this); }`);
-                            doc.sync_call('before_policy_update_clean');
+                            doc.remove('LimitrTypes');
                             const cleanBuffer = doc.blobify('bstf');
                             await this.doc.call('policy.update_policy_internals', cleanBuffer, 'bstf');
                         } else {
                             this.doc = doc;
                             this.doc.sync_call('<Limitr>.load');
-                            this.doc.lib('Std', 'pln', (...args: unknown[]) => console.log(...args));
-                            this.doc.lib('Std', 'err', (...args: unknown[]) => console.error(...args));
+                            this.doc.setMaxExecutionTime(this.maxExecutionTime);
                             // Http::fetch (Stof's built-in, on the JS fetch API), limited to the allowed hosts
                             if (this.cloudHttpHosts === true) this.doc.allowHttp();
                             else if (this.cloudHttpHosts !== false) this.doc.allowHttp(this.cloudHttpHosts);

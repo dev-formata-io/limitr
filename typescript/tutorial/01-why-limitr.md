@@ -67,6 +67,20 @@ false
 That's the whole loop: describe the plan once, then ask before each call. The next chapters add customers, prices,
 costs, and everything else from the list above, one piece at a time.
 
+## The policy is a document
+
+The policy above is plain text written in [Stof](https://stof.dev). Stof is a superset of JSON: any JSON is valid
+Stof, plus a few things a pricing policy needs, like units (`1GB`, `30days`), comments, and functions for rules that
+aren't just numbers (a cost that depends on the model, for example). The engine is written in Stof too, so the engine
+and your policy are one document, and it runs the same wherever it's loaded: your server, a worker, or the browser.
+
+That's what makes a policy easy to change. It's data you can commit, review, diff, and send over the wire. And
+functions in a policy run in a sandbox, with no network, files, or environment variables unless your app allows
+them, so a policy can't reach anything you didn't give it.
+
+You don't need to learn much Stof to use Limitr. The next chapter covers what the policies in this tutorial use, and
+the rest comes up as it's needed.
+
 ## How it fits with the rest of your stack
 
 Limitr decides what's allowed and what it's worth, at the moment of the request. It doesn't take payments: your

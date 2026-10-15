@@ -44,4 +44,4 @@ await limitr.close();
 The engine is the same open-source code in both cases, so you can start self-hosted and move to Cloud later without
 rewriting anything, or the other way around.
 
-Back to the [table of contents](README.md).
+Next: [The language underneath: Stof](14-stof.md)

@@ -28,7 +28,9 @@ policy: {
             fn overhead(units: float, context?: obj) -> float {
                 const rate = self.rates.get(context?.model ?? '');
                 if (rate == null) return units * self.overhead_cost;
-                (context.input * rate.input) + (context.output * rate.output)
+                const input = context.input ?? 0;
+                const output = context.output ?? Num::max(units - input, 0);   // before the call, the rest is output
+                input * rate.input + output * rate.output
             }
         }
     }
@@ -84,7 +86,9 @@ What happened:
 - **The cost function.** The `ai_token` credit has an `overhead(units, context)` function. `context` is the event data
   you pass with the call (`{ model, input, output }` here), so each call is priced from the model's own input and
   output rates. A credit without one uses its fixed `overhead_cost`. Because the rates are part of the policy, you
-  can change them when a provider changes its prices, without touching your app.
+  can change them when a provider changes its prices, without touching your app. When `reserve` prices a call that
+  hasn't run yet, there's no `output` in the context, so the function counts the rest of the predicted tokens as
+  output. If a cost function fails, the engine logs the error and uses `overhead_cost` instead.
 - **reserve** checks that the call is allowed and holds room for it, so ten calls running at once can't all squeeze
   past the limit. With no `value`, it holds what it predicts the call will use. It returns a hold ID, or `null` when
   the call shouldn't run.
@@ -96,6 +100,22 @@ What happened:
   per model, since a small model and a large one answer differently.
 - **estimate** asks for a prediction without holding anything, here for a 2,000-token prompt. It answers at the 90th
   percentile by default (`quantile: 0.9`), so most calls come in under it.
+
+## Reading the cost function
+
+The cost function is the first Stof code in this tutorial that isn't just data, and it reads a lot like TypeScript:
+
+- `fn overhead(units: float, context?: obj) -> float { ... }` declares a function with typed parameters and a return
+  type. `context?` means the argument can be left out.
+- `self` is the object the function belongs to, here the `ai_token` credit, so `self.rates` and `self.overhead_cost`
+  are its fields.
+- `context?.model` reads a field that might be missing (null instead of an error), and `?? ''` gives a default.
+- `Num::max(..)` calls a function from Stof's `Num` library.
+- The last line, with no semicolon, is the return value.
+
+Functions live in the policy next to the data they use, so they travel with it: the same policy prices calls the same
+way on every server, and in Cloud. They also run in Stof's sandbox, so a cost function can do math on what you pass
+it but can't reach your network or files.
 
 If your provider reports the exact cost of a call, pass it as `overhead` to `settle` (or `allow`) and the engine
 records that instead of computing it.

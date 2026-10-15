@@ -23,7 +23,7 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.10.4 or later for Limitr 0.7). Import only from `@formata/limitr`.
+The package depends on `@formata/stof` (0.10.6 or later for Limitr 0.7). Import only from `@formata/limitr`.
 It ships this skill and the limitr skill in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
 
@@ -195,6 +195,15 @@ registering host functions the policy can call (`limitr.doc.lib('App', 'name', f
 policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any host).
 A `Limitr.new` policy is sandboxed: no network, file system, or environment access unless you add it.
 
+Read-only questions about the policy can go straight to the document: `limitr.doc.get('policy.plans.pro.label')`,
+`limitr.doc.stringify('json', 'policy.plans')`, or a one-off Stof function that isn't added to the policy,
+`await limitr.doc.callSource('fn f(x: str) -> list { ... }', [arg], 'policy')` (`self` is the policy). Change
+customers, meters, and plans through the Limitr methods, which keep meters consistent and send events.
+
+Every policy call has a time limit, 5 seconds by default, so a policy function stuck in a loop fails instead of
+blocking every later call (engine calls take milliseconds). Change it with `limitr.setMaxExecutionTime(ms | null)`.
+Errors the engine logs (Ex. a failing cost function) go to `console.error`.
+
 ## Limitr Cloud
 
 ```ts
@@ -203,7 +212,7 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 
 - Cloud sends the active policy (and updates to it), and customers on demand. Everything else is the same API.
 - Options: `policy` (an ID, or `'active'`), `connectTimeout` (5s), `denyUnconnected` (default true: deny `allow`
-  while disconnected, to protect shared state), `validate`, `httpHosts`.
+  while disconnected, to protect shared state), `validate`, `httpHosts`, `maxExecutionTime` (ms, default 5000).
 - A Cloud policy can only reach Limitr Cloud (`api.limitr.dev`) over HTTP. `httpHosts` replaces that list
   (Ex. `['api.limitr.dev', 'api.example.com']`); `true` allows any host and `false` none.
 - A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), and `ensureCustomer`

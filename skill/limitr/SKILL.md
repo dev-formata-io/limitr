@@ -73,7 +73,9 @@ Limitr policy: {
             fn overhead(units: float, context?: obj) -> float {
                 const rate = self.rates.get(context?.model ?? '');
                 if (rate == null) return units * self.overhead_cost;
-                (context.input * rate.input) + (context.output * rate.output)
+                const input = context.input ?? 0;
+                const output = context.output ?? Num::max(units - input, 0);   // reserve/estimate: no output yet
+                input * rate.input + output * rate.output
             }
         }
     }
@@ -223,8 +225,12 @@ current limit (the plan's, or an existing override), and a new override replaces
 Override `overhead(units, context?) -> float` on a credit when the cost differs per call or changes over time. It
 returns runes for `units` of the credit. `context` is the call's event data (the object or parsed string passed as
 `event`), or null. It can read anything in the policy, such as a rate table that Cloud updates. If it throws or
-returns a non-number, the engine logs it and uses `units * overhead_cost`. When the host knows the real cost after
-the call, pass it as `allow(..., overhead)` instead.
+returns a non-number, the engine logs it (`err`, the console in JavaScript) and uses `units * overhead_cost`. When the
+host knows the real cost after the call, pass it as `allow(..., overhead)` instead.
+
+`reserve` and `estimate` call it before the call runs, with the predicted `units` and only the context passed to them,
+so fields known only afterwards (Ex. output tokens) are missing. Default every context field with `??` (arithmetic
+with null is an error in Stof), Ex. count the rest of the predicted units as output.
 
 ## Reservations and estimates
 

@@ -59,8 +59,42 @@ A few things to notice:
 - A denied call changes nothing. `value` is still 3.
 - An entitlement the plan doesn't have (or a customer that doesn't exist) is simply denied. Nothing throws.
 
-The policy above is written in [Stof](https://stof.dev), the format Limitr runs on. It's JSON with less punctuation,
-so plain JSON works too, and so do YAML and TOML (chapter 12). Stof also lets a policy carry its own functions, which
-chapter 7 uses for per-call costs.
+## How a policy is written
+
+If you can read JSON, you can read a Stof policy. Here's the same policy again, with the differences called out:
+
+```stof
+policy: {
+    credits: {
+        request: { label: 'API request' }   // comments start with //
+    }
+    plans: {
+        free: {
+            default: true                    // no comma needed at the end of a line
+            entitlements: {
+                export_csv: {}
+                api: { limit: { credit: 'request', value: 3 } }
+            }
+        }
+    }
+}
+```
+
+- Keys don't need quotes, and commas between fields are optional.
+- Strings can use single or double quotes.
+- Numbers can use underscores (`50_000`) and carry units (`250MB`, `1day`), which chapter 4 uses.
+
+Written as JSON, it's the same policy:
+
+```json
+{ "policy": { "credits": { "request": { "label": "API request" } },
+  "plans": { "free": { "default": true, "entitlements": { "export_csv": {}, "api": { "limit": { "credit": "request", "value": 3 } } } } } } }
+```
+
+Limitr loads either one, and YAML and TOML too (chapter 12). Stof is the default because a policy sometimes needs
+more than data: chapter 7 adds a function that prices each AI call from the model it used.
+
+When the policy loads, the engine reads it with its own Stof types (a plan, a credit, a limit), which is how it fills
+in defaults and checks for mistakes, like a limit that names a credit that doesn't exist.
 
 Next: [Customers and plans](03-customers-and-plans.md)

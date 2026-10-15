@@ -3,6 +3,10 @@
 A short book on usage-based billing with Limitr. Each chapter is one small program you can paste into a file and
 run. Start at chapter 1, or jump to the one you need.
 
+Limitr policies are written in [Stof](https://stof.dev), a superset of JSON, and the tutorial introduces it along the
+way: how a policy is written (chapter 2), units (chapter 4), functions in a policy (chapter 7), and the document
+underneath it all (chapter 14). No Stof knowledge is needed to start.
+
 ```bash
 npm i @formata/limitr
 ```
@@ -23,6 +27,7 @@ Limitr runs the same way in the browser.
 11. [Running it in your app](11-running-it-in-your-app.md): one engine per server, middleware, and saving state
 12. [Validation and errors](12-validation-and-errors.md): policy formats and what happens when something's wrong
 13. [Going to Cloud](13-going-to-cloud.md): the same code, with managed policies, billing, and analytics
+14. [The language underneath: Stof](14-stof.md): reading a policy from your app, and asking it questions
 
 The policy reference, every engine function, and every event are in the [Limitr skill](../../skill/limitr), which
 is written for people and AI coding agents alike.

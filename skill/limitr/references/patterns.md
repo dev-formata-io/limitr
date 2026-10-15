@@ -103,7 +103,9 @@ credits: {
         fn overhead(units: float, context?: obj) -> float {
             const rate = self.rates.get(context?.model ?? '');
             if (rate == null) return units * self.overhead_cost;
-            (context.input * rate.input) + (context.output * rate.output)
+            const input = context.input ?? 0;
+            const output = context.output ?? Num::max(units - input, 0);   // reserve/estimate: no output yet
+            input * rate.input + output * rate.output
         }
     }
 }

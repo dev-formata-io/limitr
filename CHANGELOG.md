@@ -6,7 +6,7 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ## 0.7.0
 
-Dynamic provider costs, reservations with usage prediction, and memory-safe API calls. Requires Stof 0.10.4.
+Dynamic provider costs, reservations with usage prediction, and memory-safe API calls. Requires Stof 0.10.6.
 
 ### Added
 
@@ -79,10 +79,16 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
   reservations and estimates, reads, customers, spend caps, plans and credits, margins, notifications and
   capabilities, sync), then one marked Internal section. Helpers that belong to a type moved to it:
   `Entitlement.estimate_inputs`, `Meter.estimate`, `Customer.ensure_meter`, and `<Estimate>.key`.
-- **Requires Stof 0.10.4.** The spec uses `using` declarations, `Lib::func` library calls (Ex. `Time::now()`,
+- **Requires Stof 0.10.6.** The spec uses `using` declarations, `Lib::func` library calls (Ex. `Time::now()`,
   `Num::round()`), and unary `typeof` (0.10.3). 0.10.4 keeps calls fast as customers are added (dropping a call's
-  temporary objects no longer searches the whole document) and fixes the policy diff below. The TypeScript package
-  depends on `@formata/stof` 0.10.4 or later.
+  temporary objects no longer searches the whole document) and fixes the policy diff below. With 0.10.6, a
+  capability's `#[run]` steps run in the order they're written (before, functions ran in no set order), and
+  `err(..)` lines from the engine (Ex. a cost function that fails) reach the console in JavaScript. The TypeScript
+  package depends on `@formata/stof` 0.10.6 or later.
+- **TypeScript: a time limit on policy calls.** A policy call that runs longer than 5 seconds fails instead of
+  blocking every call after it (Ex. a custom cost function stuck in a loop). Engine calls take a few milliseconds.
+  Change it with `limitr.setMaxExecutionTime(ms | null)` or `Limitr.cloud({ maxExecutionTime })`. Before, the limit
+  was Stof's default of 2 minutes.
 - **No document growth per call.** `allow()` and `check()` keep each call's temporary objects (event objects,
   call-scoped caps, event data parsed from a string) in a scratch object that is dropped on every return path.
   `Customer.caps_from_arg(arg, arena?)` creates temporary caps on that arena. The API helpers

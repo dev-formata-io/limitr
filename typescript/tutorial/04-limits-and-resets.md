@@ -50,8 +50,9 @@ true false
 after a second: true
 ```
 
-- **Units.** A credit with `stof_units: 'MB'` is counted in megabytes, and limits and calls can use any size unit:
-  `1GB` is 1000MB, so `'250MB'` leaves 750.
+- **Units.** Units are part of Stof, so a policy can say `1GB` or `1day` and mean it. A credit with
+  `stof_units: 'MB'` is counted in megabytes, and limits and calls can use any size unit: `1GB` is 1000MB, so
+  `'250MB'` leaves 750. Time periods work the same way (`1s`, `1hr`, `30days`).
 - **Rolling periods.** `resets: true` with `reset_inc` starts a new period that long after the last one began (`1s`,
   `1hr`, `1day`, `30days`). It's 30 days if you don't say.
 - **Calendar periods.** `reset_sch` lines periods up with the calendar, in UTC: `'monthly:1'` (the 1st of each month),
