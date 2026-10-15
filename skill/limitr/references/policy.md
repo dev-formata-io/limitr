@@ -98,7 +98,7 @@ self.seats.limit.value = 10; }`.
 | `limit` | Limit | null | No limit: a feature flag. |
 | `scope` | str | null | Meter on the nearest customer of this type through refs (Ex. `'org'`). |
 | `hidden` | bool | false | |
-| `estimate_basis` | str | null | Event data field a call's size scales with (Ex. `'input'`). Estimates learn per unit of it. Same in every plan. |
+| `estimate_basis` | str | null | Event data field a call's size depends on (Ex. `'input'`). Estimates learn a fixed amount per call plus an amount per unit of it. Same in every plan. |
 | `estimate_segment` | str | null | Event data field that picks the estimate segment (Ex. `'model'`). Keep its values few. |
 
 ## Limit
@@ -207,9 +207,16 @@ the plan's topup changes, its grants change too, and when it is removed, its gra
 |---|---|---|---|
 | `samples` | int | 0 | Observations (or the weight of a seeded prior). |
 | `alpha` | float | 0.1 | Smoothing once there are 1/alpha samples. |
-| `per_basis` | bool | false | Learned per unit of basis. Follows the entitlement's `estimate_basis`; a change starts the estimate over. |
-| `value_mean` / `value_var` | float | 0 | Per call (or per unit of basis), credit units. |
-| `overhead_mean` / `overhead_var` | float | 0 | Per call (or per unit of basis), runes. |
+| `per_basis` | bool | false | Learned against a basis. Follows the entitlement's `estimate_basis`; a change starts the estimate over. |
+| `value_mean` / `value_var` | float | 0 | Per call, credit units. |
+| `overhead_mean` / `overhead_var` | float | 0 | Per call, runes. |
+| `basis_mean` / `basis_var` | float | 0 | Per call, the basis (per_basis only). |
+| `value_cov` / `overhead_cov` | float | 0 | How value and overhead move with the basis (per_basis only). |
+
+With a basis, predictions follow a line: `value_mean + (value_cov / basis_var) * (basis - basis_mean)`, with the
+variance the line doesn't explain. Until there are `<Estimate>.FIT_SAMPLES` (5) calls whose bases differ by
+`<Estimate>.FIT_SPREAD` (standard deviation over mean, 0.1), the average call is scaled by `basis / basis_mean`
+instead. `fitted()` says which one is in use. A Cloud seed for a per-basis estimate sets the basis fields too.
 | `source` | str | `'local'` | `'cloud'` when seeded or pooled by Limitr Cloud. |
 | `updated` | ms | null | Last observation. |
 

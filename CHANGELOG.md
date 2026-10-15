@@ -47,15 +47,18 @@ Dynamic provider costs, reservations with usage prediction, and memory-safe API 
 - **Usage estimates.** New `Estimate` type: a recency-weighted mean and variance of a call's value and overhead
   (constant memory, a plain average until 1/alpha samples).
   - **Per-basis estimates are declared on the entitlement:** `estimate_basis: 'input'` names the event data field
-    the call's size scales with (Ex. input tokens). Estimates then learn per unit of it and scale each
-    prediction by it. `estimate_segment: 'model'` names the field that picks the segment. `reserve`, `settle`,
+    the call's size depends on (Ex. input tokens). Estimates then learn a line from it: a fixed amount per call
+    plus an amount per unit, so a short question with a long answer predicts a long answer, and a summary still
+    grows with its text. Until there are 5 calls with bases that differ (`Estimate.fitted()`), the average call
+    is scaled by the basis. `estimate_segment: 'model'` names the field that picks the segment. `reserve`, `settle`,
     `estimate`, and `observe` read both from the call's event data, so hosts only pass what they already have.
     `basis` and `segment` arguments override them. A per-basis call without its basis is logged, and isn't
     learned from (it is still metered). Changing `estimate_basis` starts an estimate over.
   - `estimate(id, ent, basis?, segment?, quantile = 0.9, context?)` predicts one call: `value`, `overhead`,
     `samples`, `source` ('local' or 'cloud'), and `scope` ('customer' or 'policy').
   - `observe(id, ent, value, overhead?, basis?, segment?, context?)` records a call without a reservation.
-    `settle()` calls it for you.
+    `settle()` calls it for you. An entitlement with no limit is never metered, so it can learn part of a call
+    on its own (Ex. output tokens from input tokens, to predict an answer's length before the call).
   - Policy-wide estimates are at `Limitr.estimates.<entitlement>.<segment>`, each customer's at
     `Meter.estimates.<segment>`. A customer's own estimate is used once it has `Limitr.estimate_min_samples`
     (default 5) observations. Segments must stay low-cardinality: a model or a feature, never a user or request ID.

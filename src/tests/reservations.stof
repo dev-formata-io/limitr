@@ -21,8 +21,9 @@
 // concurrent calls can't overspend together. settle() records the actual usage (even past a hard
 // limit - it already happened) and learns from it; release() drops a hold; holds expire.
 // estimate() predicts a call from running statistics (per customer once there are enough samples,
-// else policy-wide), per unit of a basis when the entitlement declares one (estimate_basis, Ex. input
-// tokens) and per segment (estimate_segment or a segment argument, Ex. a model).
+// else policy-wide), from a basis when the entitlement declares one (estimate_basis, Ex. input tokens:
+// a fixed amount per call plus an amount per unit) and per segment (estimate_segment or a segment
+// argument, Ex. a model).
 //
 Limitr TestReservationsPolicy: {
     credits: {
@@ -52,6 +53,14 @@ Limitr TestReservationsPolicy: {
                 predicted: { limit: { credit: 'tok', mode: 'hard', value: 100 } } // only test_reserve_predicted learns this one
                 // estimates per input token, one per model (only test_declared_basis learns this one)
                 per_input: {
+                    estimate_basis: 'input'
+                    estimate_segment: 'model'
+                    limit: { credit: 'tok', mode: 'soft', value: 1000000 }
+                }
+                // learns output tokens from input tokens, and is never metered (only test_predict_output_tokens)
+                chat_output: { estimate_basis: 'input', estimate_segment: 'model' }
+                // total tokens, estimated from input tokens (only test_reserve_short_prompt_long_answer)
+                chat_total: {
                     estimate_basis: 'input'
                     estimate_segment: 'model'
                     limit: { credit: 'tok', mode: 'soft', value: 1000000 }
@@ -238,7 +247,7 @@ Limitr TestReservationsPolicy: {
 
     #[test]
     /**
-     * Per-basis estimates learn a ratio (Ex. output per input token) and scale by the next call's basis.
+     * Per-basis estimates start as a ratio (Ex. output per input token), scaled by the next call's basis.
      */
     fn test_estimate_per_basis() {
         const est = new Estimate {};
@@ -258,6 +267,125 @@ Limitr TestReservationsPolicy: {
         assert_eq(est.samples, 1);
         assert_eq(est.value_mean, 50);
         drop(est);
+    }
+
+
+    /// Sample traffic: input tokens per call, in the order the calls arrive.
+    const list SAMPLE_INPUTS: [20, 4000, 150, 900, 60, 2500, 300, 1200, 40, 3000];
+
+
+    fn learned(inputs: list, outputs: list) -> Estimate {
+        const est = new Estimate {};
+        for (const output in outputs) assert(est.observe(output, 0, basis = inputs[index], per_basis = true));
+        est
+    }
+
+
+    #[test]
+    /**
+     * With a basis, an estimate learns a line: a fixed amount per call plus an amount per unit of basis.
+     * Three kinds of traffic, with the same prompts (20 to 4000 input tokens):
+     * - chat: about 300 output tokens whatever the question
+     * - summaries: a quarter of the input
+     * - extraction: 200 tokens of structure plus a tenth of the input
+     */
+    fn test_estimate_learns_a_line() {
+        const chat = self.learned(self.SAMPLE_INPUTS, [320, 280, 300, 310, 290, 305, 295, 300, 310, 290]);
+        assert(chat.fitted());
+        const short = chat.predict(20, 0.5).get('value');
+        const long = chat.predict(4000, 0.5).get('value');
+        assert(short > 290 && short < 320);        // a ratio of the averages would say about 5
+        assert(long > 270 && long < 310);          // and about 986
+
+        const summaries = self.learned(self.SAMPLE_INPUTS, [5, 1000, 38, 224, 15, 626, 75, 300, 10, 750]);
+        assert_eq(Num::round(summaries.predict(20, 0.5).get('value'), 0), 5);
+        assert_eq(Num::round(summaries.predict(4000, 0.5).get('value'), 0), 1000);
+
+        const extraction = self.learned(self.SAMPLE_INPUTS, [202, 600, 215, 290, 206, 450, 230, 320, 204, 500]);
+        assert_eq(Num::round(extraction.predict(20, 0.5).get('value'), 0), 202);
+        assert_eq(Num::round(extraction.predict(1000, 0.5).get('value'), 0), 300);
+        assert_eq(Num::round(extraction.predict(4000, 0.5).get('value'), 0), 600);
+
+        // the spread is what the line doesn't explain: tight here, since the line fits
+        const cautious = extraction.predict(4000).get('value');
+        assert(cautious >= 600 && cautious < 601);
+        drop(chat, summaries, extraction);
+    }
+
+
+    #[test]
+    /**
+     * The line waits for evidence: FIT_SAMPLES calls, with bases that differ. Until then (and when every
+     * call is about the same size) the average call is scaled by the basis.
+     */
+    fn test_estimate_line_needs_evidence() {
+        const early = self.learned([20, 4000, 150, 900], [320, 280, 300, 310]);
+        assert_not(early.fitted());                // 4 calls: still a ratio
+        assert(early.observe(290, 0, basis = 60, per_basis = true));
+        assert(early.fitted());                    // the 5th call
+
+        const same_size = self.learned([100, 100, 101, 100, 99, 100], [300, 320, 290, 310, 300, 280]);
+        assert_not(same_size.fitted());            // can't tell fixed from per unit
+        assert_eq(same_size.predict(200, 0.5).get('value'), 600);
+
+        const per_call = new Estimate {};
+        for (const v in [10, 12, 8, 10, 10]) assert(per_call.observe(v));
+        assert_not(per_call.fitted());             // no basis: a plain per-call estimate
+        drop(early, same_size, per_call);
+    }
+
+
+    #[test]
+    /**
+     * Predicting output tokens from input tokens: an entitlement with no limit learns from observe() and
+     * is never metered. Record each call's output with its input and model; ask before the next call.
+     */
+    fn test_predict_output_tokens() {
+        const id = 'res_output';
+        self.create_customer(id, 'p');
+        const outputs = [320, 280, 300, 310, 290, 305, 295, 300, 310, 290];
+        for (const output in outputs) {
+            assert(self.observe(id, 'chat_output', output, context = using new { model: 'sonnet', input: self.SAMPLE_INPUTS[index] }));
+        }
+
+        const short = self.estimate(id, 'chat_output', quantile = 0.5, context = using new { model: 'sonnet', input: 20 });
+        assert(short.get('value') > 290 && short.get('value') < 320);
+        assert_eq(short.get('overhead'), 0);
+        assert_eq(short.get('scope'), 'customer');
+        const cautious = self.estimate(id, 'chat_output', context = using new { model: 'sonnet', input: 20 });
+        assert(cautious.get('value') > short.get('value') && cautious.get('value') < 340);
+
+        assert_null(self.estimate(id, 'chat_output', context = using new { model: 'haiku', input: 20 })); // per model
+        assert_eq(self.value(id, 'chat_output') ?? 0, 0);                                                // never metered
+    }
+
+
+    #[test]
+    /**
+     * A predicted hold for a short prompt with a long answer: settle() learns total tokens from input
+     * tokens, so the next hold covers the answer, not just the prompt.
+     */
+    fn test_reserve_short_prompt_long_answer() {
+        const id = 'res_short_long';
+        self.create_customer(id, 'p');
+        const outputs = [320, 280, 300, 310, 290, 305, 295, 300, 310, 290];
+        for (const output in outputs) {
+            const input = self.SAMPLE_INPUTS[index];
+            const hold = self.reserve(id, 'chat_total', input, using new { model: 'sonnet', input });
+            assert(self.settle(id, 'chat_total', hold, input + output, false));
+        }
+
+        // 20 input tokens: holds about 340 (a ratio would hold about 54, and the call would overrun it)
+        const short = self.reserve(id, 'chat_total', null, using new { model: 'sonnet', input: 20 });
+        const short_held = self.held(id, 'chat_total');
+        assert(short_held > 320 && short_held < 345);
+        assert(self.release(id, 'chat_total', short));
+
+        // 4000 input tokens: holds about 4300 (a ratio would hold about 10700)
+        const long = self.reserve(id, 'chat_total', null, using new { model: 'sonnet', input: 4000 });
+        const long_held = self.held(id, 'chat_total');
+        assert(long_held > 4280 && long_held < 4320);
+        assert(self.release(id, 'chat_total', long));
     }
 
 

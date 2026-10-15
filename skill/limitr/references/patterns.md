@@ -104,7 +104,7 @@ credits: {
             const rate = self.rates.get(context?.model ?? '');
             if (rate == null) return units * self.overhead_cost;
             const input = context.input ?? 0;
-            const output = context.output ?? Num::max(units - input, 0);   // reserve/estimate: no output yet
+            const output = context.output ?? Num::max(units - input, 0);   // reserve, before the call: no output yet
             input * rate.input + output * rate.output
         }
     }
@@ -125,6 +125,39 @@ run the model, then `settle(id, 'chat', hold, total_tokens, { model, input, outp
 provider's reported cost as `overhead`. Each event's `meter.price_diff` minus `meter.overhead_diff` is that call's
 margin. Cloud can update `rates` without a deploy. An `overhead_cost: true` cap limits what a customer can cost
 you (Ex. `add_customer_cap(id, 20, id = 'cost_guard', overhead_cost = true, resets = true)`).
+
+## Predict output tokens
+
+An entitlement with no `limit` is never metered, so it can learn anything about a call. Here it learns output tokens
+from input tokens, per model, next to the metered `chat` entitlement:
+
+```stof
+entitlements: {
+    chat: { estimate_basis: 'input', estimate_segment: 'model',
+        limit: { credit: 'ai_token', mode: 'soft', value: 2_000_000, resets: true } }
+    // never metered: learns output tokens from input tokens, per model
+    chat_output: { estimate_basis: 'input', estimate_segment: 'model' }
+}
+```
+
+After each call, record the output with the event data you already pass to `settle`. Before a call, ask for it:
+
+```stof
+policy.observe(id, 'chat_output', usage.output, context = using new { model: model, input: usage.input });
+const typical = policy.estimate(id, 'chat_output', quantile = 0.5, context = using new { model: model, input: input });
+// typical.get('value'): predicted output tokens (null until something has been learned for that model)
+```
+
+- **What it learns.** A fixed amount per call plus an amount per input token. Chat traffic (about 300 tokens
+  whatever the question) predicts about 300 for a 20-token prompt and for a 4,000-token one; summaries (a quarter of
+  the input) predict 5 and 1,000.
+- **Quantile.** 0.5 is the typical answer (a quote, a progress bar). 0.9 is a cautious one (`max_tokens`, a budget
+  check).
+- **Scope.** Each customer's own estimate takes over after 5 calls; before that, every customer's calls together.
+- **Segments.** If one model serves very different tasks (chat and summaries), segment by both: add a field such
+  as `kind: 'sonnet:chat'` to the event data and set `estimate_segment: 'kind'`. Keep the values few.
+- **Holds already use it.** `reserve` on `chat` with no value predicts total tokens the same way, so a short
+  question with a long answer holds enough. The separate entitlement is for when you need the output alone.
 
 ## Budgets for orgs and teams
 

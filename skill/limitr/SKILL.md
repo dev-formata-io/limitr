@@ -2,11 +2,12 @@
 name: limitr
 description: >
   Write, review, and debug Limitr policies: the credits, plans, entitlements, limits, caps, grants, topups, overhead
-  costs, reservations, and notifications that decide what each customer may do and what it costs. Limitr policies
-  are Stof documents run by the embedded Limitr engine, so use this together with the stof skill. Use for any
-  `Limitr policy: {...}` document, pricing or usage-limit design, allow()/check()/reserve()/settle() semantics,
-  meter or cap behavior, Limitr events, margin questions, or tests in the Limitr repo (src/spec, src/tests). For
-  calling Limitr from an application, also load the SDK skill for that language (Ex. limitr-ts).
+  costs, reservations, usage estimates, and notifications that decide what each customer may do and what it costs.
+  Limitr policies are Stof documents run by the embedded Limitr engine, so use this together with the stof skill.
+  Use for any `Limitr policy: {...}` document, pricing or usage-limit design, allow()/check()/reserve()/settle()
+  semantics, predicting a call's usage before it runs (Ex. output tokens from input tokens), meter or cap behavior,
+  Limitr events, margin questions, or tests in the Limitr repo (src/spec, src/tests). For calling Limitr from an
+  application, also load the SDK skill for that language (Ex. limitr-ts).
 ---
 
 # Limitr
@@ -74,7 +75,7 @@ Limitr policy: {
                 const rate = self.rates.get(context?.model ?? '');
                 if (rate == null) return units * self.overhead_cost;
                 const input = context.input ?? 0;
-                const output = context.output ?? Num::max(units - input, 0);   // reserve/estimate: no output yet
+                const output = context.output ?? Num::max(units - input, 0);   // reserve, before the call: no output yet
                 input * rate.input + output * rate.output
             }
         }
@@ -228,9 +229,10 @@ returns runes for `units` of the credit. `context` is the call's event data (the
 returns a non-number, the engine logs it (`err`, the console in JavaScript) and uses `units * overhead_cost`. When the
 host knows the real cost after the call, pass it as `allow(..., overhead)` instead.
 
-`reserve` and `estimate` call it before the call runs, with the predicted `units` and only the context passed to them,
-so fields known only afterwards (Ex. output tokens) are missing. Default every context field with `??` (arithmetic
-with null is an error in Stof), Ex. count the rest of the predicted units as output.
+`reserve` also calls it before the call runs when it has no learned overhead to hold (the first calls, or when you
+pass `value`), with the held `units` and only the context passed to `reserve`, so fields known only afterwards (Ex.
+output tokens) are missing. Default every context field with `??` (arithmetic with null is an error in Stof), Ex.
+count the rest of the held units as output.
 
 ## Reservations and estimates
 
@@ -258,13 +260,19 @@ policy.settle('user_1', 'chat', hold, 1500, using new { model: 'sonnet', input: 
 - Holds count on their own meter only, expire after `hold_ttl` (10 minutes), and are never billed.
 - `estimate(id, ent, basis?, segment?, quantile, context?)` returns `value`, `overhead`, `samples`, `source`, and
   `scope`. It uses the customer's own estimate after `estimate_min_samples` (5), else the policy-wide one.
-- **Basis:** `estimate_basis` names the event data field a call's size scales with (Ex. input tokens). Estimates
-  learn per unit of it and scale each prediction by it, so a bigger prompt gets a bigger hold. Without it,
-  estimates are per call. A per-basis call missing the field is logged and not learned from.
+- **Basis:** `estimate_basis` names the event data field a call's size depends on (Ex. input tokens). Estimates
+  learn a line from it: a fixed amount per call plus an amount per unit. That covers a chat answer that is about the
+  same length whatever the question, a summary that grows with the text, and anything in between. Until there are 5
+  calls with bases that differ, the average call is scaled by the basis (cautious holds). Without a basis, estimates
+  are per call. A per-basis call missing the field is logged and not learned from.
 - **Segment:** `estimate_segment` names the field that keeps separate estimates (Ex. per model). Keep its values
   few: a model or a feature, never a user or request ID.
 - `basis` and `segment` arguments override the event data. A `basis` for an entitlement with no `estimate_basis`
   is ignored (and logged).
+- **Predicting part of a call** (Ex. output tokens before the call runs, to set `max_tokens`, size a quote, or
+  route to a model): add an entitlement with no `limit`. It is never metered, so it only learns. `observe` the part
+  after each call with the call's event data, and `estimate` it before the next. See "Predict output tokens" in
+  `references/patterns.md`.
 
 ## Events and notifications
 

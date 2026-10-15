@@ -25,6 +25,11 @@
  * observe() calls; a recent-weighted mean and variance (exponential smoothing), so the estimate follows
  * changes in how customers use a feature. Early on (fewer than 1/alpha samples) it is a plain average.
  *
+ * With a basis (Ex. input tokens), it learns a line: a fixed amount per call plus an amount per unit of
+ * basis (Ex. a chat answer is about 300 tokens whatever the question, while a summary grows with the text).
+ * Until the line is reliable (FIT_SAMPLES calls, with bases that differ by FIT_SPREAD), it scales the
+ * average call by the basis instead.
+ *
  * Estimates are plain policy data: Cloud can seed them (a prior for new customers or engines) or replace
  * them with numbers pooled across every engine - set the fields and `source: 'cloud'`.
  */
@@ -35,17 +40,38 @@ Estimate: {
     /// Smoothing factor: how much each new observation counts once there are enough samples.
     float alpha: 0.1;
 
-    /// Learned per unit of basis (Ex. per input token) instead of per call. Follows the entitlement's
-    /// estimate_basis: when that changes, the estimate starts over (earlier samples are in other units).
+    /// Learned against a basis (Ex. input tokens), so predictions follow the size of the call. Follows
+    /// the entitlement's estimate_basis: when that changes, the estimate starts over.
     bool per_basis: false;
 
-    /// Running mean and variance of a call's value (credit units; per unit of basis when per_basis).
+    /// Running mean and variance of a call's value (credit units).
     float value_mean: 0;
     float value_var: 0;
 
-    /// Running mean and variance of a call's provider overhead (runes; per unit of basis when per_basis).
+    /// Running mean and variance of a call's provider overhead (runes).
     float overhead_mean: 0;
     float overhead_var: 0;
+
+    /// Running mean and variance of a call's basis (per_basis only).
+    float basis_mean: 0;
+    float basis_var: 0;
+
+    /// How a call's value and overhead move with its basis: running covariances (per_basis only).
+    float value_cov: 0;
+    float overhead_cov: 0;
+
+    #[no-export]
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Estimate>.FIT_SAMPLES.
+    /// Calls needed before per-basis predictions use the learned line.
+    const int FIT_SAMPLES: 5;
+
+    #[no-export]
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Estimate>.FIT_SPREAD.
+    /// How much the bases must differ (standard deviation over mean) before the line is used: with
+    /// calls that are all about the same size, the line can't tell a fixed amount from a per-unit one.
+    const float FIT_SPREAD: 0.1;
 
     /// 'local' (learned in this engine) or 'cloud' (seeded or pooled by Limitr Cloud).
     str source: 'local';
@@ -75,20 +101,23 @@ Estimate: {
             if (self.samples > 0) self.reset();
             self.per_basis = per_basis;
         }
-        let v = (value as float).remove_units();
-        let o = (overhead as float).remove_units();
-        if (self.per_basis) {
-            if (basis == null || basis <= 0) return false;
-            v = v / basis;
-            o = o / basis;
-        }
+        if (self.per_basis && (basis == null || basis <= 0)) return false;
+        const v = (value as float).remove_units();
+        const o = (overhead as float).remove_units();
 
         const n = self.samples + 1;
         const w = max(self.alpha ?? 0.1, 1.0 / n); // plain average until 1/alpha samples
         const dv = v - self.value_mean;
+        const dov = o - self.overhead_mean;
+        if (self.per_basis) {
+            const db = basis - self.basis_mean;
+            self.basis_mean += w * db;
+            self.basis_var = (1 - w) * (self.basis_var + (db * w * db));
+            self.value_cov = (1 - w) * (self.value_cov + (db * w * dv));
+            self.overhead_cov = (1 - w) * (self.overhead_cov + (db * w * dov));
+        }
         self.value_mean += w * dv;
         self.value_var = (1 - w) * (self.value_var + (dv * w * dv));
-        const dov = o - self.overhead_mean;
         self.overhead_mean += w * dov;
         self.overhead_var = (1 - w) * (self.overhead_var + (dov * w * dov));
 
@@ -107,6 +136,10 @@ Estimate: {
         self.value_var = 0;
         self.overhead_mean = 0;
         self.overhead_var = 0;
+        self.basis_mean = 0;
+        self.basis_var = 0;
+        self.value_cov = 0;
+        self.overhead_cov = 0;
         self.source = 'local';
         self.updated = null;
     }
@@ -119,20 +152,48 @@ Estimate: {
      */
     fn predict(basis?: float, quantile: float = 0.9) -> map {
         if (self.samples < 1) return null;
-        let scale = 1.0;
+        let value = (self.value_mean, self.value_var);
+        let overhead = (self.overhead_mean, self.overhead_var);
         if (self.per_basis) {
-            if (basis == null || basis <= 0) return null;
-            scale = basis;
+            if (basis == null || basis <= 0 || self.basis_mean <= 0) return null;
+            value = self.at_basis(basis, self.value_mean, self.value_var, self.value_cov);
+            overhead = self.at_basis(basis, self.overhead_mean, self.overhead_var, self.overhead_cov);
         }
         const z = <Estimate>.z_score(quantile);
-        const value = max(0, self.value_mean + (z * Num::sqrt(max(0, self.value_var)))) * scale;
-        const overhead = max(0, self.overhead_mean + (z * Num::sqrt(max(0, self.overhead_var)))) * scale;
         map(
-            ('value', Num::round(value, 9)),        // outgoing read: 1e-9, like the engine's other reads
-            ('overhead', Num::round(overhead, 9)),
+            ('value', Num::round(max(0, value[0] + (z * Num::sqrt(max(0, value[1])))), 9)), // outgoing read: 1e-9
+            ('overhead', Num::round(max(0, overhead[0] + (z * Num::sqrt(max(0, overhead[1])))), 9)),
             ('samples', self.samples),
             ('source', self.source)
         )
+    }
+
+
+    /**
+     * Do per-basis predictions use the learned line (a fixed amount per call plus an amount per unit)?
+     * Not until there are FIT_SAMPLES calls whose bases differ enough to tell the two apart.
+     */
+    fn fitted() -> bool {
+        self.per_basis &&
+            self.samples >= <Estimate>.FIT_SAMPLES &&
+            self.basis_mean > 0 &&
+            Num::sqrt(max(0, self.basis_var)) >= <Estimate>.FIT_SPREAD * self.basis_mean
+    }
+
+
+    /**
+     * A call's expected amount and its variance at a basis, as (mean, variance).
+     * On the learned line: the average call, moved by the slope (covariance / basis variance) for how far
+     * this basis is from the average one; the variance is what the line doesn't explain. Before the line
+     * is reliable: the average call, scaled by how much bigger this basis is than the average one.
+     */
+    fn at_basis(basis: float, mean: float, variance: float, covariance: float) -> (float, float) {
+        if (self.fitted()) {
+            const slope = covariance / self.basis_var;
+            return (mean + (slope * (basis - self.basis_mean)), variance - (slope * covariance));
+        }
+        const scale = basis / self.basis_mean;
+        (mean * scale, variance * scale * scale)
     }
 
 

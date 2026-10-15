@@ -2,10 +2,10 @@
 name: limitr-ts
 description: >
   Use Limitr from TypeScript or JavaScript with the @formata/limitr package: create the engine, load policies and
-  customers, gate calls with allow/check, reserve and settle LLM calls, handle events, persist customer state, and
-  connect to Limitr Cloud. Use for code that imports @formata/limitr or calls Limitr.new / Limitr.cloud, and for
-  integrating usage limits, credits, or pricing into a Node, Deno, Bun, or browser app. Load the limitr skill for
-  policy semantics and the stof skill for Stof syntax.
+  customers, gate calls with allow/check, reserve and settle LLM calls, predict output tokens before a call, handle
+  events, persist customer state, and connect to Limitr Cloud. Use for code that imports @formata/limitr or calls
+  Limitr.new / Limitr.cloud, and for integrating usage limits, credits, or pricing into a Node, Deno, Bun, or browser
+  app. Load the limitr skill for policy semantics and the stof skill for Stof syntax.
 ---
 
 # Limitr for TypeScript
@@ -129,6 +129,26 @@ try {
   records a call without a hold.
 - `basis` and `segment` options override what the event data says. They are rarely needed.
 - Keep the segment field's values low-cardinality (a model name, a feature), never a user or request ID.
+
+### Predict output tokens before a call
+
+Add an entitlement with no limit next to `chat` (it is never metered, so it only learns):
+`chat_output: { estimate_basis: 'input', estimate_segment: 'model' }`. Record each call's output, then ask before
+the next one:
+
+```ts
+// after the call, next to settle
+await limitr.observe(userId, 'chat_output', res.usage.output_tokens,
+    { context: { model, input: res.usage.input_tokens } });
+
+// before a call: typical (0.5) for a quote or a progress bar, cautious (0.9) for max_tokens or a budget check
+const predicted = await limitr.estimate(userId, 'chat_output', { context: { model, input: inputTokens }, quantile: 0.5 });
+const expectedOutput = predicted?.value ?? null;   // null until something has been learned for this model
+```
+
+It learns a fixed amount per call plus an amount per input token, so a short question that gets a long answer
+predicts a long answer. Each customer's own numbers take over after 5 calls. `reserve` on `chat` already predicts
+total tokens the same way; use this when you need the output alone.
 
 ## Spend caps
 
