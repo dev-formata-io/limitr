@@ -194,8 +194,14 @@ flag), given a `credit`.
 - **Scope:** `scope: 'org'` on an entitlement meters it on the nearest customer of that type through the refs chain
   (breadth-first). A user calling `increment('user_1', 'seats')` moves the org's seat meter. A caller with no
   customer of that type in its refs is denied.
-- **Alt IDs** (`alt_ids`, `set_alt_customer_id`) let other identifiers (an email, an auth ID) resolve to a customer.
-- `set_customer_plan(id, plan, overwrite_meters = false)` changes plans and fires `customer-plan-changed`.
+- **Alt IDs** (`alt_ids`, `set_alt_customer_id`) let other identifiers (an auth ID, a Stripe customer ID) resolve to a
+  customer.
+- `set_customer_plan(id, plan, overwrite_meters = false)` changes plans and fires `customer-plan-changed`. Included
+  topup balances move to the new plan's included topup in the same credit by its `plan_change` (`top_up` by
+  default: raise to the new amount, never lower); purchased ones stay.
+- **IDs** and alt IDs can't contain a period (fields are found by '.' paths). `create_customer`, `set_customer`, and
+  `set_alt_customer_id` refuse one and log an error. For an email, replace its periods with your own placeholder, or
+  keep it in metadata.
 - **Plan subscription:** `ensure_plan_subscription(id)` increments the plan's `subscription` entitlement once
   (after the `trial_period`), so a credit priced as the plan fee bills it. Never called automatically.
 
@@ -297,8 +303,9 @@ returns runes for `units` of the credit. `context` is the call's event data (the
 `event`), or null. It can read anything in the policy, such as a rate table that Cloud updates. If it throws or
 returns a non-number, the engine logs it (`err`, the console in JavaScript) and uses `units * overhead_cost`. When the
 host knows the real cost after the call, pass it as `allow(..., overhead)` instead. Several credits can share one
-cost function: `overhead: <Costs>.per_model` (a field pointing at a function in a `#[type]`) works like defining it
-inline.
+cost function: `overhead: <Costs>.per_model` (a field pointing at a function in a `#[type]`). A shared function
+isn't defined on the credit, so `self` inside it is not the credit: keep the data it reads on the type
+(`<Costs>.rates`) or elsewhere in the policy (`root.policy`).
 
 `reserve` also calls it before the call runs when it has no learned overhead to hold (the first calls, or when you
 pass `value`), with the held `units` and only the context passed to `reserve`, so fields known only afterwards (Ex.

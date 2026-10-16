@@ -1,0 +1,239 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Included topups on a plan change. A customer's included balance in a credit carries into the new plan's
+// included topup in that credit, by that topup's plan_change: 'top_up' (the default) raises the balance to the
+// new amount and never lowers it, 'replace' starts over at the new amount, and 'keep' leaves it until the next
+// reset. Purchased topups stay with the customer. Included balances nothing takes over are removed.
+//
+Limitr TestPlanTopupsPolicy: {
+    credits: {
+        tok: { label: 'Token' }
+        img: { label: 'Image' }
+    }
+
+    plans: {
+        starter: {
+            default: true
+            entitlements: {
+                chat: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
+                images: { limit: { credit: 'img', mode: 'hard', value: 0 } }
+            }
+            topups: {
+                bonus: { credit: 'tok', value: 100, included: true, resets: true, reset_sch: 'monthly:1' }
+                pack: { credit: 'tok', value: 1000 }
+                img_bonus: { credit: 'img', value: 5, included: true }
+                add_pack: { credit: 'img', value: 10, resets: true, reset_sch: 'monthly:1', reset_mode: 'add' }
+            }
+        }
+        pro: {
+            entitlements: {
+                chat: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
+                images: { limit: { credit: 'img', mode: 'hard', value: 0 } }
+            }
+            topups: {
+                monthly: { credit: 'tok', value: 500, included: true, resets: true, reset_sch: 'monthly:1' }
+            }
+        }
+        pro_replace: {
+            entitlements: { chat: { limit: { credit: 'tok', mode: 'hard', value: 0 } } }
+            topups: { monthly: { credit: 'tok', value: 500, included: true, plan_change: 'replace' } }
+        }
+        pro_keep: {
+            entitlements: { chat: { limit: { credit: 'tok', mode: 'hard', value: 0 } } }
+            topups: { monthly: { credit: 'tok', value: 500, included: true, plan_change: 'keep' } }
+        }
+        orgs_only: {
+            entitlements: { chat: { limit: { credit: 'tok', mode: 'hard', value: 0 } } }
+            topups: { org_bonus: { credit: 'tok', value: 200, included: true, included_scopes: ['org'] } }
+        }
+    }
+
+
+    /// Included and purchased grants on a customer, as 'topup:value' (sorted, so tests don't depend on order).
+    fn grants_of(id: str) -> list {
+        const out = [];
+        for (const (_, grant) in self.customer(id).grants.fields()) out.push_back(`${grant.topup}:${grant.value}`);
+        out.sort();
+        out
+    }
+
+
+    #[test]
+    /**
+     * Upgrading tops the included balance up to the new plan's amount, in one grant (not a second one).
+     */
+    fn test_upgrade_tops_up() {
+        const id = 'pt_upgrade';
+        self.create_customer(id, 'starter');
+        assert(self.allow(id, 'chat', 40));
+        assert_eq(self.credit_remaining(id, 'tok'), 60);
+        assert(self.set_customer_plan(id, 'pro'));
+        assert_eq(self.credit_remaining(id, 'tok'), 500);
+        assert_eq(self.grants_of(id), ['monthly:500']);
+    }
+
+
+    #[test]
+    /**
+     * Downgrading keeps the larger balance, and the grant follows the new plan's topup from then on.
+     */
+    fn test_downgrade_keeps_balance() {
+        const id = 'pt_downgrade';
+        self.create_customer(id, 'pro');
+        assert(self.allow(id, 'chat', 100));
+        assert(self.set_customer_plan(id, 'starter'));
+        assert_eq(self.credit_remaining(id, 'tok'), 400);
+        const grant = self.customer(id).grants.at(0)[1];
+        assert_eq(grant.topup, 'bonus');
+        assert_eq(grant.plan, 'starter');
+        assert_eq(grant.starting_value, 100);
+    }
+
+
+    #[test]
+    /**
+     * Upgrading and downgrading again never mints more than the larger plan's amount.
+     */
+    fn test_flipping_plans() {
+        const id = 'pt_flip';
+        self.create_customer(id, 'starter');
+        for (const i in 3) {
+            self.set_customer_plan(id, 'pro');
+            self.set_customer_plan(id, 'starter');
+        }
+        assert_eq(self.credit_remaining(id, 'tok'), 500);
+    }
+
+
+    #[test]
+    /**
+     * 'replace' starts over at the new plan's amount, up or down.
+     */
+    fn test_replace() {
+        const id = 'pt_replace';
+        self.create_customer(id, 'starter');
+        assert(self.allow(id, 'chat', 40));
+        assert(self.set_customer_plan(id, 'pro_replace'));
+        assert_eq(self.credit_remaining(id, 'tok'), 500);
+        assert(self.allow(id, 'chat', 450));
+        assert(self.set_customer_plan(id, 'pro_replace') == false);   // same plan: nothing changes
+        assert_eq(self.credit_remaining(id, 'tok'), 50);
+    }
+
+
+    #[test]
+    /**
+     * 'keep' leaves the balance as it is when the customer moves to the plan.
+     */
+    fn test_keep() {
+        const id = 'pt_keep';
+        self.create_customer(id, 'starter');
+        assert(self.allow(id, 'chat', 40));
+        assert(self.set_customer_plan(id, 'pro_keep'));
+        assert_eq(self.credit_remaining(id, 'tok'), 60);
+        assert_eq(self.grants_of(id), ['monthly:60']);
+    }
+
+
+    #[test]
+    /**
+     * Purchased topups stay with the customer through plan changes, and keep their own balance.
+     */
+    fn test_purchased_stay() {
+        const id = 'pt_purchased';
+        self.create_customer(id, 'starter');
+        assert(self.apply_customer_topup(id, 'pack'));
+        assert(self.set_customer_plan(id, 'pro'));
+        assert_eq(self.grants_of(id), ['monthly:500', 'pack:1000']);
+        assert(self.set_customer_plan(id, 'starter'));
+        assert_eq(self.grants_of(id), ['bonus:500', 'img_bonus:5', 'pack:1000']);
+    }
+
+
+    #[test]
+    /**
+     * An included balance the new plan has nothing for is removed: it came with the old plan.
+     */
+    fn test_unmatched_included_removed() {
+        const id = 'pt_unmatched';
+        self.create_customer(id, 'starter');
+        assert_eq(self.credit_remaining(id, 'img'), 5);
+        assert(self.set_customer_plan(id, 'pro'));
+        assert_eq(self.credit_remaining(id, 'img'), 0);
+    }
+
+
+    #[test]
+    /**
+     * A topup included only for orgs isn't granted to a user, and the user's old included balance doesn't carry.
+     */
+    fn test_included_scopes() {
+        const user = 'pt_scope_user';
+        const org = 'pt_scope_org';
+        self.create_customer(user, 'starter');
+        self.create_customer(org, 'starter', 'org');
+        assert(self.set_customer_plan(user, 'orgs_only'));
+        assert(self.set_customer_plan(org, 'orgs_only'));
+        assert_eq(self.grants_of(user), []);
+        assert_eq(self.grants_of(org), ['org_bonus:200']);
+    }
+
+
+    #[test]
+    /**
+     * Grants from before 0.7.2 don't say which plan they came from: they're treated as the plan being left.
+     */
+    fn test_grants_without_a_plan() {
+        const id = 'pt_legacy';
+        self.create_customer(id, 'starter');
+        for (const (_, grant) in self.customer(id).grants.fields()) grant.plan = null;
+        assert(self.allow(id, 'chat', 30));
+        assert(self.set_customer_plan(id, 'pro'));
+        assert_eq(self.grants_of(id), ['monthly:500']);
+    }
+
+
+    #[test]
+    /**
+     * Starting the meters over (overwrite_meters) doesn't change how included balances move.
+     */
+    fn test_overwrite_meters() {
+        const id = 'pt_overwrite';
+        self.create_customer(id, 'starter');
+        assert(self.allow(id, 'chat', 40));
+        assert(self.set_customer_plan(id, 'pro', true));
+        assert_eq(self.value(id, 'chat'), 0);
+        assert_eq(self.credit_remaining(id, 'tok'), 500);
+    }
+
+
+    #[test]
+    /**
+     * A grant on a calendar schedule starts in the current period: its first read doesn't reset it (an 'add'
+     * grant used to double, and a balance carried over from another plan used to fall back to its starting value).
+     */
+    fn test_calendar_grant_starts_in_period() {
+        const id = 'pt_calendar';
+        self.create_customer(id, 'starter');
+        assert(self.apply_customer_topup(id, 'add_pack'));
+        assert_eq(self.credit_remaining(id, 'img'), 15);    // 5 included + 10, not 25
+        self.set_customer_plan(id, 'pro');
+        self.set_customer_plan(id, 'starter');
+        assert_eq(self.credit_remaining(id, 'tok'), 500);   // carried, not reset to the bonus's 100
+    }
+}

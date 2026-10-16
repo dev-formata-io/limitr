@@ -62,7 +62,7 @@ policy: {
 ## Customers
 
 ```ts
-await limitr.ensureCustomer(userId, 'pro', 'user', 'Ada', [orgId], [email]); // creates if missing, true if created
+await limitr.ensureCustomer(userId, 'pro', 'user', 'Ada', [orgId], [authId]); // creates if missing, true if created
 await limitr.createCustomer(orgId, 'pro', 'org', 'Acme');                     // returns the customer record
 await limitr.setCustomerPlan(userId, 'team');                                 // plan change
 await limitr.customer(userId);                                                // LimitrCustomer | undefined
@@ -70,10 +70,14 @@ await limitr.customer(userId);                                                //
 
 Arguments are `(id, plan = '', type = 'user', label = 'User', refs = null, alts = null, metadata = null)`. An empty
 plan inherits from refs, then the policy's default plan. Use refs for user to team to org, and alts for other IDs
-(email, auth subject, Stripe customer) that should resolve to the same customer.
+(auth subject, Stripe customer) that should resolve to the same customer.
 
 Note: `setCustomerPlan(id, plan, overwrite_meters = true)` resets meters by default in TypeScript; pass `false` to
-keep usage across the plan change.
+keep usage across the plan change. Included topup balances move to the new plan's included topups (`top_up` by
+default: raised to the new amount, never lowered), and purchased ones stay.
+
+IDs and alt IDs can't contain a period: the customer isn't created (`createCustomer` returns undefined) and the
+engine logs an error. For an email, replace its periods with your own placeholder, or keep it in metadata.
 
 ## Gate calls
 

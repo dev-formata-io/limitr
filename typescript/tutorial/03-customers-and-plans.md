@@ -1,6 +1,6 @@
 # 3. Customers and plans
 
-Every customer has an ID (yours: a user ID, an org ID, an email), a plan, and a type. Customers can point at other
+Every customer has an ID (yours: a user ID, an org ID), a plan, and a type. Customers can point at other
 customers with **refs**, which is how a user belongs to a team or an org.
 
 ```ts
@@ -62,7 +62,10 @@ after upgrade: 2 of 50
 - `setCustomerPlan` moves a customer to another plan. Passing `false` keeps the usage counted so far, so an upgrade
   mid-month doesn't hand out a fresh allowance. Leave it out to start the meters over.
 
-Customers can also have **alt IDs**: other identifiers that point to the same customer, such as an email or a payment
-provider's customer ID (`ensureCustomer(id, plan, type, label, refs, ['ada@example.com'])`).
+Customers can also have **alt IDs**: other identifiers that point to the same customer, such as an auth provider's
+user ID or a payment provider's customer ID (`ensureCustomer(id, plan, type, label, refs, ['cus_123'])`).
+
+IDs and alt IDs can't contain a period. To use an email, replace its periods with a placeholder of your own, or keep
+the email in the customer's metadata.
 
 Next: [Limits and resets](04-limits-and-resets.md)

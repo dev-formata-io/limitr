@@ -180,6 +180,18 @@ Customer: {
     }
 
 
+    #[static]
+    /**
+     * Customer IDs and alt IDs can't contain a period: the policy finds customers by '.' paths.
+     * Logs an error and returns false when one does (Ex. an email; replace its periods with your own placeholder).
+     */
+    fn valid_id(id: str!) -> bool {
+        if (!id.contains('.')) return true;
+        err(`Limitr: customer and alt IDs can't contain a period: '${id}'`);
+        false
+    }
+
+
     /**
      * This customer's meter for an entitlement, created if missing.
      */
@@ -268,59 +280,76 @@ Customer: {
 
 
     /**
-     * Update topup grants with their respective topup definitions in the plan.
-     * Topup grants adapt to the topup definition they are associated with.
+     * Keep topup grants in step with their topup definitions, and with the plan this customer is on.
+     * - A grant follows the topup it came from (on the plan it came from), and is removed when that topup is gone.
+     * - Purchased grants stay with the customer through plan changes.
+     * - Included grants from a previous plan carry over into this plan's included topup in the same credit,
+     *   by that topup's plan_change ('top_up', 'replace', or 'keep'), and are removed when nothing takes them.
+     * - This plan's included topups (in scope for this customer's type) are granted when missing.
      */
     fn update_topup_plan_grants(policy: Limitr, plan: Plan) -> bool {
         if (policy == null || plan == null) return false;
 
-        let set_topup_names = set();
-        for (const pair in self.grants.fields()) {
-            const grant_id = pair[0];
-            const grant: Grant = pair[1];
-            const top: Topup = grant.topup != null ? plan.topups.get(grant.topup) : null;
-            if (top != null) {
-                if (top.included && top.included_scopes != null && !top.included_scopes.contains(self.type)) {
-                    // was included by default with the plan, now no longer applies to this customer
-                    self.grants.remove(grant_id, shallow = false);
-                } else {
-                    set_topup_names.insert(grant.topup);
-                    grant.credit = top.credit;
-                    grant.starting_value = top.value;
-                    grant.resets = top.resets;
-                    grant.reset_inc = top.reset_inc;
-                    grant.reset_sch = top.reset_sch;
-                    grant.expires_on = top.expires_after != null ? grant.created_on + top.expires_after : null;
-                    grant.reset_mode = top.reset_mode;
-                    grant.rollover_min = top.rollover_min;
-                    grant.rollover_max = top.rollover_max;
-                    grant.rollover_pct = top.rollover_pct;
-                    grant.max_balance = top.max_balance;
-                    grant.reset_catchup_cap = top.reset_catchup_cap;
-                }
-            } else if (grant.topup != null) {
-                // this grant was defined via a topup, and the topup no longer exists, so remove the grant too
-                self.grants.remove(grant_id, shallow = false);
+        const granted = set();   // this plan's topups that have a grant
+        const carried = [];      // included grants from a previous plan
+        for (const (grant_id, grant) in self.grants.fields()) {
+            grant as Grant;
+            if (grant.topup == null) continue;
+            const source: Plan = grant.plan != null ? policy.plans.get(grant.plan) : plan;
+            const top: Topup = source != null ? source.topups.get(grant.topup) : null;
+            if (top == null) {
+                self.grants.remove(grant_id, shallow = false); // its topup no longer exists
+            } else if (top.included && source != plan) {
+                carried.push_back(grant);
+            } else if (top.included && top.included_scopes != null && !top.included_scopes.contains(self.type)) {
+                self.grants.remove(grant_id, shallow = false); // included, but not for this customer's type
+            } else {
+                if (source == plan) granted.insert(grant.topup);
+                grant.follow(top);
             }
         }
 
-        // Make sure all included plan topups are applied to this customer
-        for (const pair in plan.topups.fields()) {
-            const name = pair[0];
-            const top: Topup = pair[1];
-            if (top.included && !set_topup_names.contains(name) && (top.included_scopes == null || top.included_scopes.contains(self.type))) {
-                const cred = policy.credit(top.credit);
-                if (cred != null) {
-                    set_topup_names.insert(name);
-                    const units = cred.stof_units ?? 'float';
-                    const grant = top.create_grant(units, self.grants);
-                    grant.topup = name;
-                    self.grants.insert(grant.id, grant);
+        // This plan's included topups: carry a previous plan's included balance over, or grant in full
+        const used = set();
+        for (const (name, top) in plan.topups.fields()) {
+            top as Topup;
+            if (!top.included || granted.contains(name)) continue;
+            if (top.included_scopes != null && !top.included_scopes.contains(self.type)) continue;
+            const cred = policy.credit(top.credit);
+            if (cred == null) continue;
+            granted.insert(name);
+            const units = cred.stof_units ?? 'float';
+
+            let carry: Grant = null;
+            if (top.plan_change != 'replace') {
+                for (const grant: Grant in carried) {
+                    if (grant.credit == top.credit && !used.contains(grant.id)) {
+                        carry = grant;
+                        break;
+                    }
                 }
+            }
+            if (carry != null) {
+                used.insert(carry.id);
+                carry.topup = name;
+                carry.plan = plan.name;
+                carry.follow(top);
+                const full = (top.value as float).to_units(units);
+                if (top.plan_change == 'top_up' && carry.value < full) carry.value = full;
+            } else {
+                const grant = top.create_grant(units, self.grants);
+                grant.topup = name;
+                grant.plan = plan.name;
+                self.grants.insert(grant.id, grant);
             }
         }
 
-        set_topup_names.any()
+        // Previous plans' included grants that nothing carried over
+        for (const grant: Grant in carried) {
+            if (!used.contains(grant.id)) self.grants.remove(grant.id, shallow = false);
+        }
+
+        granted.any()
     }
 
 

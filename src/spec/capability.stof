@@ -144,12 +144,13 @@ Capability: {
      * Claude tool result (use the same object as in claude_tool_use after run).
      */
     fn claude_tool_result(tool_use: obj!, arena?: obj) -> obj {
-        let content = self.get_result() ?? '';
-        content = switch (typeof content) {
-            case 'obj': stringify('json', content)
-            case 'float': (content.remove_units() as str)
-            case 'str': content
-            default: str(content)
+        // Tool results are text: a new variable, since assigning a str to one holding a float keeps it a float
+        const result = self.get_result() ?? '';
+        const content = switch (typeof result) {
+            case 'obj': stringify('json', result)
+            case 'float': (result.remove_units() as str)
+            case 'str': result
+            default: str(result)
         };
         new {
             type: 'tool_result',

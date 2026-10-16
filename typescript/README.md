@@ -73,7 +73,7 @@ allowed. The rules spread across services, every check is a network call, and ch
 in several places. Limitr works differently:
 
 - **It runs in your process.** The engine is a small WebAssembly runtime inside your app. Checking a limit and
-  recording usage takes a millisecond or two, with nothing to call and nothing to fall over.
+  recording usage happens in-process, with nothing to call and nothing to fall over.
 - **Pricing is one document.** Plans, limits, credits, prices, costs, caps, feature rules, and top-ups live in one
   policy you can read, review, diff, and commit, in JSON, YAML, TOML, or [Stof](https://stof.dev). Change the policy
   and every check follows it.

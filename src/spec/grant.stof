@@ -30,6 +30,9 @@ Grant: {
     /// Topup name - set when created via topup.
     str topup: null;
 
+    /// Plan whose topup this grant came from (null on grants from before 0.7.2: the customer's plan).
+    str plan: null;
+
     /// Created on timestamp.
     ms! created_on: 0;
 
@@ -75,6 +78,27 @@ Grant: {
     /// If grant is 5 periods behind, default behavior is to call reset_period 5 times.
     /// If capped to 1 for example, reset_period will be called once.
     int reset_catchup_cap: null;
+
+
+    /**
+     * Follow a topup's definition (the topup this grant came from, or the one it moved to on a plan change).
+     * The balance is left as it is.
+     */
+    fn follow(top: Topup!) {
+        self.credit = top.credit;
+        self.starting_value = top.value;
+        self.resets = top.resets;
+        self.reset_inc = top.reset_inc;
+        self.reset_sch = top.reset_sch;
+        if (self.reset_sch != null && self.last_reset == null) self.last_reset = Time::start_of_period(Time::now(), self.reset_sch);
+        self.expires_on = top.expires_after != null ? self.created_on + top.expires_after : null;
+        self.reset_mode = top.reset_mode;
+        self.rollover_min = top.rollover_min;
+        self.rollover_max = top.rollover_max;
+        self.rollover_pct = top.rollover_pct;
+        self.max_balance = top.max_balance;
+        self.reset_catchup_cap = top.reset_catchup_cap;
+    }
 
 
     /**

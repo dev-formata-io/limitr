@@ -46,7 +46,7 @@ unknown entitlement: false
 - **Sandboxed.** A policy can carry functions (chapter 7), and they run in Stof's sandbox: no network, files, or
   environment variables unless your app explicitly allows them, Ex. `limitr.doc.allowHttp(['api.example.com'])`.
 - **Time limit.** A call that runs longer than 5 seconds fails instead of blocking every call after it, Ex. a cost
-  function stuck in a loop. Engine calls take a few milliseconds, so you'll only see this if a policy function goes
-  wrong. Change it with `limitr.setMaxExecutionTime(ms)`, or pass `null` for no limit.
+  function stuck in a loop. You'll only see this if a policy function goes wrong. Change it with
+  `limitr.setMaxExecutionTime(ms)`, or pass `null` for no limit.
 
 Next: [Going to Cloud](13-going-to-cloud.md)

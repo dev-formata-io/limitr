@@ -4,6 +4,42 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.7.2
+
+### Fixed
+
+- **Customer and alt IDs with a period are refused.** The policy finds customers by '.' paths, so before, an ID with
+  a period (Ex. an email) created nothing usable, silently. `create_customer` and `set_customer` now return null,
+  `set_alt_customer_id` returns false, and loading a customer or policy skips the ID, each with an error logged
+  (`<Customer>.valid_id`). To use an email, replace its periods with your own placeholder, or keep it in metadata.
+- **Calendar grants start in the current period.** A grant on a `reset_sch` schedule was reset on its first read,
+  so a new `reset_mode: 'add'` grant doubled. Grants now record the current period when they're created.
+- **Tool results are text.** `claude_tool_use` returned a number as a number when a capability's result came from a
+  typed function; it's always a string now, as the Claude API expects.
+- **Capabilities written in a policy** are named after their field in `claude_tools()` (before, their name was
+  empty unless they were added with `set_capabilities`).
+- **TypeScript:** `ensureCustomer` returns false when the customer couldn't be created (no plan resolves, or the ID
+  has a period), and `loadCustomers` uses each record's own `id` when it has one.
+
+### Changed
+
+- **Included topups follow plan changes.** `set_customer_plan` now moves a customer's included topup balances to the
+  new plan (no separate `ensure_included_topups` call). A balance carries into the new plan's included topup in the
+  same credit, by that topup's new `plan_change` field:
+  - `'top_up'` (default): raise the balance to the new topup's value, never lower it. Downgrades keep the larger
+    balance, and moving between plans can't add more than the larger plan's amount.
+  - `'replace'`: start over at the new topup's value.
+  - `'keep'`: leave the balance as it is until the next reset.
+
+  The grant then follows the new topup's definition (resets, expiry, rollover). Purchased topups stay with the
+  customer and keep following the plan they were bought on. An included balance the new plan has nothing for, in
+  that credit and for that customer type, is removed. Grants record the plan their topup came from (`Grant.plan`);
+  grants from before 0.7.2 are treated as coming from the plan being left.
+- **Docs:** the limitr skill corrects the shared cost function note (a shared `overhead` function's `self` is not
+  the credit), the `internal-self-updated` event name, and removes a plan reuse example that didn't validate. The
+  README and tutorial say "in-process" instead of timing figures, and the tutorial and skills no longer use an email
+  as an alt ID.
+
 ## 0.7.1
 
 ### Changed

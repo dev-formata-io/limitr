@@ -165,6 +165,39 @@ SyncTests: {
 
     #[test]
     /**
+     * Capabilities written in the policy are named after their field, and a tool result is always text.
+     */
+    fn test_policy_capabilities_and_text_results() {
+        const holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: {} } } }
+            capabilities: {
+                quote: {
+                    description: 'Quote tokens in USD'
+                    parameters: [{ name: 'tokens', description: 'Tokens', schema_type: 'number' }]
+                    result: 'usd'
+                    #[run]
+                    fn calc() { self.output.usd = self.usd(self.input.tokens as float); }
+                    fn usd(tokens: float) -> float { (tokens * 0.00002).round(2) }
+                }
+            }
+        }`, holder, 'stof');
+        const policy: Limitr = holder.policy;
+
+        using tools = new {};
+        parse(policy.claude_tools(), tools, 'json');
+        assert_eq(tools.tools[0].name, 'quote');
+
+        using result = new {};
+        parse(policy.claude_tool_use('{ "type": "tool_use", "id": "toolu_3", "name": "quote", "input": { "tokens": 1234567 } }'), result, 'json');
+        assert_eq(result.content, '24.69');
+        drop(holder);
+    }
+
+
+    #[test]
+    /**
      * Notifications registered from Stof are set on the policy.
      */
     fn test_set_notifications() {

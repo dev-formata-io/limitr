@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.7.1;
+    ver version: 0.7.2;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1246,7 +1246,7 @@ Limitr: {
 
 
     /**
-     * Get a global customer by ID.
+     * Get a customer by ID or alt ID.
      */
     fn customer(id: str!) -> Customer {
         const sub = self.customers.get(id);
@@ -1260,8 +1260,10 @@ Limitr: {
 
     /**
      * Create a customer with an ID and plan ID.
+     * Null when no plan resolves, or when the ID contains a period (logged).
      */
     fn create_customer(id: str!, plan: str! = '', type: str! = 'user', label: str! = 'User', refs?: list, alts?: list, metadata?: str | obj) -> Customer {
+        if (!<Customer>.valid_id(id)) return null;
         let pn = self.plan(plan, default = false);
         if (pn == null && refs != null) {
             for (const ref in refs) {
@@ -1349,6 +1351,7 @@ Limitr: {
 
     /**
      * Set/create a customer with an id & internal Stof.
+     * Null when the Stof doesn't parse, or when the ID contains a period (logged).
      */
     fn set_customer(stof: str!, event: bool = true) -> Customer {
         const sub = new {} on self.customers;
@@ -1359,6 +1362,10 @@ Limitr: {
             return null;
         }
         const id = sub.id ?? nanoid();
+        if (!<Customer>.valid_id(id)) {
+            drop(sub);
+            return null;
+        }
         sub.id = id;
         self.customers.remove(id, shallow = false);
         self.customers.insert(id, sub as Customer);
@@ -1385,12 +1392,19 @@ Limitr: {
     /**
      * Change a customer's plan ID.
      * Will initialize any meters for the new plan, optionally overwritting previous usage.
+     * Included topups move to the new plan by its topups' plan_change (Topup.plan_change); purchased ones stay.
      */
     fn set_customer_plan(id: str!, plan: str!, overwrite_meters: bool = false) -> bool {
         const sub = self.customer(id);
         const prev = self.plan_for(id);
         const pn: Plan = self.plans.get(plan); // dont use self.plan(plan) because plan cannot be a customer ID here
         if (pn != null && sub != null && prev != pn) {
+            // grants from before 0.7.2 don't say which plan they came from: the plan the customer is leaving
+            if (prev != null) {
+                for (const (_, grant) in sub.grants.fields()) {
+                    if (grant.topup != null && grant.plan == null) grant.plan = prev.name;
+                }
+            }
             sub.plan = plan;
             pn.name = plan;
 
@@ -1427,6 +1441,7 @@ Limitr: {
                     }
                 }
             }
+            sub.update_topup_plan_grants(self, pn);
 
             await <Event>.send('customer-set', sub);
             await <Event>.send_tmp('customer-plan-changed', new {
@@ -1470,8 +1485,10 @@ Limitr: {
 
     /**
      * Set an alternative customer ID (must be unique).
+     * False when the alt ID contains a period (logged).
      */
     fn set_alt_customer_id(customer_id: str!, alt_id: str!, event: bool = true) -> bool {
+        if (!<Customer>.valid_id(alt_id)) return false;
         const customer = self.customer(customer_id);
         if (customer != null) {
             customer.alt_ids.remove_all(alt_id);
@@ -1689,6 +1706,7 @@ Limitr: {
                     const units = cred.stof_units ?? 'float';
                     const grant = top.create_grant(units, customer.grants);
                     grant.topup = topup;
+                    grant.plan = plan.name;
                     customer.grants.insert(grant.id, grant);
 
                     // Just the customer-topup-granted event, no customer-set here
@@ -2340,7 +2358,7 @@ Limitr: {
         const plan = pn == null ? null : pn.name;
         const tools = [];
         for (const pair in self.capabilities.fields()) {
-            const cp: Capability = pair[1];
+            const cp = self.capability(pair[0]);   // names it after its field, like set_capabilities
             if (customer_id == null || cp.access(plan, customer_id)) tools.push_back(cp.claude_tool(arena));
         }
         arena.tools = tools;
@@ -2448,13 +2466,14 @@ Limitr: {
             }
             if (typeof p.policy.customers == 'obj') {
                 for (const pair in p.policy.customers.fields()) {
-                    const id = pair[0];
-                    const existing = self.customers.get(id);
-                    if (existing == null) {
-                        const c = pair[1];
+                    const c = pair[1];
+                    const id = c.id ?? pair[0];
+                    if (<Customer>.valid_id(id) && self.customers.get(id) == null) {
                         self.customers.insert(id, c);
                         c.move(self.customers);
-                        for (const alt in c.alt_ids) self.alt_customer_ids.insert(alt, id);
+                        for (const alt in c.alt_ids) {
+                            if (<Customer>.valid_id(alt)) self.alt_customer_ids.insert(alt, id);
+                        }
                     }
                 }
             }
@@ -2474,6 +2493,10 @@ Limitr: {
         try {
             parse(customer, c, format);
             const id = c.id ?? nanoid();
+            if (!<Customer>.valid_id(id)) {
+                drop(c);
+                return;
+            }
             c.id = id;
             self.customers.remove(id, shallow = false);
             self.customers.insert(id, c as Customer);

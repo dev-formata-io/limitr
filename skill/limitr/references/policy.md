@@ -8,7 +8,7 @@ Limitr repo. `!` marks a field that can't be null. Number fields typed `float | 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `version` | ver | engine version | Set by the engine (0.7.1). |
+| `version` | ver | engine version | Set by the engine (0.7.2). |
 | `credits` | obj | `{}` | Credit name -> `Credit`. |
 | `plans` | obj | `{}` | Plan name -> `Plan`. |
 | `exchange` | Exchange | `{}` | Currency conversion and grant strategy. |
@@ -86,10 +86,6 @@ policy can override it for live rates.
 | `hidden` | bool | false | Hide from pricing pages. |
 | `default` | bool | false | Used when a customer is created without a plan. |
 
-Plans are Stof objects, so shared pieces can be declared once and reused. Ex. mark an entitlement
-`#[type('FreeSeats')]` in one plan and build it in another with `#[init] fn setup() { self.seats = new FreeSeats {};
-self.seats.limit.value = 10; }`.
-
 ## Entitlement
 
 | Field | Type | Default | Notes |
@@ -136,6 +132,7 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `description` | str | `''` | |
 | `included` | bool | false | Granted automatically with the plan. |
 | `included_scopes` | list | null | Customer types it is included for (null: all). |
+| `plan_change` | str | `'top_up'` | Included topups, when a customer moves to this plan: `top_up` raises the balance in this credit to `value` and never lowers it, `replace` starts over at `value`, `keep` leaves it until the next reset. |
 | `resets` | bool | false | Refill the grant each period. |
 | `reset_inc` / `reset_sch` | ms / str | null | As on Limit. |
 | `reset_mode` | str | `'hard'` | `hard` (back to value), `add` (add value), `rollover` (carry, then add). |
@@ -179,10 +176,12 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 
 ## Grant (engine state)
 
-`id`, `credit`, `topup` (name, when from a topup), `created_on`, `granted_on`, `starting_value`, `value` (balance),
-`expires_on`, and the reset fields copied from the topup (`resets`, `reset_inc`, `reset_sch`, `last_reset`,
-`reset_mode`, `rollover_*`, `max_balance`, `reset_catchup_cap`). Topup grants follow their topup's definition: when
-the plan's topup changes, its grants change too, and when it is removed, its grants are removed.
+`id`, `credit`, `topup` (name, when from a topup), `plan` (whose topup), `created_on`, `granted_on`,
+`starting_value`, `value` (balance), `expires_on`, and the reset fields copied from the topup (`resets`, `reset_inc`,
+`reset_sch`, `last_reset`, `reset_mode`, `rollover_*`, `max_balance`, `reset_catchup_cap`). Topup grants follow their
+topup's definition: when the plan's topup changes, its grants change too, and when it is removed, its grants are
+removed. On a plan change, purchased grants stay, and included grants carry into the new plan's included topup in
+the same credit by its `plan_change` (included grants nothing takes over are removed).
 
 ## Cap
 

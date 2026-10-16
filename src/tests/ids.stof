@@ -1,0 +1,90 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Customer ID tests: customer IDs and alt IDs can't contain a period (the policy finds customers by '.' paths).
+// Each is refused (and logged), and nothing is left behind.
+//
+Limitr TestIdsPolicy: {
+    credits: {
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        free: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 10 } }
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_valid_id() {
+        assert(<Customer>.valid_id('ada'));
+        assert(<Customer>.valid_id('ada@example_com'));
+        assert(<Customer>.valid_id('cus_123-abc'));
+        assert_not(<Customer>.valid_id('ada@example.com'));
+        assert_not(<Customer>.valid_id('.'));
+    }
+
+
+    #[test]
+    /**
+     * An email isn't a customer ID: no customer, nothing in customers, and calls are denied.
+     */
+    fn test_create_refused() {
+        const id = 'ada@ids.example.com';
+        assert_null(self.create_customer(id));
+        assert_null(self.customer(id));
+        assert_not(self.customers.contains('ada@ids'));
+        assert_not(self.allow(id, 'api', 1));
+
+        // the placeholder works
+        assert(self.create_customer('ada@ids_example_com') != null);
+        assert(self.allow('ada@ids_example_com', 'api', 1));
+    }
+
+
+    #[test]
+    /**
+     * An email isn't an alt ID: refused, and the customer keeps its other alt IDs.
+     */
+    fn test_alt_refused() {
+        self.create_customer('ids_alt_user', 'free', alts = ['grace.hopper@ids.example.com', 'cus_ids_alt']);
+        const customer = self.customer('ids_alt_user');
+        assert_eq(customer.alt_ids, ['cus_ids_alt']);
+        assert_not(self.alt_customer_ids.contains('grace'));
+        assert_null(self.customer('grace.hopper@ids.example.com'));
+        assert_not(self.set_alt_customer_id('ids_alt_user', 'g.h'));
+        assert_eq(self.customer('cus_ids_alt'), customer);
+    }
+
+
+    #[test]
+    /**
+     * set_customer and update_customer_internals refuse an ID with a period, and leave nothing behind.
+     */
+    fn test_set_refused() {
+        assert_null(self.set_customer('id: "bo@ids.example.com"', false));
+        self.update_customer_internals('{"id": "cy@ids.example.com"}');
+        assert_not(self.customers.contains('bo@ids'));
+        assert_not(self.customers.contains('cy@ids'));
+        assert_null(self.customer('bo@ids.example.com'));
+        assert_null(self.customer('cy@ids.example.com'));
+    }
+}

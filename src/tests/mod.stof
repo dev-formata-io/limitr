@@ -30,6 +30,8 @@ import './access' as TestAccess;
 import './flags' as TestFlags;
 import './billing_events' as TestBillingEvents;
 import './sync' as TestSync;
+import './ids' as TestIds;
+import './plan_topups' as TestPlanTopups;
 
 
 Limitr policy: {

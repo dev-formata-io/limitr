@@ -98,7 +98,7 @@ scoped entitlement), that holder also gets a `customer-set`.
 |---|---|---|
 | `feature-checked` | `customer` (the one the entitlement belongs to for the call), `caller`, `entitlement`, `enabled` (bool), `plan` (the caller's), `event_data` | `check`, `allow`, and `features`, for entitlements with `track: true`. Also reaches policy notifications. |
 
-`internal-*` events (`internal-policy-updated`, `internal-customer-updated`, `internal-customer-invoices-updated`)
+`internal-*` events (`internal-self-updated`, `internal-customer-updated`, `internal-customer-invoices-updated`)
 come from the Cloud sync helpers.
 
 ## Which event to use

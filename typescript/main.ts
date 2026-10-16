@@ -384,7 +384,8 @@ export class Limitr {
     /**
      * Ensure that a customer exists, creating one if necessary.
      * This takes the cloud into consideration as well.
-     * NOTE: Returns true if a new customer was created (one will always exist after this).
+     * Returns true if a new customer was created. False if it already existed, or if it couldn't be created
+     * (no plan resolves for it, or the ID contains a period).
      */
     async ensureCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<boolean> {
         const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
@@ -410,14 +411,16 @@ export class Limitr {
         let meta: string | null = null;
         if (typeof metadata === 'string') meta = metadata;
         else if (metadata) meta = JSON.stringify(metadata);
-        await this.gate.run(() => this.doc.call('policy.create_customer', id, plan, type, label, refs, alts, meta));
-        return true;
+        const node = await this.gate.run(() => this.doc.call('policy.create_customer', id, plan, type, label, refs, alts, meta));
+        return typeof node === 'string';
     }
 
     
     /**
      * Create a new customer and add to this policy.
      * Use a unique ID - can always add additional unique IDs with alts (Ex. Stripe customer ID, API key, etc.).
+     * IDs and alt IDs can't contain a period (Ex. an email): replace it with your own placeholder, or keep the email in metadata.
+     * Returns undefined when the customer couldn't be created.
      * Note: prefer ensureCustomer API in case this customer already exists.
      */
     async createCustomer(id: string, plan: string = '', type: string = 'user', label: string = 'User', refs: string[] | null = null, alts: string[] | null = null, metadata: string | Record<string, unknown> | null = null): Promise<LimitrCustomer | undefined> {
@@ -484,7 +487,7 @@ export class Limitr {
         if (!Array.isArray(customers)) {
             for (const [k, v] of Object.entries(customers)) {
                 const val = v as LimitrCustomer;
-                val.id = k;
+                val.id = val.id ?? k;   // a record's own ID, else its key
                 subs.push(val);
             }
         } else {

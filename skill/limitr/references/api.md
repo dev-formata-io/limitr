@@ -64,13 +64,13 @@ These meter nothing and show the current period (0 after a pending reset).
 
 | Function | Returns | Notes |
 |---|---|---|
-| `create_customer(id, plan = '', type = 'user', label = 'User', refs?, alts?, metadata?)` | Customer | Creates meters and included topup grants. An existing ID is updated. Null if no plan resolves. |
+| `create_customer(id, plan = '', type = 'user', label = 'User', refs?, alts?, metadata?)` | Customer | Creates meters and included topup grants. An existing ID is updated. Null if no plan resolves, or the ID contains a period. |
 | `set_customer(stof, event = true)` | Customer | Replace a customer from its Stof/JSON (Ex. loaded from your database). |
 | `customer(id)` / `customer_metadata(id)` / `customer_refs(id)` | | |
 | `set_customer_refs(id, refs)` | bool | |
-| `set_customer_plan(id, plan, overwrite_meters = false)` | bool | Keeps meters unless `overwrite_meters`. |
+| `set_customer_plan(id, plan, overwrite_meters = false)` | bool | Keeps meters unless `overwrite_meters`. Moves included topup balances by the new plan's `plan_change`. |
 | `delete_customer(id)` | bool | |
-| `set_alt_customer_id(id, alt, event = true)` / `delete_alt_customer_id(alt, event = true)` | bool | |
+| `set_alt_customer_id(id, alt, event = true)` / `delete_alt_customer_id(alt, event = true)` | bool | False for an alt ID with a period. |
 | `create_customer_override(id, entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)` | Limit | Per-customer limit. Unset fields copy the current limit. |
 | `remove_customer_override(id, entitlement)` | bool | |
 | `give_entitlement(id, entitlement, plan?, expires?)` | bool | Give an entitlement whatever the plan says, defined by `plan` or the closest plan that has it. False if no plan has it. |
