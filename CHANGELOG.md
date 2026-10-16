@@ -4,6 +4,22 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## Unreleased
+
+### Docs
+
+- **AI pricing per model.** The skills and tutorial present a credit per model and direction (`sonnet_input`,
+  `sonnet_output`) as the default for AI usage, with patterns for gating it (gate before and bill after, control in
+  your own count next to per-model billing, one budget across models), and selling them as one abstract AI credit
+  through the exchange. A cost function is for metering one unit across models.
+- **The exchange** is documented as converting any credit into any other: abstract credits over discrete ones, prices
+  set through the exchange, currencies, and live rates (`get_pair`).
+- **Control and monetize** can share one entitlement; the docs say when to split them.
+- **Capabilities** are described as general functions for the host app, services, and AI tools, including loading
+  data from an API, and overriding engine functions is documented with its caveats.
+- Tutorial code samples are shorter per line and easier to read; chapter 4 no longer prints a date that changes
+  every month.
+
 ## 0.7.2
 
 ### Fixed

@@ -3,8 +3,12 @@
 Some limits exist to make money: the customer bought 100,000 tokens a month. Others exist to protect you: no single
 customer should be able to send 500 requests a second, no matter how many credits they bought.
 
-Mixing the two in one limit causes trouble. Raise the paid allowance and you accidentally raise the safety limit
-too. Keep them as separate entitlements:
+Often one entitlement does both. When the limit you sell is also the limit you need, a monthly allowance with a hard
+limit is control and pricing at once, and that's all many products need.
+
+Split them when they pull apart: when you need rules the customer doesn't pay for (a rate limit, an abuse ceiling,
+a cap per request), or when billing has to match exactly what a provider charged you. Then each side gets its own
+entitlement and its own strategy, and raising a paid allowance never raises a safety limit by accident:
 
 ```ts
 import { Limitr } from '@formata/limitr';
@@ -19,15 +23,22 @@ policy: {
         pro: {
             default: true
             entitlements: {
-                // Control: protects you. Bursts of 5, then 1 request a second. Never lifted by purchased credits.
+                // Control: protects you. Bursts of 5, then 1 request a second.
+                // Never lifted by purchased credits.
                 chat_rate: {
                     limit: {
                         credit: 'request', value: 1e9, grants_apply: false
-                        governor_enabled: true, governor_capacity: 5, governor_refill_rate: 0.001
+                        governor_enabled: true
+                        governor_capacity: 5, governor_refill_rate: 0.001
                     }
                 }
                 // Monetize: what the customer pays for. 100k tokens included, the rest billed.
-                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 100_000, resets: true } }
+                chat: {
+                    limit: {
+                        credit: 'ai_token', mode: 'soft', value: 100_000
+                        resets: true
+                    }
+                }
             }
         }
     }
@@ -63,5 +74,9 @@ a second later: ok
 - Your code checks control first, so a denied request says why: "slow down" is different from "out of tokens".
 - `allowance(customer, entitlement)` tells you how much can run right now, counting the governor, which is handy for
   a UI or for spacing out a batch job.
+
+The same split works for AI billing: control in a token count of your own, the same for every model, and billing in
+per-model credits filled with what the provider reported. See
+[AI costs per model](https://limitr.dev/docs/how-to/ai-token-costs#control-in-your-own-count-bill-in-the-providers).
 
 Next: [Seats, top-ups, and spend caps](10-seats-topups-caps.md)

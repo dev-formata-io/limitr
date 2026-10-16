@@ -275,9 +275,16 @@ feature through a downgrade, pausing one feature):
   `[{ up_to, price: { amount } }]`, last tier with no `up_to`). Tiers apply to billable units, the units past the
   limit, and the engine prices each call from where the customer already is this period.
 - **Overhead** is what the provider charges you, in runes: `overhead_cost` per unit, or a credit `overhead()` cost
-  function, or the actual cost passed to `allow`. Each call's overhead is recorded on `Meter.overhead` for the
+  function, or the actual cost passed to `allow`. For AI models, prefer a credit per model and direction
+  (`sonnet_input`, `sonnet_output`), each with its own price and `overhead_cost`. To give customers one balance
+  across models, add an abstract credit (Ex. `ai_credit`, no price) with an exchange pair, and grant it: it pays for
+  every model at its own price, no code needed. A cost function is for metering one unit across models whose cost per
+  call varies (see references/patterns.md). Each call's overhead is recorded on `Meter.overhead` for the
   period, so later price changes never re-price earlier usage.
-- **Exchange** converts between currencies and credits through runes: `exchange: { euro: { value: 1.14, currency:
+- **Exchange** converts any credit into any other through runes; currencies are credits, and `rune` / `usd` are
+  built in. A pair on a priced credit replaces its price everywhere (worth, billing, grants), so models can be priced
+  in an abstract credit and repriced together. `get_pair(name)` can be overridden for live rates (it's asked about
+  credits too, so only look up known names). Ex. `exchange: { euro: { value: 1.14, currency:
   'usd' } }`. A priced credit converts through its price. `credit_exchange(in, out, value)`.
 - `customer_local_margin_breakdown(id)` and `local_margin_breakdown(plan, entitlements)` give a quick revenue,
   cost, and margin snapshot. They do not account for grants or topups.

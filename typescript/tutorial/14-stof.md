@@ -26,7 +26,12 @@ policy: {
         pro: {
             entitlements: {
                 api: { limit: { credit: 'request', value: 50_000, resets: true } }
-                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 2_000_000, resets: true } }
+                chat: {
+                    limit: {
+                        credit: 'ai_token', mode: 'soft', value: 2_000_000
+                        resets: true
+                    }
+                }
                 sso: {}
             }
         }

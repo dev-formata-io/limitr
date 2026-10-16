@@ -17,25 +17,43 @@ policy: {
         starter: {
             default: true
             entitlements: {
-                reports: { limit: { credit: 'report', value: 3, resets: true, reset_sch: 'monthly:1' } }
-                report_tokens: { limit: { credit: 'ai_token', mode: 'soft', value: 20_000, resets: true } }
+                reports: {
+                    limit: {
+                        credit: 'report', value: 3
+                        resets: true, reset_sch: 'monthly:1'
+                    }
+                }
+                report_tokens: {
+                    limit: {
+                        credit: 'ai_token', mode: 'soft', value: 20_000
+                        resets: true
+                    }
+                }
             }
         }
     }
 }`);
 await limitr.ensureCustomer('ada');
 
-// One action, two meters: the report count (hard) and the tokens it uses (soft, billed past 20k).
+// One action, two meters: the report count (hard),
+// and the tokens it uses (soft, billed past 20k).
 async function generateReport(customer: string, tokens: number): Promise<boolean> {
-    const allowed = await limitr.check(customer, 'reports', 1) && await limitr.check(customer, 'report_tokens', tokens);
-    if (!allowed) return false;
+    // Check both first, so a denial changes nothing.
+    if (!(await limitr.check(customer, 'reports', 1))) return false;
+    if (!(await limitr.check(customer, 'report_tokens', tokens))) return false;
+
+    // Then count both.
     await limitr.allow(customer, 'reports', 1);
     await limitr.allow(customer, 'report_tokens', tokens);
     return true;
 }
 
-for (let i = 1; i <= 4; i++) console.log(`report ${i}:`, await generateReport('ada', 8_000));
-console.log('reports:', await limitr.value('ada', 'reports'), 'tokens:', await limitr.value('ada', 'report_tokens'));
+for (let i = 1; i <= 4; i++) {
+    console.log(`report ${i}:`, await generateReport('ada', 8_000));
+}
+const reports = await limitr.value('ada', 'reports');
+const tokens = await limitr.value('ada', 'report_tokens');
+console.log('reports:', reports, 'tokens:', tokens);
 ```
 
 It prints:

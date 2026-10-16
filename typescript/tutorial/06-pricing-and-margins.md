@@ -35,7 +35,8 @@ policy: {
         usage: {
             default: true
             entitlements: {
-                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 0 } }   // nothing included: every token is billed
+                // nothing included: every token is billed
+                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 0 } }
                 images: { limit: { credit: 'image', mode: 'soft', value: 0 } }
             }
         }
@@ -46,8 +47,10 @@ await limitr.ensureCustomer('ada');
 limitr.addHandler('margin', (name, value) => {
     if (name !== 'meter-overage') return;
     const { entitlement, meter } = JSON.parse(value as string);
-    const margin = meter.price_diff - meter.overhead_diff;
-    console.log(`${entitlement}: charged $${meter.price_diff.toFixed(4)}, cost $${meter.overhead_diff.toFixed(4)}, margin $${margin.toFixed(4)}`);
+    const margin = (meter.price_diff - meter.overhead_diff).toFixed(4);
+    const charged = meter.price_diff.toFixed(4);
+    const cost = meter.overhead_diff.toFixed(4);
+    console.log(`${entitlement}: charged $${charged}, cost $${cost}, margin $${margin}`);
 });
 
 await limitr.allow('ada', 'chat', 12_000);   // a 12k-token conversation
@@ -55,8 +58,10 @@ await limitr.allow('ada', 'images', 90);     // 90 images at $0.04
 await limitr.allow('ada', 'images', 20);     // 10 more at $0.04, then 10 at $0.02
 
 // The customer's totals this period (margin is a percent).
-const snapshot = await limitr.customerMarginSnapshot('ada');
-console.log(`revenue $${(snapshot?.get('revenue') as number).toFixed(2)}, cost $${(snapshot?.get('cost') as number).toFixed(2)}, margin ${snapshot?.get('margin')}%`);
+const totals = await limitr.customerMarginSnapshot('ada');
+const revenue = (totals?.get('revenue') as number).toFixed(2);
+const cost = (totals?.get('cost') as number).toFixed(2);
+console.log(`revenue $${revenue}, cost $${cost}, margin ${totals?.get('margin')}%`);
 ```
 
 It prints:
@@ -74,11 +79,16 @@ revenue $4.44, cost $1.20, margin 73.06%
 - The usage plan includes nothing (`value: 0`), so every unit is billable. With an allowance, units inside it show
   their cost but no price: the plan's subscription pays for them.
 - **Tiers** price billable units by volume. `tiered` charges each unit at the tier it falls in, so the 20-image call
-  paid $0.04 for 10 of them (finishing the first 100) and $0.02 for the other 10. `volume` prices all units at the tier the total lands in, and
-  `stairstep` charges one flat fee for the tier the total lands in.
+  paid $0.04 for 10 of them (finishing the first 100) and $0.02 for the other 10. `volume` prices all units at the
+  tier the total lands in, and `stairstep` charges one flat fee for the tier the total lands in.
 - `customerMarginSnapshot` sums revenue, cost, and margin for the customer this period, overall and per entitlement.
 
-Costs aren't always fixed per unit. AI calls cost different amounts depending on the model and how much of the call
-was input versus output. The next chapter handles that.
+AI calls cost different amounts depending on the model, and input and output tokens are priced differently. The
+simplest way to handle that is more credits: one per model and direction, like `sonnet_input` and `sonnet_output`,
+each with its own price and cost. Record the provider's token counts after each call, and every model becomes its own
+line item ([AI costs per model](https://limitr.dev/docs/how-to/ai-token-costs)). Customers can still see one
+balance: an "AI credit" in the exchange pays for every model at its own price
+([Prepaid credits](https://limitr.dev/docs/how-to/prepaid-credits)). When you'd rather meter one unit across models, a cost function works out what each call cost you instead.
+The next chapter uses one.
 
 Next: [AI calls: reserve and settle](07-reserve-and-settle.md)

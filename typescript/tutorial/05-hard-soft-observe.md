@@ -16,7 +16,8 @@ import { Limitr } from '@formata/limitr';
 const limitr = await Limitr.new(`
 policy: {
     credits: {
-        export: { label: 'Export', price: { amount: 0.50 } }   // $0.50 per export past the limit
+        // $0.50 per export past the limit
+        export: { label: 'Export', price: { amount: 0.50 } }
     }
     plans: {
         pro: {
@@ -32,14 +33,20 @@ policy: {
 await limitr.ensureCustomer('ada');
 
 limitr.addHandler('log', (name, value) => {
-    const event = JSON.parse(value as string);
-    if (name === 'meter-overage') console.log(`  ${name}: ${event.overage} over, bill $${event.overage_price}`);
-    if (name === 'meter-limit') console.log(`  ${name}: denied at ${event.meter.value} of ${event.meter.limit}`);
+    const { overage, overage_price, meter } = JSON.parse(value as string);
+    if (name === 'meter-overage') {
+        console.log(`  ${name}: ${overage} over, bill $${overage_price}`);
+    }
+    if (name === 'meter-limit') {
+        console.log(`  ${name}: denied at ${meter.value} of ${meter.limit}`);
+    }
 });
 
 for (const entitlement of ['exports_hard', 'exports_soft', 'exports_observe']) {
     console.log(entitlement);
-    for (let i = 1; i <= 3; i++) console.log(`  export ${i}:`, await limitr.allow('ada', entitlement, 1));
+    for (let i = 1; i <= 3; i++) {
+        console.log(`  export ${i}:`, await limitr.allow('ada', entitlement, 1));
+    }
 }
 ```
 

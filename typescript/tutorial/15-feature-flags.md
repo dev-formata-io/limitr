@@ -73,10 +73,9 @@ await limitr.restoreEntitlement('ada', 'exports');
 
 // Tracked features say when they're checked, and whether they were on.
 limitr.addHandler('rollout', (key, value) => {
-    if (key === 'feature-checked') {
-        const event = JSON.parse(value as string);
-        console.log(`checked ${event.entitlement} for ${event.caller.id}: ${event.enabled ? 'on' : 'off'}`);
-    }
+    if (key !== 'feature-checked') return;
+    const { entitlement, caller, enabled } = JSON.parse(value as string);
+    console.log(`checked ${entitlement} for ${caller.id}: ${enabled ? 'on' : 'off'}`);
 });
 await limitr.check('ada', 'ai_assistant');
 await limitr.check('user_1', 'ai_assistant');

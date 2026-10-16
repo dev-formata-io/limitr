@@ -35,14 +35,16 @@ await limitr.ensureCustomer('solo_user');
 await limitr.ensureCustomer('acme', 'team', 'org', 'Acme Inc.');
 await limitr.ensureCustomer('grace', '', 'user', 'Grace', ['acme']);
 
-console.log('solo_user sso:', await limitr.allow('solo_user', 'sso'));   // false (free)
-console.log('grace sso:', await limitr.allow('grace', 'sso'));           // true (team, through acme)
-console.log('grace projects:', await limitr.limit('grace', 'projects')); // 50
+console.log('solo_user sso:', await limitr.allow('solo_user', 'sso'));   // free
+console.log('grace sso:', await limitr.allow('grace', 'sso'));           // team, via acme
+console.log('grace projects:', await limitr.limit('grace', 'projects')); // team's limit
 
 // Upgrading is one call. Pass false to keep the usage counted so far.
 await limitr.allow('solo_user', 'projects', 2);
 await limitr.setCustomerPlan('solo_user', 'team', false);
-console.log('after upgrade:', await limitr.value('solo_user', 'projects'), 'of', await limitr.limit('solo_user', 'projects'));
+const used = await limitr.value('solo_user', 'projects');
+const limit = await limitr.limit('solo_user', 'projects');
+console.log('after upgrade:', used, 'of', limit);
 ```
 
 It prints:

@@ -17,10 +17,25 @@ policy: {
         free: {
             default: true
             entitlements: {
-                api: { limit: { credit: 'request', value: 1000, resets: true, reset_inc: 1day } }
-                reports: { limit: { credit: 'report', value: 5, resets: true, reset_sch: 'monthly:1' } }
+                api: {
+                    limit: {
+                        credit: 'request', value: 1000
+                        resets: true, reset_inc: 1day
+                    }
+                }
+                reports: {
+                    limit: {
+                        credit: 'report', value: 5
+                        resets: true, reset_sch: 'monthly:1'
+                    }
+                }
                 storage: { limit: { credit: 'storage', value: 1GB } }
-                burst: { limit: { credit: 'request', value: 2, resets: true, reset_inc: 1s } }
+                burst: {
+                    limit: {
+                        credit: 'request', value: 2
+                        resets: true, reset_inc: 1s
+                    }
+                }
             }
         }
     }
@@ -33,20 +48,25 @@ console.log('storage left:', await limitr.remaining('ada', 'storage'), 'MB');
 
 // The first use starts a period, and resets() says when the next one starts.
 await limitr.allow('ada', 'reports', 1);
-console.log('reports reset on:', new Date(await limitr.resets('ada', 'reports') ?? 0).toISOString());
+const next = new Date((await limitr.resets('ada', 'reports'))!);
+console.log('reports reset on day', next.getUTCDate(), 'of next month');
 
 // A short period to watch a reset happen.
-console.log(await limitr.allow('ada', 'burst', 2), await limitr.allow('ada', 'burst', 1)); // true false
+console.log('2 now:', await limitr.allow('ada', 'burst', 2));
+// Over the limit of 2
+console.log('1 more:', await limitr.allow('ada', 'burst', 1));
 await new Promise((resolve) => setTimeout(resolve, 1100));
-console.log('after a second:', await limitr.allow('ada', 'burst', 1)); // true: a new period started
+// A new period started
+console.log('after a second:', await limitr.allow('ada', 'burst', 1));
 ```
 
 It prints:
 
 ```text
 storage left: 750 MB
-reports reset on: 2026-11-01T00:00:00.000Z
-true false
+reports reset on day 1 of next month
+2 now: true
+1 more: false
 after a second: true
 ```
 

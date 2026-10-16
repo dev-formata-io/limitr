@@ -44,7 +44,12 @@ policy: {
         pro: {
             default: true
             entitlements: {
-                chat: { limit: { credit: 'ai_token', value: 50_000, resets: true, reset_sch: 'monthly:1' } }
+                chat: {
+                    limit: {
+                        credit: 'ai_token', value: 50_000
+                        resets: true, reset_sch: 'monthly:1'
+                    }
+                }
             }
         }
     }
@@ -52,7 +57,7 @@ policy: {
 
 await limitr.ensureCustomer('ada');
 console.log(await limitr.allow('ada', 'chat', 30_000));   // true: 30k of 50k used
-console.log(await limitr.allow('ada', 'chat', 30_000));   // false: this call would go past 50k
+console.log(await limitr.allow('ada', 'chat', 30_000));   // false: past 50k
 console.log(await limitr.remaining('ada', 'chat'));       // 20000
 ```
 

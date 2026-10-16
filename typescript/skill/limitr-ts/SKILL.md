@@ -134,6 +134,21 @@ await limitr.restoreEntitlement(orgId, 'exports');
 - Entitlements with `track: true` send `feature-checked` (`caller.id`, `entitlement`, `enabled`) on every check:
   forward it to your analytics to measure a rollout or A/B test.
 
+## LLM calls: per-model billing
+
+The simplest setup is a credit and an entitlement per model and direction (`sonnet_input`, `sonnet_output`, each with
+its own price and `overhead_cost`). After the call, record what the provider reported:
+
+```ts
+await limitr.allow(userId, `${model}_input`, res.usage.input_tokens);
+await limitr.allow(userId, `${model}_output`, res.usage.output_tokens);
+```
+
+To gate as well, either `check` before the call and `allow(..., true, undefined, true)` (force) after it, or keep a
+separate control entitlement in your own token count that you allow (or reserve) before the call. To give customers
+one balance across models, grant an abstract `ai_credit` (an exchange pair, no price): it pays for each model at its
+own price. A cost function (below) is for metering one unit across models.
+
 ## LLM calls: reserve, then settle
 
 The policy's `chat` entitlement declares `estimate_basis: 'input'` and `estimate_segment: 'model'` (see the limitr
@@ -243,7 +258,8 @@ Customer records hold all state (meters, grants, caps, overrides, gives and take
 ## Change the policy at runtime
 
 `setPlan(id, planStof)`, `deletePlan(id)`, `setNotifications(stof)`, `setCapabilities(stof)`, and
-`difference(otherLimitr)` (a diff of two policies). For anything else, call the engine directly:
+`difference(otherLimitr)` (a diff of two policies). `runCapability(name, args, customerId?)` runs a capability
+(return plain values from it; see the limitr skill). For anything else, call the engine directly:
 `await limitr.docCall('policy.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
 registering host functions the policy can call (`limitr.doc.lib('App', 'name', fn)`) or allowing HTTP from the
 policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any host).
@@ -255,7 +271,7 @@ Read-only questions about the policy can go straight to the document: `limitr.do
 customers, meters, and plans through the Limitr methods, which keep meters consistent and send events.
 
 Every policy call has a time limit, 5 seconds by default, so a policy function stuck in a loop fails instead of
-blocking every later call (engine calls take milliseconds). Change it with `limitr.setMaxExecutionTime(ms | null)`.
+blocking every later call. Change it with `limitr.setMaxExecutionTime(ms | null)`.
 Errors the engine logs (Ex. a failing cost function) go to `console.error`.
 
 ## Limitr Cloud

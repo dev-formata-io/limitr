@@ -70,8 +70,11 @@ plans: { team: { entitlements: { seats: { scope: 'org', limit: { credit: 'seat',
 
 ## Separate control from monetization
 
-One entitlement decides whether a call may run (rate limits, abuse limits), another prices it. Keep control limits
-`hard`, with `grants_apply: false` so purchased credits never lift a safety ceiling. Check both, then meter both.
+Often one entitlement does both: when the limit you sell is the limit you need, a hard allowance is control and
+pricing at once. Split them when they differ: rules the customer doesn't pay for (rate limits, abuse ceilings, a cap
+per request), or billing that must match exactly what a provider charged. Then one entitlement decides whether a call
+may run and another prices it. Keep control limits `hard`, with `grants_apply: false` so purchased credits never
+lift a safety ceiling. Check both, then meter both.
 
 ```stof
 credits: {
@@ -132,9 +135,46 @@ plans: {
 
 `credit_remaining(id, 'ai_credit')` is the balance. Sell more with `apply_customer_topup(id, 'credits_1000')`.
 
-## AI tokens with per-model costs
+## AI tokens per model: a credit per model and direction
 
-Price your cost per call with a cost function, and use reservations for calls whose size is only known afterwards.
+The simplest way to price AI usage, and the default to suggest: one credit per model and direction, each with its own
+price and `overhead_cost`. No code, so it works in JSON, YAML, and TOML too. Each credit is its own invoice line, and
+matches the provider's bill.
+
+```stof
+credits: {
+    sonnet_input: { price: { amount: 0.000006 }, overhead_cost: 0.000003 }
+    sonnet_output: { price: { amount: 0.00003 }, overhead_cost: 0.000015 }
+}
+plans: {
+    pay_as_you_go: {
+        default: true
+        entitlements: {
+            sonnet_input: { limit: { credit: 'sonnet_input', mode: 'soft' } }    // every token billed
+            sonnet_output: { limit: { credit: 'sonnet_output', mode: 'soft' } }
+        }
+    }
+}
+```
+
+Flow: after the model call, `allow(id, 'sonnet_input', usage.input_tokens)` and `allow(id, 'sonnet_output',
+usage.output_tokens)`. `allow` decides and records in one pass. To gate as well:
+
+- **Gate before, bill after:** `check` before the call; after it, `allow` with `force = true` so the call that
+  crosses a hard limit is still recorded (it happened), and the next `check` is denied (a trailing limit).
+- **Control in your own count, bill in the provider's:** a control entitlement in a neutral credit (Ex. `token`,
+  your count of the prompt plus `max_tokens`, hard, maybe a governor), allowed or reserved before the call, and the
+  per-model billing entitlements allowed after it with the provider's numbers. Control stays the same across
+  providers; billing stays exact. More credits and entitlements, which is fine.
+- **One budget across models:** a spend cap (runes) counts every credit at its price; `hard_trailing = true` suits
+  usage recorded after the call.
+
+## AI tokens with a cost function
+
+When you meter one unit across models (one `ai_token` meter) and want each call's cost to follow the model, price
+the cost with a cost function (Stof only). To sell customers one balance across models, you don't need this: keep
+per-model credits and grant an abstract `ai_credit` (see Prepaid credit burndown).
+Use reservations for calls whose size is only known afterwards.
 
 ```stof
 credits: {

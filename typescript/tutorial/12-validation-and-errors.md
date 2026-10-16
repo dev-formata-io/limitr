@@ -9,14 +9,25 @@ import { Limitr } from '@formata/limitr';
 const limitr = await Limitr.new({
     policy: {
         credits: { request: { label: 'Request' } },
-        plans: { free: { default: true, entitlements: { api: { limit: { credit: 'request', value: 10 } } } } },
+        plans: {
+            free: {
+                default: true,
+                entitlements: { api: { limit: { credit: 'request', value: 10 } } },
+            },
+        },
     },
 }, 'json');
 console.log('valid:', await limitr.valid());
 
 // An invalid policy fails when it loads, with a message that says what's wrong.
+// Here, a limit counts a credit that doesn't exist.
 try {
-    await Limitr.new(`policy: { plans: { free: { entitlements: { api: { limit: { credit: 'requests', value: 10 } } } } } }`);
+    await Limitr.new(`
+    policy: {
+        plans: {
+            free: { entitlements: { api: { limit: { credit: 'requests', value: 10 } } } }
+        }
+    }`);
 } catch (error) {
     console.log('invalid:', (error as Error).message);
 }

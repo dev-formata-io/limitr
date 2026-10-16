@@ -19,7 +19,8 @@ policy: {
         team: {
             default: true
             entitlements: {
-                // Seats are counted on the org, whichever user invites someone. 3 included, $12 per extra seat.
+                // Seats count on the org, whichever user invites someone.
+                // 3 included, $12 per extra seat.
                 seats: { scope: 'org', limit: { credit: 'seat', mode: 'soft', value: 3 } }
                 // No images included: they run on purchased credits.
                 images: { limit: { credit: 'image', value: 0 } }
@@ -32,10 +33,9 @@ policy: {
 }`);
 
 limitr.addHandler('billing', (name, value) => {
-    if (name === 'meter-overage') {
-        const event = JSON.parse(value as string);
-        console.log(`  bill ${event.customer.id}: ${event.overage} ${event.entitlement} for $${event.overage_price}`);
-    }
+    if (name !== 'meter-overage') return;
+    const { customer, overage, entitlement, overage_price } = JSON.parse(value as string);
+    console.log(`  bill ${customer.id}: ${overage} ${entitlement} for $${overage_price}`);
 });
 
 // Seats
@@ -48,12 +48,18 @@ console.log('acme seats:', await limitr.value('acme', 'seats'));
 
 // Top-ups and grants
 console.log('image before buying:', await limitr.allow('owner', 'images', 1));
-await limitr.applyCustomerTopup('owner', 'images_100');              // after your payment provider confirms
+// After your payment provider confirms
+await limitr.applyCustomerTopup('owner', 'images_100');
 console.log('image after buying:', await limitr.allow('owner', 'images', 1));
 console.log('images left:', await limitr.remainingCredit('owner', 'image'));
 
 // Spend caps: at most $25 of overage a month for acme, shared by everyone in the org
-await limitr.addCustomerCap('acme', 25, { cap_id: 'monthly_overage', overage_only: true, shared: true, resets: true, reset_sch: 'monthly:1' });
+await limitr.addCustomerCap('acme', 25, {
+    cap_id: 'monthly_overage',
+    overage_only: true,
+    shared: true,
+    resets: true, reset_sch: 'monthly:1',
+});
 for (const person of ['ed', 'fa', 'gu']) {
     console.log(`invite ${person}:`, await limitr.increment('owner', 'seats'));
 }

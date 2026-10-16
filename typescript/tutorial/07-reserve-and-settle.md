@@ -8,7 +8,8 @@ AI calls break two assumptions from the earlier chapters:
    differently.
 
 Limitr handles the first with **reserve and settle**: hold room before the call, then record what it really used.
-It handles the second with a **cost function** in the policy.
+For the second, you can give each model and direction its own credit (chapter 6), or keep one credit and give it a
+**cost function** that prices each call. This chapter does the latter, so one reservation covers the whole call.
 
 ```ts
 import { Limitr } from '@formata/limitr';
@@ -20,16 +21,18 @@ policy: {
             label: 'AI token'
             price: { amount: 0.00002 }
             overhead_cost: 0.000005               // fallback cost per token
-            rates: {                              // what each model costs you, per token
+            rates: {                              // what each model costs you
                 large: { input: 0.000003, output: 0.000015 }
                 small: { input: 0.000001, output: 0.000005 }
             }
-            // The cost of one call, from the event data you pass (model, input and output tokens).
+            // The cost of one call, from the event data you pass:
+            // the model, and its input and output tokens.
             fn overhead(units: float, context?: obj) -> float {
                 const rate = self.rates.get(context?.model ?? '');
                 if (rate == null) return units * self.overhead_cost;
                 const input = context.input ?? 0;
-                const output = context.output ?? Num::max(units - input, 0);   // before the call, the rest is output
+                // Before the call there's no output yet: the rest is output.
+                const output = context.output ?? Num::max(units - input, 0);
                 input * rate.input + output * rate.output
             }
         }
@@ -38,11 +41,15 @@ policy: {
         pro: {
             default: true
             entitlements: {
-                // A call's size scales with its input tokens, and each model learns its own estimate.
+                // A call's size scales with its input tokens,
+                // and each model learns its own estimate.
                 chat: {
                     estimate_basis: 'input'
                     estimate_segment: 'model'
-                    limit: { credit: 'ai_token', mode: 'hard', value: 100_000, resets: true }
+                    limit: {
+                        credit: 'ai_token', mode: 'hard', value: 100_000
+                        resets: true
+                    }
                 }
             }
         }
@@ -50,23 +57,34 @@ policy: {
 }`);
 await limitr.ensureCustomer('ada');
 
-// Pretend model call: the output is about twice the input.
-const callModel = async (model: string, input: number, ratio: number) => ({ model, input, output: Math.round(input * ratio) });
+// A stand-in for the model call: the output is about twice the input.
+async function callModel(model: string, input: number, ratio: number) {
+    return { model, input, output: Math.round(input * ratio) };
+}
 
 const calls = [[500, 1.8], [800, 2.1], [1200, 2.3], [400, 1.9], [1000, 2.0], [900, 2.2]];
 for (const [input, ratio] of calls) {
     const context = { model: 'large', input };
-    const hold = await limitr.reserve('ada', 'chat', { context });   // holds the predicted size of this call
-    if (!hold) { console.log('not enough room for this call'); break; }
+    // Hold the predicted size of this call.
+    const hold = await limitr.reserve('ada', 'chat', { context });
+    if (!hold) {
+        console.log('not enough room for this call');
+        break;
+    }
     const held = await limitr.held('ada', 'chat');
 
-    const usage = await callModel('large', input, ratio);                   // run the call
-    await limitr.settle('ada', 'chat', hold, usage.input + usage.output, usage);
-    console.log(`input ${input}: held ${Math.round(held)}, used ${usage.input + usage.output}`);
+    // Run the call, then record what it really used.
+    const usage = await callModel('large', input, ratio);
+    const used = usage.input + usage.output;
+    await limitr.settle('ada', 'chat', hold, used, usage);
+    console.log(`input ${input}: held ${Math.round(held)}, used ${used}`);
 }
 
-const estimate = await limitr.estimate('ada', 'chat', { context: { model: 'large', input: 2000 } });
-console.log(`a 2,000-token prompt on 'large' should use about ${Math.round(estimate?.value ?? 0)} tokens and cost $${estimate?.overhead.toFixed(4)}`);
+const context = { model: 'large', input: 2000 };
+const estimate = await limitr.estimate('ada', 'chat', { context });
+const tokens = Math.round(estimate?.value ?? 0);
+const cost = estimate?.overhead.toFixed(4);
+console.log(`a 2,000-token prompt should use about ${tokens} tokens and cost $${cost}`);
 ```
 
 It prints:
@@ -78,7 +96,7 @@ input 1200: held 4859, used 3960
 input 400: held 1900, used 1160
 input 1000: held 5058, used 3000
 input 900: held 2933, used 2880
-a 2,000-token prompt on 'large' should use about 6737 tokens and cost $0.0771
+a 2,000-token prompt should use about 6737 tokens and cost $0.0771
 ```
 
 What happened:
@@ -86,9 +104,9 @@ What happened:
 - **The cost function.** The `ai_token` credit has an `overhead(units, context)` function. `context` is the event data
   you pass with the call (`{ model, input, output }` here), so each call is priced from the model's own input and
   output rates. A credit without one uses its fixed `overhead_cost`. Because the rates are part of the policy, you
-  can change them when a provider changes its prices, without touching your app. Before the engine has learned what calls
-  cost, `reserve` prices the hold with this function before the call has run, so there's no `output` in the context
-  yet; the function counts the rest of the held tokens as output. If a cost function fails, the engine logs the error and uses `overhead_cost` instead.
+  can change them when a provider changes its prices, without touching your app.
+- **Before the call** there's no `output` yet: `reserve` prices the hold with the same function, which counts the
+  rest of the held tokens as output. If a cost function fails, the engine logs the error and uses `overhead_cost`.
 - **reserve** checks that the call is allowed and holds room for it, so ten calls running at once can't all squeeze
   past the limit. With no `value`, it holds what it predicts the call will use. It returns a hold ID, or `null` when
   the call shouldn't run.
@@ -120,7 +138,8 @@ policy: {
         pro: {
             default: true
             entitlements: {
-                // No limit: never metered. It only learns output tokens from input tokens, per model.
+                // No limit, so it's never metered. It only learns:
+                // output tokens from input tokens, per model.
                 chat_output: { estimate_basis: 'input', estimate_segment: 'model' }
             }
         }
@@ -128,15 +147,18 @@ policy: {
 }`);
 await limitr.ensureCustomer('ada');
 
-// Past calls to a chat assistant: [input, output]. Answers are about 300 tokens, whatever the question.
+// Past calls to a chat assistant: [input, output].
+// Answers are about 300 tokens, whatever the question.
 const history = [[20, 320], [4000, 280], [150, 300], [900, 310], [60, 290], [2500, 305]];
 for (const [input, output] of history) {
     await limitr.observe('ada', 'chat_output', output, { context: { model: 'large', input } });
 }
 
 for (const input of [20, 4000]) {
-    const answer = await limitr.estimate('ada', 'chat_output', { context: { model: 'large', input }, quantile: 0.5 });
-    console.log(`a ${input}-token prompt: expect about ${Math.round(answer?.value ?? 0)} output tokens`);
+    const context = { model: 'large', input };
+    const answer = await limitr.estimate('ada', 'chat_output', { context, quantile: 0.5 });
+    const output = Math.round(answer?.value ?? 0);
+    console.log(`a ${input}-token prompt: expect about ${output} output tokens`);
 }
 ```
 

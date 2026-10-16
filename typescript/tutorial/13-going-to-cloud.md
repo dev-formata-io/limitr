@@ -33,8 +33,11 @@ A few options:
 ```ts
 const limitr = await Limitr.cloud({
     token: process.env.LIMITR_TOKEN!,
-    denyUnconnected: true,   // deny calls if the connection drops, so servers can't drift apart (the default)
-    httpHosts: ['api.limitr.dev', 'api.example.com'],   // hosts the policy may call; only api.limitr.dev by default
+    // Deny calls if the connection drops, so servers can't drift apart (the default).
+    denyUnconnected: true,
+
+    // Hosts the policy may call. Only api.limitr.dev by default.
+    httpHosts: ['api.limitr.dev', 'api.example.com'],
 });
 
 // On shutdown, send any pending updates.

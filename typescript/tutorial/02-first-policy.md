@@ -27,7 +27,8 @@ policy: {
     }
 }`);
 
-await limitr.ensureCustomer('ada'); // no plan given, so Ada gets the default plan (free)
+// No plan given, so Ada gets the default plan (free)
+await limitr.ensureCustomer('ada');
 
 console.log(await limitr.allow('ada', 'export_csv')); // true: the plan has it
 console.log(await limitr.allow('ada', 'export_pdf')); // false: the plan doesn't
@@ -35,7 +36,9 @@ console.log(await limitr.allow('ada', 'export_pdf')); // false: the plan doesn't
 for (let call = 1; call <= 4; call++) {
     console.log(`request ${call}:`, await limitr.allow('ada', 'api', 1));
 }
-console.log('used:', await limitr.value('ada', 'api'), 'remaining:', await limitr.remaining('ada', 'api'));
+const used = await limitr.value('ada', 'api');
+const remaining = await limitr.remaining('ada', 'api');
+console.log('used:', used, 'remaining:', remaining);
 ```
 
 It prints:
@@ -87,8 +90,22 @@ policy: {
 Written as JSON, it's the same policy:
 
 ```json
-{ "policy": { "credits": { "request": { "label": "API request" } },
-  "plans": { "free": { "default": true, "entitlements": { "export_csv": {}, "api": { "limit": { "credit": "request", "value": 3 } } } } } } }
+{
+    "policy": {
+        "credits": {
+            "request": { "label": "API request" }
+        },
+        "plans": {
+            "free": {
+                "default": true,
+                "entitlements": {
+                    "export_csv": {},
+                    "api": { "limit": { "credit": "request", "value": 3 } }
+                }
+            }
+        }
+    }
+}
 ```
 
 Limitr loads either one, and YAML and TOML too (chapter 12). Stof is the default because a policy sometimes needs

@@ -244,7 +244,16 @@ notifications: {
 
 ## Capability
 
-Named, versioned functions exposed to customers and AI tools: `name`, `description`, `version`, `parameters` (list
-of `{ name, description, schema_type, required }`), `input`, `output`, `result`, and optional `plans` / `customers`
-access filters. `run_capability(name, args, customer_id?)`, `claude_tools(customer_id?)`, and
-`claude_tool_use(tool_use, customer_id?)` run them and produce Claude tool definitions and results.
+Named, access-controlled functions in the policy, for the host app, other services, and AI tools: `name`,
+`description`, `version`, `parameters` (list of `{ name, description, schema_type, required }`), `input`, `output`,
+`result`, and optional `plans` / `customers` access filters. `#[run]` functions read `self.input` and write
+`self.output`; they can call any engine function on `root.policy`, host functions, and `Http::fetch` for hosts the
+app allows (Ex. load provider rates into credits). Use a plain `fn` with `await` inside: `run_capability` doesn't wait
+for an `async fn`. Return plain values (text, numbers, lists): an object result reaches the SDK as a node reference.
+`run_capability(name, args, customer_id?)`, `claude_tools(customer_id?)`, and `claude_tool_use(tool_use,
+customer_id?)` run them and produce Claude tool definitions and results. Capabilities written under `capabilities` in
+the policy are named after their field.
+
+A function on the policy with an engine function's name replaces it for that policy (every call, from the host and
+the engine). Keep the signature; it replaces the original entirely. Prefer the hooks (cost functions, `enabled`,
+notifications, event handlers, capabilities).

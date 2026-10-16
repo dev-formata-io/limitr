@@ -14,7 +14,12 @@ const policy = `
 policy: {
     credits: { request: { label: 'Request' } }
     plans: {
-        free: { default: true, entitlements: { api: { limit: { credit: 'request', value: 100, resets: true } } } }
+        free: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'request', value: 100, resets: true } }
+            }
+        }
     }
 }`;
 
@@ -24,27 +29,39 @@ const db = new Map<string, unknown>();
 // 1. Create the engine once, when your server starts, and keep it.
 async function startEngine(): Promise<Limitr> {
     const limitr = await Limitr.new(policy);
-    await limitr.loadCustomers(Object.fromEntries(db));         // customer state from your database
+
+    // Customer state from your database.
+    await limitr.loadCustomers(Object.fromEntries(db));
+
+    // Save customers as they change.
     limitr.addHandler('persist', (name, value) => {
         const event = JSON.parse(value as string);
-        if (name === 'customer-set') db.set(event.id, event);   // a customer was created or replaced
-        else if (event.customer?.id) db.set(event.customer.id, event.customer); // meter events carry the customer
+        if (name === 'customer-set') {
+            // Created or replaced.
+            db.set(event.id, event);
+        } else if (event.customer?.id) {
+            // Meter events carry the customer.
+            db.set(event.customer.id, event.customer);
+        }
     });
     return limitr;
 }
 
 // 2. Gate a request (Ex. inside Express, Hono, or Next.js middleware).
 async function handleRequest(limitr: Limitr, userId: string): Promise<number> {
-    await limitr.ensureCustomer(userId);                         // creates the customer on first sight
-    if (!(await limitr.allow(userId, 'api', 1))) return 429;     // over the limit
+    await limitr.ensureCustomer(userId);                     // created on first sight
+    if (!(await limitr.allow(userId, 'api', 1))) return 429; // over the limit
     return 200;
 }
 
 let limitr = await startEngine();
-for (let i = 0; i < 3; i++) await handleRequest(limitr, 'ada');
+for (let i = 0; i < 3; i++) {
+    await handleRequest(limitr, 'ada');
+}
 console.log('before restart:', await limitr.value('ada', 'api'));
 
-limitr = await startEngine();                                    // a restart: state comes back from the database
+// A restart: state comes back from the database.
+limitr = await startEngine();
 await handleRequest(limitr, 'ada');
 console.log('after restart:', await limitr.value('ada', 'api'));
 ```
