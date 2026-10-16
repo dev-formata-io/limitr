@@ -65,10 +65,11 @@ Limit: {
     /// Optional minimum value.
     float | str minimum: null;
 
-    /// Should the meter reset after a certain period?
+    /// Should the meter reset after a certain period? Setting reset_sch turns this on.
     bool resets: false;
 
     #[schema((target: obj, target_val: float): bool => {
+        if (target.reset_sch != null) target.resets = true; // a schedule means it resets
         if (target.resets) {
             if (target_val == null && target.reset_sch == null) {
                 target.reset_inc = 30days;
@@ -144,7 +145,7 @@ Limit: {
      * and null if this limit doesn't reset.
      */
     fn current_period_start(started: ms, now: ms) -> ms {
-        if (!self.resets || started == null) return null;
+        if ((!self.resets && self.reset_sch == null) || started == null) return null; // a schedule means it resets
         if (self.reset_sch != null) {
             const period_start = Time::start_of_period(now, self.reset_sch);
             return period_start != null && started < period_start ? period_start : started;

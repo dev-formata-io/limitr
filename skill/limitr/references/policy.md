@@ -8,7 +8,7 @@ Limitr repo. `!` marks a field that can't be null. Number fields typed `float | 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `version` | ver | engine version | Set by the engine (0.7.2). |
+| `version` | ver | engine version | Set by the engine (0.7.3). |
 | `credits` | obj | `{}` | Credit name -> `Credit`. |
 | `plans` | obj | `{}` | Plan name -> `Plan`. |
 | `exchange` | Exchange | `{}` | Currency conversion and grant strategy. |
@@ -69,8 +69,10 @@ exchange: {
 ```
 
 A pair says one unit is `value` units of `currency`. Conversions follow pairs until `rune`, or until a priced credit
-(which converts through its price). `valid()` rejects pairs that can't reach runes. `get_pair(c)` is the lookup, so a
-policy can override it for live rates.
+(which converts through its price). `valid()` rejects pairs that can't reach runes. At runtime,
+`set_exchange_pair(name, value, currency)` adds or replaces a pair (refused, with nothing changed, if it doesn't reach
+runes) and `remove_exchange_pair(name)` removes one. `get_pair(c)` is the lookup, so a policy can also override it
+for live rates.
 
 ## Plan
 
@@ -110,7 +112,7 @@ policy can override it for live rates.
 | `minimum` | float, str | null | Floor for the meter. |
 | `hard_trailing` | bool! | false | Hard only: allow while the meter is under the limit before the call. |
 | `grants_apply` | bool | true | Grants may cover overage. Set false on governors and pure control limits. |
-| `resets` | bool | false | Reset the meter each period. |
+| `resets` | bool | false | Reset the meter each period. A `reset_sch` turns it on. |
 | `reset_inc` | ms | null | Period length. 30 days when `resets` and no `reset_sch`. |
 | `reset_sch` | str | null | UTC calendar schedule (exclusive with `reset_inc`). |
 | `override_expires_on` | ms | null | Customer overrides only. |
@@ -248,12 +250,36 @@ Named, access-controlled functions in the policy, for the host app, other servic
 `description`, `version`, `parameters` (list of `{ name, description, schema_type, required }`), `input`, `output`,
 `result`, and optional `plans` / `customers` access filters. `#[run]` functions read `self.input` and write
 `self.output`; they can call any engine function on `root.policy`, host functions, and `Http::fetch` for hosts the
-app allows (Ex. load provider rates into credits). Use a plain `fn` with `await` inside: `run_capability` doesn't wait
-for an `async fn`. Return plain values (text, numbers, lists): an object result reaches the SDK as a node reference.
-`run_capability(name, args, customer_id?)`, `claude_tools(customer_id?)`, and `claude_tool_use(tool_use,
-customer_id?)` run them and produce Claude tool definitions and results. Capabilities written under `capabilities` in
-the policy are named after their field.
+app allows (Ex. load provider rates into credits). Steps run in order (`#[run(N)]` numbers, then definition order).
+Make each `#[run]` step a plain `fn` and `await` async work inside it (`await self.load_rates()`): an `async fn` step
+is started without waiting for it. `run_capability(name, args, customer_id?)`, `claude_tools(customer_id?)`, and
+`claude_tool_use(tool_use, customer_id?)` run them and produce Claude tool definitions and results. SDKs get results
+as plain data, objects included (`run_capability_json`). Capabilities written under `capabilities` in the policy
+are named after their field.
 
-A function on the policy with an engine function's name replaces it for that policy (every call, from the host and
-the engine). Keep the signature; it replaces the original entirely. Prefer the hooks (cost functions, `enabled`,
-notifications, event handlers, capabilities).
+## Overriding engine functions
+
+Extend `Limitr` with a type and declare the policy with it, or put the function on the policy itself. A function
+with an engine function's name runs instead of it, for every call from the host and the engine, and can still call
+the engine's version with `self.<name><Limitr>(...)`:
+
+```stof
+#[type]
+Limitr MyLimitr: {
+    list paused: []   // customers to refuse before the engine looks at the call
+
+    fn allow(id: str!, entitlement: str!, value: float | str = 0, event: bool | str | obj = true, cap: Cap | map = null, overhead?: float, force: bool = false) -> bool {
+        if (self.paused.contains(id)) return false;
+        self.allow<Limitr>(id, entitlement, value, event, cap, overhead, force)
+    }
+}
+
+MyLimitr policy: {
+    credits: { ... }
+    plans: { ... }
+}
+```
+
+Keep the engine function's exact signature (copy it from `src/spec/limitr.stof`): SDKs pass arguments by position.
+Prefer the hooks (cost functions, `enabled`, notifications, event handlers, capabilities) when one fits, and
+override for what they don't cover.

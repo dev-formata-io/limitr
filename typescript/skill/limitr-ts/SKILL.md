@@ -25,7 +25,7 @@ npm i @formata/limitr
 ```
 
 The package depends on `@formata/stof` (0.10.6 or later for Limitr 0.7). Import only from `@formata/limitr`.
-It ships this skill and the limitr skill in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
+It ships this skill, the limitr skill, and the stof skill (the Stof language) in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
 
 ## Create the engine
@@ -100,6 +100,10 @@ const ok = await limitr.check(userId, 'api', 50);                             //
 Reads: `value`, `remaining`, `limit`, `allowance`, `cost`, `resets`, `rate`, `acceleration`,
 `projectedExhaustion`, `remainingCredit`, `meterObject`, `limitObject`, `entitlement`, `plan`, `credit`,
 `creditExchange`. Each is `(customer, entitlement, ...)` and returns plain values or records.
+
+Exchange rates can change at runtime: `setExchangePair(name, value, currency = 'rune')` adds or replaces a pair (false,
+with nothing changed, if it doesn't reach runes), `exchangePair(name)` reads one, and `removeExchangePair(name)`
+removes one. Ex. `await limitr.setExchangePair('euro', 1.16, 'usd')` from a scheduled job.
 
 Each method call is atomic (calls go through a promise queue, one at a time), but two calls are not: another
 request can run between a `check` and the following `allow`. When concurrent requests must not overspend, use
@@ -238,8 +242,9 @@ limitr.addHandler('billing', async (key, value) => {
 - Handlers receive `(name, value)`, where objects arrive as JSON strings. All handlers get every event.
   `removeHandler(name)` and `clearHandlers()` manage them.
 - Handlers are called during the engine call that emitted the event, and async handlers are not awaited: the call
-  returns without waiting for them. Catch errors inside async handlers, and don't assume a handler finished when
-  `allow` returns.
+  returns without waiting for them, so don't assume a handler finished when `allow` returns.
+- A handler that throws (or rejects) is logged with `console.error` and skipped. The error never reaches the call
+  that sent the event, which has already recorded its usage, and the other handlers still run.
 - Event names and payloads are in the limitr skill (`references/events.md`). Common ones: `meter-changed`,
   `meter-overage`, `meter-limit`, `meter-governed`, `meter-reset`, `cap-limit`, `cap-threshold-crossed`,
   `customer-set`, `feature-checked`, and `customer-entitlement-given`/`-taken`/`-restored`. Meter events carry the call's cost (`meter.overhead_diff`) and list price (`meter.price_diff`) in
@@ -258,8 +263,9 @@ Customer records hold all state (meters, grants, caps, overrides, gives and take
 ## Change the policy at runtime
 
 `setPlan(id, planStof)`, `deletePlan(id)`, `setNotifications(stof)`, `setCapabilities(stof)`, and
-`difference(otherLimitr)` (a diff of two policies). `runCapability(name, args, customerId?)` runs a capability
-(return plain values from it; see the limitr skill). For anything else, call the engine directly:
+`difference(otherLimitr)` (a diff of two policies). `runCapability(name, args, customerId?)` runs a capability and
+returns its result as plain data (text, a number, a list, or an object as a record), or null if the customer can't
+use it. For anything else, call the engine directly:
 `await limitr.docCall('policy.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
 registering host functions the policy can call (`limitr.doc.lib('App', 'name', fn)`) or allowing HTTP from the
 policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any host).

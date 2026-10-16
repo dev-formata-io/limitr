@@ -79,7 +79,7 @@ export class Limitr {
 
     /**
      * How long a policy call can run before it fails, in milliseconds (null for no limit).
-     * Engine calls take a few milliseconds; the limit stops a policy function that never returns
+     * Engine calls run in-process; the limit stops a policy function that never returns
      * (Ex. a loop in a custom cost function) from blocking every call after it. Set with setMaxExecutionTime().
      */
     protected maxExecutionTime: number | null = 5000;
@@ -124,9 +124,25 @@ export class Limitr {
      */
     addHandler(name: string, handler: LimitrEventHandler) {
         this.eventHandlers.set(name, handler);
-        this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
-            for (const [_, handler] of this.eventHandlers) handler(key, value);
-        });
+        this.doc.lib('App', 'event_handler', (key: string, value: unknown) => this.emit(key, value));
+    }
+
+
+    /**
+     * Send an event to every handler.
+     * A handler that throws (or rejects) is logged and skipped: its error never reaches the call that
+     * sent the event, which has already recorded its usage.
+     */
+    protected emit(key: string, value: unknown) {
+        for (const [name, handler] of this.eventHandlers) {
+            const failed = (error: unknown) => console.error(`Limitr: event handler '${name}' failed on '${key}':`, error);
+            try {
+                const result = handler(key, value);
+                if (result instanceof Promise) result.catch(failed);
+            } catch (error) {
+                failed(error);
+            }
+        }
     }
 
 
@@ -297,6 +313,41 @@ export class Limitr {
      */
     async creditExchange(inCredit: string, outCredit: string = 'rune', value: number = 1): Promise<number | null> {
         return await this.gate.run(() => this.doc.call('policy.credit_exchange', inCredit, outCredit, value)) as number | null;
+    }
+
+
+    /**
+     * An exchange pair: one `name` is worth `value` of `currency`. Undefined if there's no pair for `name`.
+     */
+    async exchangePair(name: string): Promise<{ value: number, currency: string } | undefined> {
+        const node = await this.gate.run(() => this.doc.call('policy.exchange.get_pair', name));
+        if (typeof node !== 'string') return undefined;
+        const pair = this.doc.record(node) as { value: number, currency: string } | undefined;
+        return pair ? { value: pair.value, currency: pair.currency } : undefined;
+    }
+
+
+    /**
+     * Set an exchange pair: one `name` is worth `value` of `currency` (a credit, a currency, or 'rune').
+     * Adds or replaces the pair, so rates can follow a provider or a currency feed. A pair on a priced credit
+     * replaces its price everywhere. False (nothing changed) for 'rune', a negative value, or a pair that
+     * doesn't reach runes.
+     *
+     * ```ts
+     * await limitr.setExchangePair('euro', 1.16, 'usd');
+     * await limitr.setExchangePair('sonnet_output', 0.015, 'ai_credit');
+     * ```
+     */
+    async setExchangePair(name: string, value: number, currency: string = 'rune'): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.set_exchange_pair', name, value, currency)) as boolean;
+    }
+
+
+    /**
+     * Remove an exchange pair ('rune' and 'usd' stay). A priced credit goes back to its own price.
+     */
+    async removeExchangePair(name: string): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.remove_exchange_pair', name)) as boolean;
     }
 
 
@@ -799,10 +850,12 @@ export class Limitr {
 
 
     /**
-     * Run a capability.
+     * Run a capability and return its result: text, a number, a list, or an object as a plain record.
+     * Null when the capability doesn't exist or the customer can't use it.
      */
     async runCapability(name: string, args: Record<string, unknown> = {}, customerId?: string): Promise<unknown> {
-        return await this.gate.run(() => this.doc.call('policy.run_capability', name, new Map(Object.entries(args)), customerId ?? null));
+        const json = await this.gate.run(() => this.doc.call('policy.run_capability_json', name, new Map(Object.entries(args)), customerId ?? null)) as string | null;
+        return json ? JSON.parse(json).result ?? null : null;
     }
 
 
@@ -1428,7 +1481,7 @@ export class Limitr {
             try {
                 const record = JSON.parse(data);
                 if (record.type === 'topup-purchase-failed') {
-                    for (const [_, handler] of this.eventHandlers) handler('topup-purchase-failed', record);
+                    this.emit('topup-purchase-failed', record);
                 } else if (!!record.error && !!record.id) {
                     if (record.type === 'customer') {
                         this._deniedCloudCustomers.add(record.id);
@@ -1478,9 +1531,7 @@ export class Limitr {
                                 this.wsSendDebounced(id, data, debounceMs);
                             });
                             if (this.eventHandlers.size > 0) {
-                                this.doc.lib('App', 'event_handler', (key: string, value: unknown) => {
-                                    for (const [_, handler] of this.eventHandlers) handler(key, value);
-                                });
+                                this.doc.lib('App', 'event_handler', (key: string, value: unknown) => this.emit(key, value));
                             }
                         }
                         this.wsInit = true;

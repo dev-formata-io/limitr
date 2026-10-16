@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.7.2;
+    ver version: 0.7.3;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -175,7 +175,7 @@ Limitr: {
             // should the meter be reset?
             let existing_meter_reset = false;
             const now = Time::now();
-            if (existing_meter != null && existing_meter.started != null && limit != null && limit.resets) {
+            if (existing_meter != null && existing_meter.started != null && limit != null && (limit.resets || limit.reset_sch != null)) {
                 const period_start = limit.current_period_start(existing_meter.started, now);
                 const should_reset = period_start != null && period_start != existing_meter.started;
                 if (should_reset) {
@@ -1042,7 +1042,7 @@ Limitr: {
             const customer = pair[0];
             const ent = pair[1];
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
-            if (limit != null && limit.resets) {
+            if (limit != null && (limit.resets || limit.reset_sch != null)) {
                 const now = Time::now();
                 if (limit.reset_sch != null) {
                     return self.next_period_start(now, limit.reset_sch);
@@ -1544,7 +1544,7 @@ Limitr: {
             mode: mode ?? existing_limit?.mode ?? 'hard',
             value: value ?? existing_limit?.value ?? 0,
             increment: increment ?? existing_limit?.increment ?? 0,
-            resets: resets ?? existing_limit?.resets ?? false,
+            resets: (reset_sch ?? existing_limit?.reset_sch) != null || (resets ?? existing_limit?.resets ?? false), // a schedule means it resets
             reset_inc: reset_inc ?? existing_limit?.reset_inc,
             reset_sch: reset_sch ?? existing_limit?.reset_sch,
             override_expires_on: expires ?? existing_limit?.override_expires_on,
@@ -1850,7 +1850,7 @@ Limitr: {
             scope: scope ?? null,
             created_on: Time::now(),
             started: Time::now(),
-            resets,
+            resets: resets || reset_sch != null, // a schedule means it resets
             reset_inc: reset_inc,
             reset_sch: reset_sch,
             expires_on: expires_on,
@@ -2076,6 +2076,50 @@ Limitr: {
      */
     fn credit_exchange(in_currency: str!, out_currency: str!, value: float! = 1) -> float {
         self.exchange.exchange(value, in_currency, out_currency)
+    }
+
+
+    /**
+     * Set an exchange pair: one `name` is worth `value` of `currency` (a credit, a currency, or 'rune').
+     * Adds the pair or replaces it. A pair on a priced credit replaces its price everywhere.
+     * Refused (false, nothing changed) for 'rune', a name with a period, a negative value, or a pair that
+     * doesn't reach runes (an unknown currency or a cycle).
+     */
+    fn set_exchange_pair(name: str!, value: float!, currency: str!) -> bool {
+        value = value.remove_units();
+        if (name == 'rune' || name == currency || name.contains('.') || value < 0 || currency.len() < 1) return false;
+
+        // Keep the old rate in case the new one doesn't reach runes
+        const existing = self.exchange.get(name);
+        const pair: ExchangePair = typeof existing == 'obj' ? existing : null;
+        const old_value = pair?.value;
+        const old_currency = pair?.currency;
+        if (pair != null) {
+            pair.value = value;
+            pair.currency = currency;
+        } else {
+            self.exchange.remove(name, shallow = false);
+            self.exchange.insert(name, new ExchangePair { value, currency } on self.exchange);
+        }
+
+        if (self.exchange.to_runes(1, name) != null) return true;
+        if (pair != null) {
+            pair.value = old_value;
+            pair.currency = old_currency;
+        } else {
+            self.exchange.remove(name, shallow = false);
+        }
+        false
+    }
+
+
+    /**
+     * Remove an exchange pair ('rune' and 'usd' stay). A priced credit goes back to its own price.
+     */
+    fn remove_exchange_pair(name: str!) -> bool {
+        if (name == 'rune' || name == 'usd') return false;
+        if (typeof self.exchange.get(name) != 'obj') return false;
+        self.exchange.remove(name, shallow = false)
     }
 
 
@@ -2345,6 +2389,17 @@ Limitr: {
             return cp.get_result();
         }
         null
+    }
+
+
+    /**
+     * Run a capability and return its result as JSON ({ "result": ... }), for SDKs: an object result comes
+     * back as plain data. The result is null when the capability doesn't exist or the customer can't use it.
+     */
+    fn run_capability_json(name: str!, args: map = map(), customer_id?: str) -> str {
+        using arena = new {};
+        arena.result = self.run_capability(name, args, customer_id);
+        stringify('json', arena)
     }
 
 

@@ -4,10 +4,37 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
-## Unreleased
+## 0.7.3
+
+### Fixed
+
+- **TypeScript: a throwing event handler no longer fails the call.** An error thrown (or a promise rejected) in a
+  handler reached the caller of `allow`, after the usage was already recorded, so a bug in analytics code looked
+  like a failed call that had in fact been metered. Handler errors are now logged with `console.error`, the other
+  handlers still run, and the call returns normally.
+- **A reset schedule means it resets.** A limit, cap, or topup with `reset_sch` and no `resets: true` never reset.
+  `reset_sch` now turns `resets` on: in validation, in `create_customer_override` and `add_customer_cap`, and when
+  the engine reads limits, caps, and grants (so unvalidated policies, like plans from `set_plan`, reset too).
+- **TypeScript: `runCapability` returns objects as records.** An object result came back as an internal node ID; it's
+  plain data now (through the new `run_capability_json`). Text, numbers, and lists are unchanged.
+
+### Added
+
+- **Exchange pairs at runtime:** `set_exchange_pair(name, value, currency)` and `remove_exchange_pair(name)` in the
+  engine, and `setExchangePair`, `exchangePair`, and `removeExchangePair` in TypeScript. A pair that doesn't reach
+  runes (an unknown currency or a cycle) is refused, and the old rate stays.
+- **The stof skill ships in the npm package** (`skill/stof`, copied from `skill/stof` in this repo at publish), next
+  to the limitr and limitr-ts skills, so agents have the language reference for writing and overriding policies.
+- Tests for capabilities, exchange pairs, reset schedules, and overriding engine functions.
 
 ### Docs
 
+- **Overriding engine functions:** extend `Limitr` with a type (or put the function on the policy) and call the
+  engine's version with `self.allow<Limitr>(...)`. Overrides keep the engine function's signature, since SDKs pass
+  arguments by position.
+- **Capabilities:** `#[run]` steps are plain functions that `await` async work inside (an `async fn` step is started
+  without waiting for it).
+- The TypeScript SDK comment on the call time limit says "in-process" instead of a timing figure.
 - **AI pricing per model.** The skills and tutorial present a credit per model and direction (`sonnet_input`,
   `sonnet_output`) as the default for AI usage, with patterns for gating it (gate before and bill after, control in
   your own count next to per-model billing, one budget across models), and selling them as one abstract AI credit
@@ -16,7 +43,7 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   set through the exchange, currencies, and live rates (`get_pair`).
 - **Control and monetize** can share one entitlement; the docs say when to split them.
 - **Capabilities** are described as general functions for the host app, services, and AI tools, including loading
-  data from an API, and overriding engine functions is documented with its caveats.
+  data from an API.
 - Tutorial code samples are shorter per line and easier to read; chapter 4 no longer prints a date that changes
   every month.
 

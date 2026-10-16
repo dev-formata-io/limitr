@@ -87,7 +87,7 @@ Grant: {
     fn follow(top: Topup!) {
         self.credit = top.credit;
         self.starting_value = top.value;
-        self.resets = top.resets;
+        self.resets = top.resets || top.reset_sch != null; // a schedule means it resets
         self.reset_inc = top.reset_inc;
         self.reset_sch = top.reset_sch;
         if (self.reset_sch != null && self.last_reset == null) self.last_reset = Time::start_of_period(Time::now(), self.reset_sch);
@@ -120,7 +120,7 @@ Grant: {
     fn ensure_current(units: str = 'float', now: ms = null) -> bool {
         now = now ?? Time::now();
         if (self.expires_on != null && self.expires_on < now) return false;
-        if (!self.resets) return true;
+        if (!self.resets && self.reset_sch == null) return true;
         if (self.reset_sch != null) {
             // Calendar-based reset: fire once when a new period has started
             const period_start = Time::start_of_period(now, self.reset_sch);
@@ -152,7 +152,7 @@ Grant: {
      * Reset this grant for a single new period.
      */
     fn reset_period(units: str = 'float') {
-        if (!self.resets) return;
+        if (!self.resets && self.reset_sch == null) return;
         const starting_value = (self.starting_value as float).to_units(units);
 
         if (self.reset_mode == null || self.reset_mode == 'hard') {

@@ -1,0 +1,113 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Capability tests: steps that call async code (a plain fn with await inside) finish before the result
+// is read, in run order, and SDKs get results (objects included) as JSON.
+//
+CapabilityTests: {
+    /// A fresh policy with capabilities for one test (declare it with `using`).
+    fn fresh() -> obj {
+        const holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: {} } }, q: { entitlements: { a: {} } } }
+            capabilities: {
+                lookup: {
+                    description: 'Look something up (async, like an API call)'
+                    parameters: [{ name: 'key', description: 'Key' }]
+
+                    #[run(-1)]
+                    fn start() { self.output.steps = ['start']; }
+
+                    #[run]
+                    fn fetch() {
+                        await self.slow_lookup(self.input.key);
+                        self.output.steps.push_back('fetch');
+                    }
+
+                    #[run]
+                    fn use_it() { self.output.steps.push_back('use'); self.set_result(self.output.found); }
+
+                    async fn slow_lookup(key: str) {
+                        await Time::sleep(5ms);
+                        self.output.found = 'value for ' + key;
+                    }
+                }
+                record: {
+                    description: 'Return an object'
+                    plans: ['p']
+                    #[run]
+                    fn build() { self.set_result(new { name: 'ada', tags: ['a', 'b'], score: 3.5 }); }
+                }
+            }
+        }`, holder, 'stof');
+        holder
+    }
+
+
+    #[test]
+    /**
+     * Async work awaited inside a step finishes before the next step and before the result is read.
+     */
+    fn test_awaited_steps() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        assert_eq(policy.run_capability('lookup', map(('key', 'k1'))), 'value for k1');
+        assert_eq(policy.capability('lookup').output.steps, ['start', 'fetch', 'use']);
+
+        // each run starts clean
+        assert_eq(policy.run_capability('lookup', map(('key', 'k2'))), 'value for k2');
+        assert_eq(policy.capability('lookup').output.steps.len(), 3);
+
+        for (const i in [1, 2, 3]) {
+            using result = new {};
+            parse(policy.claude_tool_use('{ "type": "tool_use", "id": "toolu_1", "name": "lookup", "input": { "key": "k" } }'), result, 'json');
+            assert_eq(result.content, 'value for k');
+        }
+    }
+
+
+    #[test]
+    /**
+     * SDKs get results as JSON: an object comes back as data, and a denied or missing capability as null.
+     */
+    fn test_run_capability_json() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.create_customer('on_p', 'p');
+        policy.create_customer('on_q', 'q');
+
+        using out = new {};
+        parse(policy.run_capability_json('record', map(), 'on_p'), out, 'json');
+        assert_eq(out.result.name, 'ada');
+        assert_eq(out.result.tags, ['a', 'b']);
+        assert_eq(out.result.score, 3.5);
+
+        using denied = new {};
+        parse(policy.run_capability_json('record', map(), 'on_q'), denied, 'json');
+        assert_null(denied.result);
+
+        using text = new {};
+        parse(policy.run_capability_json('lookup', map(('key', 'x'))), text, 'json');
+        assert_eq(text.result, 'value for x');
+
+        using missing = new {};
+        parse(policy.run_capability_json('missing'), missing, 'json');
+        assert_null(missing.result);
+    }
+}

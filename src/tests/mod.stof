@@ -32,6 +32,10 @@ import './billing_events' as TestBillingEvents;
 import './sync' as TestSync;
 import './ids' as TestIds;
 import './plan_topups' as TestPlanTopups;
+import './capabilities' as TestCapabilities;
+import './exchange_pairs' as TestExchangePairs;
+import './schedules' as TestSchedules;
+import './overrides' as TestOverrides;
 
 
 Limitr policy: {

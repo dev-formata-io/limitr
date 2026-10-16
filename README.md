@@ -98,9 +98,10 @@ in several places. Limitr works differently:
 
 ## Made for AI coding agents
 
-The npm package ships two skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
-engine function, and every event) and `limitr-ts` (the TypeScript SDK). Point your coding agent at them and it can
-write, review, and debug policies and integrations correctly, instead of guessing. They're also packaged as zips in
+The npm package ships three skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
+engine function, and every event), `limitr-ts` (the TypeScript SDK), and `stof` (the language policies are written
+in). Point your coding agent at them and it can write, review, and debug policies and integrations correctly, instead
+of guessing. The Limitr skills are also packaged as zips in
 [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for uploading to an agent.
 
 ## Open source and Limitr Cloud

@@ -98,10 +98,11 @@ Cap: {
     /// This cap's meter started accumulating on this timestamp.
     ms started: null;
 
-    /// Does this cap's consumption reset after a period of time?
+    /// Does this cap's consumption reset after a period of time? Setting reset_sch turns this on.
     bool resets: false;
 
     #[schema((target: obj, target_val: float): bool => {
+        if (target.reset_sch != null) target.resets = true; // a schedule means it resets
         if (target.resets) {
             if (target_val == null && target.reset_sch == null) {
                 target.reset_inc = 30days;
@@ -147,7 +148,7 @@ Cap: {
      * a balance.
      */
     fn reset_period() {
-        if (!self.resets) return;
+        if (!self.resets && self.reset_sch == null) return;
         self.meter_value = 0;
     }
 
@@ -173,7 +174,7 @@ Cap: {
         if (self.expires_on != null && self.expires_on < now) {
             return false;
         }
-        if (self.resets) {
+        if (self.resets || self.reset_sch != null) { // a schedule means it resets
             if (self.reset_sch != null) {
                 const period_start = Time::start_of_period(now, self.reset_sch);
                 if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {

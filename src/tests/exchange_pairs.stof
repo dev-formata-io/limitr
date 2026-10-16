@@ -1,0 +1,98 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Exchange pair tests: set, replace, and remove pairs at runtime (live rates), and refuse pairs that
+// don't reach runes, leaving the old rate in place.
+//
+ExchangePairTests: {
+    /// A fresh policy for one test (declare it with `using`).
+    fn fresh() -> obj {
+        const holder = new {};
+        parse(`Limitr policy: {
+            exchange: {
+                ai_credit: { value: 0.01, currency: 'usd' }
+            }
+            credits: {
+                ai_credit: { label: 'AI credit' }
+                sonnet_output: { price: { amount: 0.000015 } }
+                euro: {}
+            }
+            plans: { p: { default: true, entitlements: { a: {} } } }
+        }`, holder, 'stof');
+        holder
+    }
+
+
+    #[test]
+    fn test_set_and_replace() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        assert_null(policy.credit_exchange('euro', 'usd'));
+
+        assert(policy.set_exchange_pair('euro', 1.16, 'usd'));
+        assert_eq(policy.credit_exchange('euro', 'usd', 10), 11.6);
+
+        assert(policy.set_exchange_pair('euro', 1.2, 'usd')); // a new rate replaces the old one
+        assert_eq(policy.credit_exchange('euro', 'usd', 10), 12);
+        assert_eq(policy.exchange.get_pair('euro').value, 1.2);
+    }
+
+
+    #[test]
+    /**
+     * A pair on a priced credit replaces its price (Ex. reprice a model in an abstract credit), and
+     * removing the pair goes back to the price.
+     */
+    fn test_pair_replaces_price() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        assert(Num::abs(policy.credit_exchange('sonnet_output', 'usd', 1000) - 0.015) < 1e-9);
+
+        assert(policy.set_exchange_pair('sonnet_output', 0.002, 'ai_credit')); // 0.002 credits at $0.01
+        assert(Num::abs(policy.credit_exchange('sonnet_output', 'usd', 1000) - 0.02) < 1e-9);
+
+        assert(policy.remove_exchange_pair('sonnet_output'));
+        assert(Num::abs(policy.credit_exchange('sonnet_output', 'usd', 1000) - 0.015) < 1e-9);
+        assert_not(policy.remove_exchange_pair('sonnet_output'));
+    }
+
+
+    #[test]
+    /**
+     * Pairs that can't work are refused, and an existing rate is left as it was.
+     */
+    fn test_refused() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        assert_not(policy.set_exchange_pair('rune', 2, 'usd'));
+        assert_not(policy.set_exchange_pair('euro', -1, 'usd'));
+        assert_not(policy.set_exchange_pair('euro', 1, 'nothing'));    // unknown currency
+        assert_not(policy.set_exchange_pair('euro.x', 1, 'usd'));      // paths use '.'
+        assert_null(policy.exchange.get_pair('euro'));                  // nothing left behind
+
+        // a cycle: ai_credit -> euro -> ai_credit
+        assert(policy.set_exchange_pair('euro', 100, 'ai_credit'));
+        assert_not(policy.set_exchange_pair('ai_credit', 0.01, 'euro'));
+        assert_eq(policy.exchange.get_pair('ai_credit').currency, 'usd'); // old rate kept
+        assert_eq(policy.exchange.get_pair('ai_credit').value, 0.01);
+        assert_eq(policy.credit_exchange('euro', 'usd'), 1);
+
+        assert_not(policy.remove_exchange_pair('rune'));
+        assert_not(policy.remove_exchange_pair('usd'));
+    }
+}

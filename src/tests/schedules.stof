@@ -1,0 +1,114 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Reset schedule tests: a reset_sch means it resets, with or without `resets: true`.
+//
+// Never validated (like plans from set_plan or Cloud updates), so the schedule has to work without the
+// schema pass. One test validates a copy to check the schema turns `resets` on too.
+//
+Limitr TestSchedulesPolicy: {
+    credits: {
+        tok: { price: { amount: 0.01 } }
+    }
+
+    plans: {
+        scheduled: {
+            label: 'Scheduled'
+            entitlements: {
+                // a schedule without resets: true
+                monthly: { limit: { credit: 'tok', mode: 'hard', value: 100, reset_sch: 'monthly:1' } }
+                grant_backed: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
+                plain: { limit: { credit: 'tok', mode: 'hard', value: 100 } }
+            }
+            topups: {
+                refill: { credit: 'tok', value: 50, reset_sch: 'monthly:1' }
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_limit_schedule_resets() {
+        const id = 'sch_limit';
+        self.create_customer(id, 'scheduled');
+        assert(self.allow(id, 'monthly', 90, false));
+        assert_not(self.check(id, 'monthly', 20));
+        assert(self.resets(id, 'monthly') != null);
+
+        const meter: Meter = self.meter_obj(id, 'monthly');
+        meter.started = Time::now() - 40days; // last month
+        assert(self.allow(id, 'monthly', 20, false));
+        assert_eq(self.value(id, 'monthly'), 20);
+    }
+
+
+    #[test]
+    fn test_override_schedule_resets() {
+        const id = 'sch_override';
+        self.create_customer(id, 'scheduled');
+        const limit = self.create_customer_override(id, 'plain', reset_sch = 'weekly:mon');
+        assert(limit.resets);
+        assert(self.resets(id, 'plain') != null);
+    }
+
+
+    #[test]
+    fn test_cap_schedule_resets() {
+        const id = 'sch_cap';
+        self.create_customer(id, 'scheduled');
+        const cap = self.add_customer_cap(id, 1, 'monthly_cap', reset_sch = 'monthly:1', events = false);
+        assert(cap.resets);
+        assert(self.allow(id, 'monthly', 100, false)); // $1.00
+        assert_not(self.check(id, 'plain', 1));
+
+        cap.last_reset = Time::now() - 40days; // last month
+        assert(self.allow(id, 'plain', 10, false));
+        assert_eq(cap.meter_value.round(6), 0.1);
+    }
+
+
+    #[test]
+    fn test_topup_schedule_resets() {
+        const id = 'sch_grant';
+        self.create_customer(id, 'scheduled');
+        assert(self.apply_customer_topup(id, 'refill'));
+        const customer = self.customer(id);
+        const grant: Grant = customer.grants.fields()[0][1];
+        assert(grant.resets);
+
+        assert(self.allow(id, 'grant_backed', 50, false)); // uses the whole grant, which stays (it resets)
+        assert_eq(self.credit_remaining(id, 'tok'), 0);
+        grant.last_reset = Time::now() - 40days; // last month
+        assert_eq(self.credit_remaining(id, 'tok'), 50);
+    }
+
+
+    #[test]
+    fn test_schema_turns_resets_on() {
+        using holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10, reset_sch: 'monthly:1' } } }
+                topups: { t: { credit: 'tok', value: 5, reset_sch: 'monthly:1' } } } }
+        }`, holder, 'stof');
+        const policy: Limitr = holder.policy;
+        assert(policy.valid());
+        assert(policy.plans.p.entitlements.a.limit.resets);
+        assert(policy.plans.p.topups.t.resets);
+    }
+}

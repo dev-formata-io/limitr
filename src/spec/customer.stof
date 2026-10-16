@@ -436,7 +436,7 @@ Customer: {
                     grant.value = 0;
 
                     // if grant doesn't reset, then remove completely
-                    if (!grant.resets) self.grants.remove(grant.id, shallow = false);
+                    if (!grant.resets && grant.reset_sch == null) self.grants.remove(grant.id, shallow = false);
                 }
             } else {
                 break;

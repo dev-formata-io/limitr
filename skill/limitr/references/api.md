@@ -58,6 +58,8 @@ These meter nothing and show the current period (0 after a pending reset).
 | `customer_entitlements(id)` | list | `(name, Entitlement)` pairs the customer has (plan, less taken, plus given). |
 | `credit(id)` / `credit_for(id, entitlement)` | Credit | |
 | `credit_exchange(in, out, value = 1)` | float | Convert between credits and currencies. |
+| `set_exchange_pair(name, value, currency)` | bool | Add or replace a pair. False, with nothing changed, for `rune`, a negative value, or a pair that doesn't reach runes. |
+| `remove_exchange_pair(name)` | bool | A priced credit goes back to its own price. `rune` and `usd` stay. |
 | `credit_remaining(customer_id, credit)` | float | Grant balance in `credit` (other credits converted). |
 
 ## Customers
@@ -101,6 +103,7 @@ These meter nothing and show the current period (0 after a pending reset).
 | `plan_period(id)` / `plan_trial_period(id)` / `plan_sub_entitlement_name(id)` | | |
 | `set_notification(name, note)` | | |
 | `capability(name)` / `set_capability(cap)` / `run_capability(name, args = map(), customer_id?)` | | |
+| `run_capability_json(name, args = map(), customer_id?)` | str | `{ "result": ... }` as JSON, for SDKs (objects come back as data). |
 | `customer_local_margin_breakdown(customer_id)` | map | Revenue, cost (recorded overhead), and margin this period. |
 | `local_margin_breakdown(plan, entitlements, scaled = true)` | map | Margin for hypothetical usage (entitlement -> value, or a map with `value`, `overhead`, `context`). |
 

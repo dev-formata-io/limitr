@@ -166,7 +166,7 @@ limit: {
     value: 1000            // the limit, in the credit's units (strings and units allowed: '1GB')
     increment: 1           // used by increment()/decrement()
     minimum: 0             // the meter never goes below this
-    resets: true           // reset each period...
+    resets: true           // reset each period (a reset_sch turns this on)...
     reset_inc: 1day        // ...every duration (default 30days), or
     reset_sch: 'monthly:1' // ...on a UTC calendar schedule (exclusive with reset_inc)
     hard_trailing: false   // hard only: allow the crossing call, deny after
@@ -283,9 +283,11 @@ feature through a downgrade, pausing one feature):
   period, so later price changes never re-price earlier usage.
 - **Exchange** converts any credit into any other through runes; currencies are credits, and `rune` / `usd` are
   built in. A pair on a priced credit replaces its price everywhere (worth, billing, grants), so models can be priced
-  in an abstract credit and repriced together. `get_pair(name)` can be overridden for live rates (it's asked about
-  credits too, so only look up known names). Ex. `exchange: { euro: { value: 1.14, currency:
-  'usd' } }`. A priced credit converts through its price. `credit_exchange(in, out, value)`.
+  in an abstract credit and repriced together. Ex. `exchange: { euro: { value: 1.14, currency: 'usd' } }`. A priced
+  credit converts through its price. `credit_exchange(in, out, value)` converts. To keep rates current,
+  `set_exchange_pair(name, value, currency)` adds or replaces a pair at runtime (refused if it doesn't reach runes),
+  and `remove_exchange_pair(name)` removes one; or override `get_pair(name)` to look rates up on every conversion
+  (it's asked about credits too, so only look up known names).
 - `customer_local_margin_breakdown(id)` and `local_margin_breakdown(plan, entitlements)` give a quick revenue,
   cost, and margin snapshot. They do not account for grants or topups.
 

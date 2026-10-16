@@ -37,7 +37,7 @@ Topup: {
     /// What does this topup cost?
     Price price: null;
 
-    /// Does this topup reset?
+    /// Does this topup reset? Setting reset_sch turns this on.
     bool resets: false;
 
     /// Is this topup included automatically for customers on this plan?
@@ -53,6 +53,7 @@ Topup: {
     str plan_change: 'top_up';
 
     #[schema((target: obj, target_val: float): bool => {
+        if (target.reset_sch != null) target.resets = true; // a schedule means it resets
         if (target.resets) {
             if (target_val == null && target.reset_sch == null) {
                 target.reset_inc = 30days;
@@ -130,7 +131,7 @@ Topup: {
             granted_on: now,
             starting_value: self.value,
             value: (self.value as float).to_units(units),
-            resets: self.resets,
+            resets: self.resets || self.reset_sch != null, // a schedule means it resets
             reset_inc: self.reset_inc,
             reset_sch: self.reset_sch,
             last_reset: self.reset_sch != null ? Time::start_of_period(now, self.reset_sch) : null,   // this period is the first
