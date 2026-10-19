@@ -5,7 +5,7 @@
   "description": "Design, write, and debug Limitr pricing policies (credits, plans, limits, caps, grants, feature flags, overhead costs) and integrate the in-process Limitr engine into TypeScript and JavaScript apps.",
   "author": {
     "name": "Formata, Inc.",
-    "email": "cj@limitr.dev",
+    "email": "info@limitr.dev",
     "url": "https://limitr.dev"
   },
   "homepage": "https://limitr.dev",
