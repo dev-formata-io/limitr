@@ -1,0 +1,18 @@
+{
+  "name": "limitr",
+  "displayName": "Limitr",
+  "version": "0.7.3",
+  "description": "Design, write, and debug Limitr pricing policies (credits, plans, limits, caps, grants, feature flags, overhead costs) and integrate the in-process Limitr engine into TypeScript and JavaScript apps.",
+  "author": {
+    "name": "Formata, Inc.",
+    "email": "cj@limitr.dev",
+    "url": "https://limitr.dev"
+  },
+  "homepage": "https://limitr.dev",
+  "repository": "https://github.com/dev-formata-io/limitr",
+  "license": "Apache-2.0",
+  "keywords": ["limitr", "pricing", "usage-based-billing", "metering", "rate-limits", "credits", "feature-flags", "ai-costs", "typescript", "stof"],
+  "icon": "./icon.png",
+  "documentationUrl": "https://limitr.dev/spec/welcome",
+  "supportUrl": "https://github.com/dev-formata-io/limitr/issues"
+}

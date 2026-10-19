@@ -1,0 +1,15 @@
+{
+  "name": "limitr",
+  "description": "The Limitr plugin for Claude: pricing policies, usage limits, and the in-process Limitr engine.",
+  "owner": {
+    "name": "Formata, Inc.",
+    "url": "https://limitr.dev"
+  },
+  "plugins": [
+    {
+      "name": "limitr",
+      "source": "./plugin",
+      "description": "Design and debug Limitr pricing policies and use the Limitr engine from TypeScript."
+    }
+  ]
+}
