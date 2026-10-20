@@ -24,7 +24,7 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.10.6 or later for Limitr 0.7). Import only from `@formata/limitr`.
+The package depends on `@formata/stof` (0.10.7 or later for Limitr 0.7.4). Import only from `@formata/limitr`.
 It ships this skill, the limitr skill, and the stof skill (the Stof language) in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
 

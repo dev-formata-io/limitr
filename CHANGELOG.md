@@ -30,6 +30,10 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Changed
 
+- **Requires Stof 0.10.7** (`@formata/stof` ^0.10.7). The engine is built with it, and Cloud policies can use what it
+  adds: `List.map`, `List.filter`, and `List.any` with a function, async `#[run]` steps that are awaited, functions in
+  definition order, and the html and xml formats.
+
 - **TypeScript: Cloud policies can reach any host over HTTP by default.** `httpHosts` now defaults to `true` (it was
   `['api.limitr.dev']`), so policy capabilities can call the services they list. Pass a list of hosts to allow only
   those, or `false` for no network access. `Limitr.new()` policies still have no network access unless you call
