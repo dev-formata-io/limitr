@@ -22,6 +22,20 @@ export * from './types.js';
 
 
 /**
+ * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
+ * (or refuse clearly). Matches the package version.
+ */
+export const LIMITR_SDK_VERSION = '0.7.4';
+
+
+/**
+ * What this SDK can take from Limitr Cloud, sent in hello.
+ * 'policy-source': Cloud sends the policy only, and this SDK keeps the engine it ships with.
+ */
+const CLOUD_ACCEPTS = ['policy-source'];
+
+
+/**
  * Cloud init options.
  */
 export interface LimitrCloudInit {
@@ -47,14 +61,21 @@ export interface LimitrCloudInit {
     validate?: boolean;
 
     /**
-     * Hosts the policy can reach over HTTP. Only Limitr Cloud (api.limitr.dev) by default.
-     * Pass a list to replace it (Ex. ['api.limitr.dev', 'api.example.com']), true for any host, or false for none.
+     * Hosts the policy can reach over HTTP. Any host by default (true), so capabilities can call the services they
+     * list. Pass a list to allow only those hosts (Ex. ['api.limitr.dev', 'api.example.com']), or false for none.
      * Limitr.new() policies have no network access unless you call limitr.doc.allowHttp(...).
      */
     httpHosts?: string[] | boolean;
 
     /** How long a policy call can run before it fails, in milliseconds (null for no limit). Defaults to 5 seconds. */
     maxExecutionTime?: number | null;
+
+    /**
+     * How long to collect usage and customer updates before sending them to Limitr Cloud together, in milliseconds
+     * (250 by default; 0 sends each one right away). Only used when the Cloud server supports batches. Batches are
+     * sent on close() too.
+     */
+    batchMs?: number;
 }
 
 
@@ -84,8 +105,14 @@ export class Limitr {
      */
     protected maxExecutionTime: number | null = 5000;
 
+    /** What this Limitr Cloud server supports (its reply to hello). */
+    protected cloudFeatures: Set<string> = new Set();
+
+    /** Batching window for Cloud messages (see LimitrCloudInit.batchMs). */
+    protected cloudBatchMs: number = 250;
+
     /** Hosts a Cloud policy can reach over HTTP (see LimitrCloudInit.httpHosts). */
-    protected cloudHttpHosts: string[] | boolean = ['api.limitr.dev'];
+    protected cloudHttpHosts: string[] | boolean = true;
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
     protected wsTimeout?: ReturnType<typeof setTimeout>;
@@ -633,7 +660,31 @@ export class Limitr {
      * Creates a credit grant from a topup (by name) if found on this customer's plan.
      */
     async applyCustomerTopup(id: string, topup: string): Promise<boolean> {
+        // On Limitr Cloud (when the server supports it), Cloud charges for the topup first and then grants it: the
+        // grant arrives with the customer's update, and this resolves once it's here (false if the charge failed).
+        if (this.ws && this.cloudFeatures.has('topup-purchase')) return await this.purchaseCloudTopup(id, topup);
         return await this.gate.run(() => this.doc.call('policy.apply_customer_topup', id, topup)) as boolean;
+    }
+
+
+    /** Topup purchases waiting on Limitr Cloud, by request ID. */
+    private _topupRequests: Map<string, (ok: boolean) => void> = new Map();
+
+    private async purchaseCloudTopup(id: string, topup: string, timeoutMs: number = 30000): Promise<boolean> {
+        const request = globalThis.crypto.randomUUID();
+        const result = new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => {
+                this._topupRequests.delete(request);
+                resolve(false);
+            }, timeoutMs);
+            this._topupRequests.set(request, (ok: boolean) => {
+                clearTimeout(timer);
+                this._topupRequests.delete(request);
+                resolve(ok);
+            });
+        });
+        await this.wsSendNow(JSON.stringify({ type: 'purchase-topup', request, id, topup }));
+        return await result;
     }
 
 
@@ -1249,6 +1300,7 @@ export class Limitr {
         limitr.denyUnconnected = denyUnconnected;
         if (typeof options !== 'string' && options.httpHosts !== undefined) limitr.cloudHttpHosts = options.httpHosts;
         if (typeof options !== 'string' && options.maxExecutionTime !== undefined) limitr.setMaxExecutionTime(options.maxExecutionTime);
+        if (typeof options !== 'string' && options.batchMs !== undefined) limitr.cloudBatchMs = Math.max(0, options.batchMs);
         const awaitInit = async () => {
             await new Promise<boolean>((resolve, reject) => {
                 const intervalMs = 50;
@@ -1282,6 +1334,12 @@ export class Limitr {
                 limitr.ws.onclose = reconnect;
                 limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
                 await waitOnOpen(ws);
+
+                // A new connection starts with no subscriptions on the Cloud side: say who we are, which customers
+                // this engine holds, and catch up on policy changes published while we were away.
+                const customers = Object.keys(await limitr.customers() ?? {});
+                ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, customers, accepts: CLOUD_ACCEPTS }));
+                ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
             }
         };
         limitr.ws = ws;
@@ -1289,6 +1347,7 @@ export class Limitr {
         limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
         await waitOpen;
 
+        limitr.ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, accepts: CLOUD_ACCEPTS }));
         limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
         await awaitInit();
         if (validate) {
@@ -1406,6 +1465,10 @@ export class Limitr {
      * Close connection to Limitr Cloud.
      */
     async close() {
+        if (this._batchTimer) clearTimeout(this._batchTimer);
+        this._batchTimer = undefined;
+        await this.flushCloudBatch();
+
         const unsent = [];
         for (const [_, { timeoutHandle, data }] of this._debouncedSendMap) {
             clearTimeout(timeoutHandle);
@@ -1414,7 +1477,7 @@ export class Limitr {
         this._debouncedSendMap = new Map();
         
         const handles = [];
-        for (const data of unsent) handles.push(this.wsSend(data));
+        for (const data of unsent) handles.push(this.wsSendNow(data));
         await Promise.allSettled(handles);
 
         if (this.wsTimeout) clearTimeout(this.wsTimeout);
@@ -1447,9 +1510,39 @@ export class Limitr {
 
     /**
      * Send on the cloud WebSocket if enabled.
+     * When the server supports batches, messages are collected for `cloudBatchMs` and sent as one
+     * `{ type: 'batch', messages: [...] }`, in order. Cloud then records a customer's whole batch at once.
      */
-    private _dataSendQueue: string[] = [];
+    private _batch: string[] = [];
+    private _batchTimer?: ReturnType<typeof setTimeout>;
     async wsSend(data: string) {
+        if (this.cloudBatchMs > 0 && this.cloudFeatures.has('batch')) {
+            this._batch.push(data);
+            if (!this._batchTimer) {
+                this._batchTimer = setTimeout(() => {
+                    this._batchTimer = undefined;
+                    this.flushCloudBatch();
+                }, this.cloudBatchMs);
+            }
+            return;
+        }
+        await this.wsSendNow(data);
+    }
+
+
+    /**
+     * Send the collected batch now.
+     */
+    async flushCloudBatch() {
+        if (this._batch.length < 1) return;
+        const messages = this._batch;
+        this._batch = [];
+        await this.wsSendNow(messages.length === 1 ? messages[0] : `{"type":"batch","messages":[${messages.join(',')}]}`);
+    }
+
+
+    private _dataSendQueue: string[] = [];
+    protected async wsSendNow(data: string) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             if (this._dataSendQueue.length > 0) {
                 for (const data of this._dataSendQueue) this.ws.send(data);
@@ -1470,6 +1563,83 @@ export class Limitr {
 
 
     /**
+     * Host functions and limits a Cloud-connected doc needs: the time limit, HTTP to the allowed hosts, the CloudWS
+     * library the Cloud handlers send through, and the app's event handlers.
+     */
+    private setupCloudDoc() {
+        this.doc.setMaxExecutionTime(this.maxExecutionTime);
+        // Http::fetch (Stof's built-in, on the JS fetch API), limited to the allowed hosts
+        if (this.cloudHttpHosts === true) this.doc.allowHttp();
+        else if (this.cloudHttpHosts !== false) this.doc.allowHttp(this.cloudHttpHosts);
+        this.doc.lib('CloudWS', 'send', (data: string) => {
+            this.wsSend(data);
+        });
+        this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
+            this.wsSendDebounced(id, data, debounceMs);
+        });
+        if (this.eventHandlers.size > 0) {
+            this.doc.lib('App', 'event_handler', (key: string, value: unknown) => this.emit(key, value));
+        }
+    }
+
+
+    /** Notifications the last Cloud policy added (replaced by the next one). */
+    private _cloudNotifications: string[] = [];
+
+    /**
+     * Load a policy from Limitr Cloud into this engine (policy-only: the SDK keeps the engine it ships with).
+     * The policy record replaces plans, credits, and exchange; Cloud's functions (rollout rules, cost functions,
+     * capabilities, notifications, and the Cloud handlers) arrive as Stof source and are parsed here, with this SDK's
+     * own Stof runtime; customers this engine doesn't have yet are added.
+     */
+    //deno-lint-ignore no-explicit-any
+    private async loadCloudPolicySource(record: any) {
+        const added: string[] = [];
+        await this.gate.run(async () => {
+            const doc = this.doc;
+            await doc.call('policy.update_policy_internals', JSON.stringify({ policy: record.policy ?? {} }), 'json');
+            for (const fn of Array.isArray(record.functions) ? record.functions : []) {
+                if (typeof fn?.path !== 'string' || typeof fn?.source !== 'string') continue;
+                const node = doc.get(fn.path);
+                if (typeof node !== 'string') continue;
+                try {
+                    doc.parse(fn.source, 'stof', node, 'prod');
+                } catch (e) {
+                    console.error(`Limitr Cloud: the function for ${fn.path} does not parse with this SDK:`, e);
+                }
+            }
+            if (typeof record.capabilities === 'string' && record.capabilities.length > 0) {
+                doc.sync_call('policy.set_capabilities', record.capabilities, 'stof');
+            }
+
+            // notifications: the ones Cloud sent last time go, then the current ones are set
+            for (const name of this._cloudNotifications) doc.remove(`policy.notifications.${name}`);
+            const before = new Set(Object.keys(doc.record(doc.get('policy.notifications') as string) ?? {}));
+            if (typeof record.notifications === 'string' && record.notifications.length > 0) {
+                await doc.call('policy.set_notifications', record.notifications, 'stof');
+            }
+            this._cloudNotifications = Object.keys(doc.record(doc.get('policy.notifications') as string) ?? {}).filter(n => !before.has(n));
+
+            // the Cloud handlers (billing events) replace the last ones
+            if (typeof record.handlers === 'string') {
+                doc.remove('limitr_cloud');
+                doc.parse(`limitr_cloud: {\n${record.handlers}\n}`, 'stof', null, 'prod');
+            }
+
+            for (const customer of Array.isArray(record.customers) ? record.customers : []) {
+                if (typeof customer?.id !== 'string' || doc.get(`policy.customers.${customer.id}`) != null) continue;
+                await doc.call('policy.update_customer_internals', JSON.stringify(customer), 'json');
+                added.push(customer.id);
+            }
+
+            if (!this.wsInit) this.setupCloudDoc();
+            this.wsInit = true;
+        });
+        for (const id of added) await this.ensureCustomerIncludedTopups(id, false);
+    }
+
+
+    /**
      * Cloud message received.
      */
     private _deniedCloudCustomers: Set<string> = new Set();
@@ -1480,8 +1650,20 @@ export class Limitr {
             if (data === 'pong' || data === 'ping') return;
             try {
                 const record = JSON.parse(data);
-                if (record.type === 'topup-purchase-failed') {
+                if (record.type === 'topup-purchase') {
+                    // Cloud's answer to purchase-topup (the customer update with the grant came first)
+                    if (typeof record.request === 'string') this._topupRequests.get(record.request)?.(!!record.ok);
+                    if (!record.ok) this.emit('topup-purchase-failed', record);
+                } else if (record.type === 'topup-purchase-failed') {
                     this.emit('topup-purchase-failed', record);
+                } else if (record.type === 'policy-source') {
+                    await this.loadCloudPolicySource(record);
+                } else if (record.type === 'hello') {
+                    // the server's reply: what it supports
+                    this.cloudFeatures = new Set(Array.isArray(record.features) ? record.features : []);
+                } else if (record.type === 'sdk-unsupported') {
+                    console.error(record.message ?? `Limitr Cloud needs a newer SDK (this is ${LIMITR_SDK_VERSION})`);
+                    this.emit('sdk-unsupported', record);
                 } else if (!!record.error && !!record.id) {
                     if (record.type === 'customer') {
                         this._deniedCloudCustomers.add(record.id);
@@ -1520,19 +1702,7 @@ export class Limitr {
                         } else {
                             this.doc = doc;
                             this.doc.sync_call('<Limitr>.load');
-                            this.doc.setMaxExecutionTime(this.maxExecutionTime);
-                            // Http::fetch (Stof's built-in, on the JS fetch API), limited to the allowed hosts
-                            if (this.cloudHttpHosts === true) this.doc.allowHttp();
-                            else if (this.cloudHttpHosts !== false) this.doc.allowHttp(this.cloudHttpHosts);
-                            this.doc.lib('CloudWS', 'send', (data: string) => {
-                                this.wsSend(data);
-                            });
-                            this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
-                                this.wsSendDebounced(id, data, debounceMs);
-                            });
-                            if (this.eventHandlers.size > 0) {
-                                this.doc.lib('App', 'event_handler', (key: string, value: unknown) => this.emit(key, value));
-                            }
+                            this.setupCloudDoc();
                         }
                         this.wsInit = true;
                     });

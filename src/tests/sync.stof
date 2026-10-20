@@ -62,6 +62,20 @@ SyncTests: {
 
     #[test]
     /**
+     * Policy settings come with an update (Cloud sets them per policy).
+     */
+    fn test_update_policy_internals_settings() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        policy.update_policy_internals('{ "policy": { "estimate_min_samples": 3, "hold_ttl": 60000 } }', 'json');
+        assert_eq(policy.estimate_min_samples, 3);
+        assert_eq(policy.hold_ttl, 1min);
+        assert_not_null(policy.plans.p); // nothing else changes
+    }
+
+
+    #[test]
+    /**
      * A BSTF update holding the same objects as this policy (Ex. Cloud resending a policy this engine loaded from
      * Cloud) replaces plans and credits without emptying the policy.
      */

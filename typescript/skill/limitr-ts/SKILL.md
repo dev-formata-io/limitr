@@ -229,6 +229,10 @@ customer's margin this period.
 topups, `remainingCredit(customer, credit)` for the balance, and `ensureCustomerPlanQuantity(customer)` to charge
 the plan's subscription entitlement once (after its trial).
 
+On Limitr Cloud, `applyCustomerTopup` asks Cloud to buy the topup: Cloud charges for it first, then the grant arrives
+with the customer. It resolves `true` once the grant is here, and `false` if the charge failed or Cloud didn't answer
+within 30 seconds (a purchase Cloud did complete still arrives with the customer's next update).
+
 ## Events
 
 ```ts
@@ -249,7 +253,8 @@ limitr.addHandler('billing', async (key, value) => {
   `meter-overage`, `meter-limit`, `meter-governed`, `meter-reset`, `cap-limit`, `cap-threshold-crossed`,
   `customer-set`, `feature-checked`, and `customer-entitlement-given`/`-taken`/`-restored`. Meter events carry the call's cost (`meter.overhead_diff`) and list price (`meter.price_diff`) in
   runes, which together give its margin.
-- In Cloud mode, `topup-purchase-failed` also arrives from Cloud.
+- In Cloud mode, `topup-purchase-failed` also arrives from Cloud, and `sdk-unsupported` when this SDK is older than
+  Cloud supports (update the package).
 
 ## Persist customer state
 
@@ -288,9 +293,11 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 
 - Cloud sends the active policy (and updates to it), and customers on demand. Everything else is the same API.
 - Options: `policy` (an ID, or `'active'`), `connectTimeout` (5s), `denyUnconnected` (default true: deny `allow`
-  while disconnected, to protect shared state), `validate`, `httpHosts`, `maxExecutionTime` (ms, default 5000).
-- A Cloud policy can only reach Limitr Cloud (`api.limitr.dev`) over HTTP. `httpHosts` replaces that list
-  (Ex. `['api.limitr.dev', 'api.example.com']`); `true` allows any host and `false` none.
+  while disconnected, to protect shared state), `validate`, `httpHosts`, `maxExecutionTime` (ms, default 5000),
+  `batchMs` (how long usage and customer updates are collected before they're sent together; 250 by default, `0`
+  sends each right away).
+- A Cloud policy can reach any host over HTTP by default (`httpHosts: true`), so capabilities can call the services
+  they list. Pass a list to allow only those hosts (Ex. `['api.limitr.dev', 'api.example.com']`), or `false` for none.
 - A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), and `ensureCustomer`
   creates it only when Cloud doesn't have it. `addVoucher(code)` redeems a Limitr voucher as a customer.
 - Call `await limitr.close()` on shutdown to flush pending updates.

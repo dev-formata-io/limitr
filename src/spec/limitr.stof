@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.7.3;
+    ver version: 0.7.4;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -2506,6 +2506,8 @@ Limitr: {
                     }
                 }
             }
+            if (p.policy.estimate_min_samples != null) self.estimate_min_samples = p.policy.estimate_min_samples;
+            if (p.policy.hold_ttl != null) self.hold_ttl = p.policy.hold_ttl;
             if (typeof p.limitr_cloud == 'obj') {
                 root.remove('limitr_cloud', shallow = false);
                 root.limitr_cloud = p.limitr_cloud;

@@ -8,7 +8,7 @@ Limitr repo. `!` marks a field that can't be null. Number fields typed `float | 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `version` | ver | engine version | Set by the engine (0.7.3). |
+| `version` | ver | engine version | Set by the engine (0.7.4). |
 | `credits` | obj | `{}` | Credit name -> `Credit`. |
 | `plans` | obj | `{}` | Plan name -> `Plan`. |
 | `exchange` | Exchange | `{}` | Currency conversion and grant strategy. |

@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.7.3",
+    "version": "0.7.4",
     "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",

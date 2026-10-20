@@ -4,6 +4,43 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.7.4
+
+### Added
+
+- **TypeScript: the SDK tells Limitr Cloud its version.** `Limitr.cloud` sends a `hello` message with
+  `LIMITR_SDK_VERSION` (now exported) before it asks for the policy, and Cloud replies with the features it supports.
+  An SDK older than the server supports gets a clear `sdk-unsupported` message (logged with `console.error` and sent
+  to handlers as `sdk-unsupported`) instead of a policy it can't load.
+- **TypeScript: the SDK keeps its own engine on Limitr Cloud.** The SDK says in `hello` that it can take a
+  policy-only push (`policy-source`). Cloud then sends the policy, its functions as Stof source (rollout rules, cost
+  functions, capabilities, notifications, and the Cloud handlers), and the customers, and the SDK loads them into the
+  engine it ships with, parsing the functions with its own Stof runtime. Before, Cloud's first push replaced the whole
+  engine with the server's, so every SDK had to be able to read the server's engine version.
+- **TypeScript: batched Cloud messages.** When the server supports it (its `hello` reply lists `batch`), the SDK
+  collects usage and customer updates for `batchMs` (250 by default, `0` to turn it off) and sends them together.
+  Cloud records each customer's batch at once. Batches are sent on `close()` too.
+- **TypeScript: topups are paid before they're granted on Limitr Cloud.** When the server supports it (`topup-purchase`
+  in its `hello` reply), `applyCustomerTopup` asks Cloud to buy the topup. Cloud charges for it, then sends the
+  customer with the new grant, and the call resolves `true` once the grant is here, or `false` if the charge failed.
+  A call that hears nothing back within 30 seconds resolves `false`; if Cloud did complete the purchase, the grant
+  still arrives with the customer's next update. Before, the SDK granted the topup itself and Cloud charged after.
+- **Policy updates carry `estimate_min_samples` and `hold_ttl`** (`update_policy_internals`), so a Cloud policy can
+  set them.
+
+### Changed
+
+- **TypeScript: Cloud policies can reach any host over HTTP by default.** `httpHosts` now defaults to `true` (it was
+  `['api.limitr.dev']`), so policy capabilities can call the services they list. Pass a list of hosts to allow only
+  those, or `false` for no network access. `Limitr.new()` policies still have no network access unless you call
+  `limitr.doc.allowHttp(...)`.
+
+### Fixed
+
+- **TypeScript: a reconnected Cloud client stayed out of date.** After a dropped connection, the new connection had
+  no subscriptions on the Cloud side, so published policy changes and customer updates stopped arriving. On
+  reconnect the SDK now sends `hello` with the customers it holds, and asks for the current policy.
+
 ## 0.7.3
 
 ### Fixed
