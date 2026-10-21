@@ -36,7 +36,7 @@
         "url": "https://github.com/dev-formata-io/limitr/issues"
     },
     "dependencies": {
-        "@formata/stof": "^0.10.7"
+        "@formata/stof": "^0.10.8"
     },
     "devDependencies": {
         "cpy-cli": "^7.0.0",

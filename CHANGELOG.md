@@ -17,6 +17,8 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   functions, capabilities, notifications, and the Cloud handlers), and the customers, and the SDK loads them into the
   engine it ships with, parsing the functions with its own Stof runtime. Before, Cloud's first push replaced the whole
   engine with the server's, so every SDK had to be able to read the server's engine version.
+  A policy Cloud keeps as a Stof document is sent as the document itself (`source`, with its functions and
+  capabilities in it), and the SDK loads it with `update_policy_internals(source, 'stof')`.
 - **TypeScript: batched Cloud messages.** When the server supports it (its `hello` reply lists `batch`), the SDK
   collects usage and customer updates for `batchMs` (250 by default, `0` to turn it off) and sends them together.
   Cloud records each customer's batch at once. Batches are sent on `close()` too.
@@ -30,9 +32,10 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Changed
 
-- **Requires Stof 0.10.7** (`@formata/stof` ^0.10.7). The engine is built with it, and Cloud policies can use what it
-  adds: `List.map`, `List.filter`, and `List.any` with a function, async `#[run]` steps that are awaited, functions in
-  definition order, and the html and xml formats.
+- **Requires Stof 0.10.8** (`@formata/stof` ^0.10.8). The engine is built with it, and Cloud policies can use what
+  0.10.7 and 0.10.8 add: `List.map`, `List.filter`, and `List.any` with a function, async `#[run]` steps that are
+  awaited, functions in definition order, the html and xml formats, and `Obj.set` / `Obj.unset`. With 0.10.8, an
+  engine holds about half the memory it did.
 
 - **TypeScript: Cloud policies can reach any host over HTTP by default.** `httpHosts` now defaults to `true` (it was
   `['api.limitr.dev']`), so policy capabilities can call the services they list. Pass a list of hosts to allow only

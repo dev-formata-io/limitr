@@ -1588,16 +1588,22 @@ export class Limitr {
 
     /**
      * Load a policy from Limitr Cloud into this engine (policy-only: the SDK keeps the engine it ships with).
-     * The policy record replaces plans, credits, and exchange; Cloud's functions (rollout rules, cost functions,
-     * capabilities, notifications, and the Cloud handlers) arrive as Stof source and are parsed here, with this SDK's
-     * own Stof runtime; customers this engine doesn't have yet are added.
+     * The policy replaces plans, credits, and exchange. It's the policy document itself (`source`, Stof, with its
+     * functions and capabilities in it), or for policies from before documents a record with Cloud's functions
+     * (rollout rules, cost functions, capabilities) as Stof source. Either way it's parsed here, with this SDK's own
+     * Stof runtime. Notifications and the Cloud handlers come as Stof too, and customers this engine doesn't have
+     * yet are added.
      */
     //deno-lint-ignore no-explicit-any
     private async loadCloudPolicySource(record: any) {
         const added: string[] = [];
         await this.gate.run(async () => {
             const doc = this.doc;
-            await doc.call('policy.update_policy_internals', JSON.stringify({ policy: record.policy ?? {} }), 'json');
+            if (typeof record.source === 'string') {
+                await doc.call('policy.update_policy_internals', record.source, 'stof');
+            } else {
+                await doc.call('policy.update_policy_internals', JSON.stringify({ policy: record.policy ?? {} }), 'json');
+            }
             for (const fn of Array.isArray(record.functions) ? record.functions : []) {
                 if (typeof fn?.path !== 'string' || typeof fn?.source !== 'string') continue;
                 const node = doc.get(fn.path);
