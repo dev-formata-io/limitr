@@ -44,6 +44,11 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Fixed
 
+- **Meter events carry the call's cap consumption.** `meter-changed`, `meter-overage`, `meter-reset`, and
+  `meter-limit` are now sent after the call's caps are updated, so the customer in the event shows what the call
+  added to each cap's `meter_value`. Before, they were sent first, and a host or Cloud that keeps the customer from
+  the event kept every cap a call behind (Cloud's copies stayed at 0, so a cap never held across an engine restart or
+  a Cloud edit).
 - **TypeScript: a reconnected Cloud client stayed out of date.** After a dropped connection, the new connection had
   no subscriptions on the Cloud side, so published policy changes and customer updates stopped arriving. On
   reconnect the SDK now sends `hello` with the customers it holds, and asks for the current policy.

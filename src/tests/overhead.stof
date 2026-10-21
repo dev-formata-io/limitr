@@ -79,6 +79,24 @@ Limitr TestOverheadPolicy: {
     }
 
 
+    // customer id -> [cap 'cost' meter_value, cap 'spend' meter_value] as each meter event carried them
+    map cap_events: map();
+
+
+    #[meter-changed]
+    #[meter-overage]
+    fn record_caps(event: obj) {
+        if (event.customer.parent().parent() != self || !event.customer.id.starts_with('oh_sync')) return;
+        let seen = self.cap_events.get(event.customer.id);
+        if (seen == null) {
+            seen = [];
+            self.cap_events.insert(event.customer.id, seen);
+        }
+        const caps = event.customer.caps;
+        seen.push_back((caps.get('cost')?.meter_value, caps.get('spend')?.meter_value));
+    }
+
+
     fn meter_overhead(id: str!, entitlement: str!) -> float {
         const meter: Meter = self.meter_obj(id, entitlement);
         meter?.overhead
@@ -210,6 +228,25 @@ Limitr TestOverheadPolicy: {
         assert_eq(Num::round(cap.meter_value, 12), 0.014);
         assert_not(self.check(id, 'ai', 10, null, null, 0.01));            // actual cost passed in
         assert(self.check(id, 'ai', 10, null, null, 0.005));
+    }
+
+
+    #[test]
+    /**
+     * A meter event's customer carries its caps with the call already in them, so a host (or Cloud)
+     * that keeps the customer from the event keeps what the call added to its caps.
+     */
+    fn test_meter_events_carry_cap_consumption() {
+        const id = 'oh_sync';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 100, 'cost', overhead_cost = true, events = false));
+        assert(self.add_customer_cap(id, 100, 'spend', events = false));
+        assert(self.allow(id, 'fixed_soft', 4));                           // meter-changed: $2 cost, $4 spent
+        assert(self.allow(id, 'fixed_soft', 8));                           // meter-overage (12 > 10): $6, $12
+        const seen = self.cap_events.get(id);
+        assert_eq(seen.len(), 2);
+        assert_eq(seen[0], (2, 4));
+        assert_eq(seen[1], (6, 12));
     }
 
 

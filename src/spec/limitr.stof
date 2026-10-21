@@ -248,6 +248,9 @@ Limitr: {
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap, scratch);
             const cap_extras = self.shared_caps_for(caller);
             for (const ec in ephemeral_caps) cap_extras.push_back(ec);
+            // The call's meter events, sent after the cap commit below: each carries the customer, and its
+            // caps must show what this call added to them (Cloud keeps the customer from these events).
+            const meter_events = [];
             let cap_grant_applied = 0.0;
             let cap_overage = 0.0;
             // `force` records usage that already happened (Ex. settle()): caps, grants coverage, and the
@@ -389,11 +392,8 @@ Limitr: {
                             sent_overage = true;
 
                             if (event) {
-                                // Internal notifications first for any matching
-                                const notes: Notifications = self.notifications;
                                 self.round_event(event_value);
-                                await notes.handle_event('meter-overage', event_value);
-                                await <Event>.send('meter-overage', event_value);
+                                meter_events.push_back(['meter-overage', event_value]); // sent once the caps are in (see below)
                             }
                         }
 
@@ -403,17 +403,12 @@ Limitr: {
                         }
                     }
                     if (existing_meter_reset && event) {
-                        const notes: Notifications = self.notifications;
                         self.round_event(event_value);
-                        await notes.handle_event('meter-reset', event_value);
-                        await <Event>.send('meter-reset', event_value);
+                        meter_events.push_back(['meter-reset', event_value]); // sent once the caps are in (see below)
                     }
                     if (!sent_overage && event) {
-                        // Internal notifications first for any matching
-                        const notes: Notifications = self.notifications;
                         self.round_event(event_value);
-                        await notes.handle_event('meter-changed', event_value);
-                        await <Event>.send('meter-changed', event_value);
+                        meter_events.push_back(['meter-changed', event_value]); // sent once the caps are in (see below)
                     }
                 }
 
@@ -485,23 +480,15 @@ Limitr: {
 
                 if (event) {
                     if (existing_meter_reset) {
-                        const notes: Notifications = self.notifications;
                         self.round_event(event_value);
-                        await notes.handle_event('meter-reset', event_value);
-                        await <Event>.send('meter-reset', event_value);
+                        meter_events.push_back(['meter-reset', event_value]); // sent once the caps are in (see below)
                     }
                     if (valid) {
-                        // Internal notifications first for any matching
-                        const notes: Notifications = self.notifications;
                         self.round_event(event_value);
-                        await notes.handle_event('meter-changed', event_value);
-                        await <Event>.send('meter-changed', event_value);
+                        meter_events.push_back(['meter-changed', event_value]); // sent once the caps are in (see below)
                     } else {
-                        // Internal notifications first for any matching
-                        const notes: Notifications = self.notifications;
                         self.round_event(event_value);
-                        await notes.handle_event('meter-limit', event_value);
-                        await <Event>.send('meter-limit', event_value);
+                        meter_events.push_back(['meter-limit', event_value]); // sent once the caps are in (see below)
                     }
                 }
             }
@@ -517,6 +504,7 @@ Limitr: {
                 // overhead with no units (Ex. a failed call that still cost) only moves overhead caps
                 const overhead_only = value == 0 && call_overhead != 0 ? call_overhead : null;
                 const crossings = caller.check_and_apply_caps(self, entitlement, credit_name, credit_overhead, value, cap_overage, cap_grant_applied, cap_extras, stof_units, position, changed_caps, force, overhead_only);
+                await self.send_meter_events(meter_events);
                 if (crossings != null && event) {
                     for (const crossed: Cap in crossings) {
                         const threshold_event = new {
@@ -545,6 +533,7 @@ Limitr: {
                     }
                 }
             }
+            await self.send_meter_events(meter_events); // a call that moved no caps (Ex. no credit, or not valid)
             return valid;
         }
         false
@@ -2828,6 +2817,20 @@ Limitr: {
             await <Event>.send('feature-checked', event_value);
         }
         on
+    }
+
+
+    /**
+     * Send a call's meter events ([name, event] pairs, in order): notifications first, then handlers.
+     * Empties the list, so sending it again is a no-op.
+     */
+    async fn send_meter_events(events: list) {
+        const notes: Notifications = self.notifications;
+        while (events.len() > 0) {
+            const pair = events.pop_front();
+            await notes.handle_event(pair[0], pair[1]);
+            await <Event>.send(pair[0], pair[1]);
+        }
     }
 
 
