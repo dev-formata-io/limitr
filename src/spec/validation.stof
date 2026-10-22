@@ -100,7 +100,9 @@ LimitrValidation: {
         const ent_name = target.subscription ?? 'subscription';
         const ent = target.entitlements.get(ent_name);
         let res = ent != null;
-        if (res) {
+        if (!res) {
+            res = self.error(`Plan "${target.name}" has a trial period but no "${ent_name}" entitlement for it to delay (a trial delays the plan's subscription; add one, or remove trial_period)`);
+        } else {
             try {
                 const val = target_val as float;
                 res = val >= 0;

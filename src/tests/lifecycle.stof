@@ -325,3 +325,17 @@ fn api_plan_trial_period() {
     assert_eq(by_plan, 7days);
     assert_eq(by_customer, 7days);
 }
+
+
+#[test]
+/**
+ * A trial delays the plan's subscription, so a plan with a trial and no subscription is refused, saying why.
+ */
+fn api_trial_needs_subscription() {
+    const free = root.policy.plans.free; // no subscription
+    assert_not(<LimitrValidation>.valid_plan_trial_period(free, 14days));
+    const message = <LimitrValidation>.error_message;
+    assert(message.contains('no "subscription" entitlement'));
+    assert(message.contains('free'));
+    assert(<LimitrValidation>.valid_plan_trial_period(root.policy.plans.paid, 14days) || !root.policy.plans.paid.entitlements.get('subscription'));
+}

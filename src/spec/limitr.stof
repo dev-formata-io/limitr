@@ -85,12 +85,12 @@ Limitr: {
         ?<LimitrValidation>.error('');
         for (const pair in self.credits.fields()) {
             const credit: Credit = pair[1];
-            if (!<Credit>.schemafy(credit)) return false;
+            if (!<Credit>.schemafy(credit)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Credit "${pair[0]}" is not valid`);
         }
         for (const pair in self.plans.fields()) {
             const plan: Plan = pair[1];
             plan.name = pair[0];
-            if (!<Plan>.schemafy(plan)) return false;
+            if (!<Plan>.schemafy(plan)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Plan "${pair[0]}" is not valid`);
         }
         if (!<Exchange>.schemafy(self.exchange)) return false;
         for (const pair in self.exchange.fields()) {

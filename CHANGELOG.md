@@ -52,6 +52,10 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 - **TypeScript: a reconnected Cloud client stayed out of date.** After a dropped connection, the new connection had
   no subscriptions on the Cloud side, so published policy changes and customer updates stopped arriving. On
   reconnect the SDK now sends `hello` with the customers it holds, and asks for the current policy.
+- **A plan with a trial and no subscription said nothing.** A `trial_period` delays the plan's subscription, so a
+  plan without one is refused; `valid()` now says why (Ex. `Plan "team" has a trial period but no "subscription"
+  entitlement for it to delay`) instead of failing with an empty message. Any credit or plan that fails validation
+  without its own message now names itself.
 
 ## 0.7.3
 

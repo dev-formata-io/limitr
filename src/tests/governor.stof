@@ -184,8 +184,9 @@ Limitr TestGovernorPolicy: {
         const meter: Meter = self.meter_obj('refill', 'ai_tokens');
         assert_eq(meter.governor_tokens, 0);
 
-        // Without refill, any positive request should fail
-        assert_not(self.allow('refill', 'ai_tokens', 1_000));
+        // Without refill, a request should fail (the bucket refills 0.5 tokens/ms, so ask for more than a few ms
+        // of refill: 1_000 flaked whenever the test paused 2ms)
+        assert_not(self.allow('refill', 'ai_tokens', 25_000));
 
         // Simulate 10 seconds (10_000 ms) having passed since last refill
         // refill_rate = 0.5 tokens/ms → 0.5 * 10_000 = 5_000 tokens refilled
@@ -476,7 +477,7 @@ Limitr TestGovernorPolicy: {
 
         // Drain the bucket and add some history
         assert(self.allow('reset', 'ai_tokens', 50_000));
-        assert_not(self.allow('reset', 'ai_tokens', 1_000)); // governed deny
+        assert_not(self.allow('reset', 'ai_tokens', 25_000)); // governed deny (more than a few ms of refill)
 
         const meter: Meter = self.meter_obj('reset', 'ai_tokens');
         assert(meter.history.len() > 0);
