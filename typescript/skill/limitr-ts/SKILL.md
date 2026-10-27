@@ -65,6 +65,7 @@ policy: {
 await limitr.ensureCustomer(userId, 'pro', 'user', 'Ada', [orgId], [authId]); // creates if missing, true if created
 await limitr.createCustomer(orgId, 'pro', 'org', 'Acme');                     // returns the customer record
 await limitr.setCustomerPlan(userId, 'team');                                 // plan change
+await limitr.setCustomerPeriod(orgId, sub.current_period_start * 1000, sub.current_period_end * 1000); // billing period (without Cloud)
 await limitr.customer(userId);                                                // LimitrCustomer | undefined
 ```
 
@@ -75,6 +76,10 @@ plan inherits from refs, then the policy's default plan. Use refs for user to te
 Note: `setCustomerPlan(id, plan, overwrite_meters = true)` resets meters by default in TypeScript; pass `false` to
 keep usage across the plan change. Included topup balances move to the new plan's included topups (`top_up` by
 default: raised to the new amount, never lowered), and purchased ones stay.
+
+`reset_sch: 'period'` limits, topups, and caps reset with each customer's billing period. On Limitr Cloud the
+period comes from the customer's ledger; without Cloud, call `setCustomerPeriod` when your subscription renews (no
+dates: the plan's calendar period, Ex. the 1st of the month).
 
 IDs and alt IDs can't contain a period: the customer isn't created (`createCustomer` returns undefined) and the
 engine logs an error. For an email, replace its periods with your own placeholder, or keep it in metadata.

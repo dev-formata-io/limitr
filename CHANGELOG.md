@@ -4,6 +4,25 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.7.5
+
+### Added
+
+- **Resets each billing period: `reset_sch: 'period'`.** A limit, topup (and its grants), or cap with this schedule
+  resets when the customer's billing period starts again, not on the calendar or a fixed interval from first use.
+  The period is the customer's new `period_start` and `period_end` fields: Limitr Cloud keeps them in step with the
+  customer's ledger, and without Cloud you set them from your subscription with `set_customer_period`
+  (TypeScript: `setCustomerPeriod(id, start, end?)`). `end` is optional (one plan period after the start). Past the
+  end, the next period starts at the end and each after it runs the plan's `period`, the same boundary Cloud moves
+  to, so a period is never reset twice. A customer with no dates follows the plan's calendar period (the 1st of the
+  month, Jan 1, Monday, or midnight UTC). `resets()` gives the period's end. `Customer.billing_period(now, every)` and
+  `Limitr.billing_period(customer)` return the period as `[start, end]`.
+- **`<LimitrValidation>.valid_reset_sch`**: one check for every `reset_sch`, which now accepts `'period'`.
+- **Exchange pair events.** `set_exchange_pair` sends `exchange-pair-set` (`name`, `value`, `currency`, and the
+  `previous_value` and `previous_currency`, null for a new pair), and `remove_exchange_pair` sends
+  `exchange-pair-removed` (with the rate it had), so a host or Limitr Cloud can record revaluations. Both take
+  `event = true` (TypeScript: `setExchangePair(name, value, currency, event)`, `removeExchangePair(name, event)`).
+
 ## 0.7.4
 
 ### Added

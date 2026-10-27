@@ -52,7 +52,8 @@ Grant: {
     ms reset_inc: 30days;
 
     /// Calendar reset schedule (mutually exclusive with reset_inc).
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D', or 'period'
+    /// (the customer's billing period: Customer.period_start and period_end, else the plan's calendar period).
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
 
@@ -90,7 +91,8 @@ Grant: {
         self.resets = top.resets || top.reset_sch != null; // a schedule means it resets
         self.reset_inc = top.reset_inc;
         self.reset_sch = top.reset_sch;
-        if (self.reset_sch != null && self.last_reset == null) self.last_reset = Time::start_of_period(Time::now(), self.reset_sch);
+        // this period is the first ('period': from now, so the next billing period resets it)
+        if (self.reset_sch != null && self.last_reset == null) self.last_reset = self.reset_sch == 'period' ? Time::now() : Time::start_of_period(Time::now(), self.reset_sch);
         self.expires_on = top.expires_after != null ? self.created_on + top.expires_after : null;
         self.reset_mode = top.reset_mode;
         self.rollover_min = top.rollover_min;
@@ -116,14 +118,15 @@ Grant: {
      * Roll this grant forward through any elapsed reset periods (the same transition
      * allow() makes - timestamps and balance move together, so it's safe from reads).
      * Returns false if the grant has expired and should be removed by the caller.
+     * `billing` is the holder's billing period start, for a 'period' schedule (Limitr.billing_start).
      */
-    fn ensure_current(units: str = 'float', now: ms = null) -> bool {
+    fn ensure_current(units: str = 'float', now: ms = null, billing?: ms) -> bool {
         now = now ?? Time::now();
         if (self.expires_on != null && self.expires_on < now) return false;
         if (!self.resets && self.reset_sch == null) return true;
         if (self.reset_sch != null) {
             // Calendar-based reset: fire once when a new period has started
-            const period_start = Time::start_of_period(now, self.reset_sch);
+            const period_start = self.reset_sch == 'period' ? billing : Time::start_of_period(now, self.reset_sch);
             if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
                 self.last_reset = period_start;
                 self.reset_period(units);

@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.7.4;
+    ver version: 0.7.5;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -176,7 +176,7 @@ Limitr: {
             let existing_meter_reset = false;
             const now = Time::now();
             if (existing_meter != null && existing_meter.started != null && limit != null && (limit.resets || limit.reset_sch != null)) {
-                const period_start = limit.current_period_start(existing_meter.started, now);
+                const period_start = limit.current_period_start(existing_meter.started, now, self.billing_start(customer, now, limit.reset_sch));
                 const should_reset = period_start != null && period_start != existing_meter.started;
                 if (should_reset) {
                     existing_meter.started = period_start;
@@ -583,7 +583,7 @@ Limitr: {
             let new_value: float = existing_meter != null ? existing_meter.value + value : value;
 
             // should the meter be reset? (allow() would reset it - evaluate against a fresh period)
-            const reset_pending = self.meter_reset_pending(limit, existing_meter);
+            const reset_pending = self.meter_reset_pending(limit, existing_meter, customer);
             if (reset_pending) new_value = value;
 
             // is the new value below a defined minimum?
@@ -900,7 +900,7 @@ Limitr: {
             const customer = pair[0];
             const meter: Meter = customer.meters.get(entitlement);
             const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
-            return Num::round(self.period_value(limit, meter), 9); // outgoing read: 1e-9
+            return Num::round(self.period_value(limit, meter, customer), 9); // outgoing read: 1e-9
         }
         null
     }
@@ -920,7 +920,7 @@ Limitr: {
                 const stof_units = credit != null ? credit.stof_units : 'float';
 
                 const meter: Meter = customer.meters.get(entitlement);
-                let mval = self.period_value(limit, meter);
+                let mval = self.period_value(limit, meter, customer);
                 let lval = (limit.value as float).to_units(stof_units);
 
                 if (grants) {
@@ -964,7 +964,7 @@ Limitr: {
             if (grants && pair != null) {
                 const customer = pair[0];
                 const meter: Meter = customer.meters.get(entitlement);
-                const billable = max(0, (self.period_value(limit, meter) - val).remove_units());
+                const billable = max(0, (self.period_value(limit, meter, customer) - val).remove_units());
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null) val += remaining;
             }
@@ -995,7 +995,7 @@ Limitr: {
             const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
             if (limit != null && limit.governor_enabled && limit.governor_capacity != null) {
                 const meter: Meter = pair[0].meters.get(entitlement);
-                if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter)) {
+                if (meter != null && meter.governor_tokens != null && !self.meter_reset_pending(limit, meter, pair[0])) {
                     const available = meter.governor_available(limit.governor_capacity as float, limit.governor_refill_rate);
                     return Num::round(min(available, period_remaining), 9);
                 }
@@ -1033,6 +1033,10 @@ Limitr: {
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
             if (limit != null && (limit.resets || limit.reset_sch != null)) {
                 const now = Time::now();
+                if (limit.reset_sch == 'period') {
+                    const period = self.billing_period(customer, now);
+                    return period != null ? period[1] : null;
+                }
                 if (limit.reset_sch != null) {
                     return self.next_period_start(now, limit.reset_sch);
                 }
@@ -1041,7 +1045,7 @@ Limitr: {
                     // read-only: compute the current period, never move the meter (allow() resets it)
                     const existing_meter: Meter = customer.meters.get(entitlement);
                     if (existing_meter != null && existing_meter.started != null) {
-                        return limit.current_period_start(existing_meter.started, now) + inc;
+                        return limit.current_period_start(existing_meter.started, now, null) + inc;
                     }
                     return now + inc;
                 }
@@ -1062,7 +1066,7 @@ Limitr: {
         const meter: Meter = pair[0].meters.get(entitlement);
         if (meter == null) return 0;
         const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
+        if (self.meter_reset_pending(limit, meter, pair[0])) return 0; // new period - no consumption history yet
         meter.rate()
     }
 
@@ -1078,7 +1082,7 @@ Limitr: {
         const meter: Meter = pair[0].meters.get(entitlement);
         if (meter == null) return 0;
         const limit = self.customer_entitlement_limit(pair[0], entitlement, pair[1]);
-        if (self.meter_reset_pending(limit, meter)) return 0; // new period - no consumption history yet
+        if (self.meter_reset_pending(limit, meter, pair[0])) return 0; // new period - no consumption history yet
         meter.acceleration()
     }
 
@@ -1098,7 +1102,7 @@ Limitr: {
         if (meter == null) return null;
         const limit = self.customer_entitlement_limit(customer, entitlement, pair[1]);
         if (limit == null) return null;
-        if (self.meter_reset_pending(limit, meter)) return null; // new period - no consumption history yet
+        if (self.meter_reset_pending(limit, meter, customer)) return null; // new period - no consumption history yet
         const credit = self.credit(limit.credit);
         const stof_units = credit != null ? credit.stof_units : 'float';
         let limit_val = (limit.value as float).to_units(stof_units);
@@ -1469,6 +1473,24 @@ Limitr: {
         const sub = self.customer(id);
         if (sub != null) sub.refs = refs;
         sub != null
+    }
+
+
+    /**
+     * Set a customer's billing period: what 'period' reset schedules follow (meters, grants, and caps reset when
+     * the next one starts). `end` is optional (one plan period after `start`); null for both goes back to the
+     * plan's calendar period. Limitr Cloud sets it from the customer's ledger; without Cloud, set it from your
+     * subscription. False when the customer doesn't exist or `end` isn't after `start`.
+     */
+    fn set_customer_period(id: str!, start?: ms, end?: ms, event: bool = true) -> bool {
+        const customer = self.customer(id);
+        if (customer == null) return false;
+        if (start == null && end != null) return false;
+        if (start != null && end != null && end <= start) return false;
+        customer.period_start = start;
+        customer.period_end = end;
+        if (event) await <Event>.send('customer-set', customer);
+        true
     }
 
 
@@ -2072,9 +2094,10 @@ Limitr: {
      * Set an exchange pair: one `name` is worth `value` of `currency` (a credit, a currency, or 'rune').
      * Adds the pair or replaces it. A pair on a priced credit replaces its price everywhere.
      * Refused (false, nothing changed) for 'rune', a name with a period, a negative value, or a pair that
-     * doesn't reach runes (an unknown currency or a cycle).
+     * doesn't reach runes (an unknown currency or a cycle). Sends `exchange-pair-set` (with the previous rate, null
+     * for a new pair) unless `event` is false.
      */
-    fn set_exchange_pair(name: str!, value: float!, currency: str!) -> bool {
+    fn set_exchange_pair(name: str!, value: float!, currency: str!, event: bool = true) -> bool {
         value = value.remove_units();
         if (name == 'rune' || name == currency || name.contains('.') || value < 0 || currency.len() < 1) return false;
 
@@ -2091,7 +2114,10 @@ Limitr: {
             self.exchange.insert(name, new ExchangePair { value, currency } on self.exchange);
         }
 
-        if (self.exchange.to_runes(1, name) != null) return true;
+        if (self.exchange.to_runes(1, name) != null) {
+            if (event) await <Event>.send_tmp('exchange-pair-set', new { name, value, currency, previous_value: old_value, previous_currency: old_currency });
+            return true;
+        }
         if (pair != null) {
             pair.value = old_value;
             pair.currency = old_currency;
@@ -2104,11 +2130,17 @@ Limitr: {
 
     /**
      * Remove an exchange pair ('rune' and 'usd' stay). A priced credit goes back to its own price.
+     * Sends `exchange-pair-removed` (with the rate it had) unless `event` is false.
      */
-    fn remove_exchange_pair(name: str!) -> bool {
+    fn remove_exchange_pair(name: str!, event: bool = true) -> bool {
         if (name == 'rune' || name == 'usd') return false;
-        if (typeof self.exchange.get(name) != 'obj') return false;
-        self.exchange.remove(name, shallow = false)
+        const pair = self.exchange.get(name);
+        if (typeof pair != 'obj') return false;
+        const value = pair.value;
+        const currency = pair.currency;
+        if (!self.exchange.remove(name, shallow = false)) return false;
+        if (event) await <Event>.send_tmp('exchange-pair-removed', new { name, value, currency });
+        true
     }
 
 
@@ -2140,10 +2172,10 @@ Limitr: {
             if (limit != null && meter != null) {
                 const credit = self.credit(limit.credit);
                 if (credit != null) {
-                    const current = self.period_value(limit, meter); // current period, read-only
+                    const current = self.period_value(limit, meter, customer); // current period, read-only
                     const limit_value = (limit.value as float).to_units(credit.stof_units);
 
-                    const ent_cost = self.period_overhead(limit, meter, credit); // recorded actual overhead this period
+                    const ent_cost = self.period_overhead(limit, meter, credit, customer); // recorded actual overhead this period
                     cost += ent_cost;
                     let ent_rev = 0;
                     if (current > limit_value) {
@@ -2678,7 +2710,7 @@ Limitr: {
                 const cap: Cap = pair[1];
                 if (!cap.shared) continue;
                 if (cap.shared_with != null && cap.shared_with.any() && !cap.shared_with.contains(caller.type)) continue;
-                if (!cap.ensure_current()) {
+                if (!cap.ensure_current(self.billing_start(holder, Time::now(), cap.reset_sch))) {
                     holder.caps.remove(pair[0], shallow = false);
                     continue;
                 }
@@ -2704,10 +2736,33 @@ Limitr: {
 
     /**
      * Is a period reset pending for this meter (the next allow() will start a new period)?
-     * Read-only.
+     * Read-only. `customer` holds the meter (its billing period, for a 'period' schedule).
      */
-    fn meter_reset_pending(limit?: Limit, meter?: Meter) -> bool {
-        limit != null && meter != null && meter.started != null && limit.reset_pending(meter.started, Time::now())
+    fn meter_reset_pending(limit?: Limit, meter?: Meter, customer?: Customer) -> bool {
+        if (limit == null || meter == null || meter.started == null) return false;
+        const now = Time::now();
+        limit.reset_pending(meter.started, now, self.billing_start(customer, now, limit.reset_sch))
+    }
+
+
+    /**
+     * A customer's billing period now, as [start, end], from its plan's period: what 'period' reset schedules
+     * follow (see Customer.billing_period). Null before the customer's period_start.
+     */
+    fn billing_period(customer: Customer!, now: ms = null) -> list {
+        const plan = self.plan_for(customer.id);
+        customer.billing_period(now ?? Time::now(), plan != null ? plan.period : 'monthly')
+    }
+
+
+    /**
+     * Start of a customer's billing period now, for a 'period' reset schedule (`reset_sch`); null for any other
+     * schedule, or without a customer.
+     */
+    fn billing_start(customer?: Customer, now: ms = null, reset_sch?: str) -> ms {
+        if (customer == null || reset_sch != 'period') return null;
+        const period = self.billing_period(customer, now);
+        period != null ? period[0] : null
     }
 
 
@@ -2715,9 +2770,9 @@ Limitr: {
      * Meter value for the current period - 0 when a period reset is pending.
      * Read-only: reads see the new period without having to wait for an allow().
      */
-    fn period_value(limit?: Limit, meter?: Meter) -> float {
+    fn period_value(limit?: Limit, meter?: Meter, customer?: Customer) -> float {
         if (meter == null) return 0;
-        self.meter_reset_pending(limit, meter) ? 0 : meter.value
+        self.meter_reset_pending(limit, meter, customer) ? 0 : meter.value
     }
 
 
@@ -2725,8 +2780,8 @@ Limitr: {
      * Provider overhead spent on a meter in the current period (runes) - 0 when a period reset is pending.
      * Meters from before 0.7.0 have no record, so they fall back to value * the credit's fixed rate.
      */
-    fn period_overhead(limit?: Limit, meter?: Meter, credit?: Credit) -> float {
-        if (meter == null || self.meter_reset_pending(limit, meter)) return 0;
+    fn period_overhead(limit?: Limit, meter?: Meter, credit?: Credit, customer?: Customer) -> float {
+        if (meter == null || self.meter_reset_pending(limit, meter, customer)) return 0;
         if (meter.overhead != null) return meter.overhead;
         credit != null ? (meter.value * (credit.overhead_cost ?? 0)).remove_units() : 0
     }

@@ -86,17 +86,11 @@ Limit: {
     /// Defaults to 30 days when resets is true and reset_sch is not set.
     ms reset_inc: null;
 
-    #[schema((target: obj, target_val: str): bool => {
-        if (!target_val.starts_with('monthly') &&
-            !target_val.starts_with('weekly') &&
-            !target_val.starts_with('nth_weekday') &&
-            !target_val.starts_with('yearly') &&
-            !target_val.starts_with('quarterly')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, nth_weekday, yearly, or quarterly`);
-        true
-    })]
+    #[schema(<LimitrValidation>.valid_reset_sch)]
     #[schema_optional]
     /// Calendar reset schedule. Mutually exclusive with reset_inc.
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D', or 'period'
+    /// (the customer's billing period: Customer.period_start and period_end, else the plan's calendar period).
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
 
@@ -142,12 +136,14 @@ Limit: {
     /**
      * Start of the current period for a meter that started at `started` - read-only.
      * Returns `started` when no reset is due, a later timestamp when a reset is pending,
-     * and null if this limit doesn't reset.
+     * and null if this limit doesn't reset. `billing` is the customer's billing period start, for a 'period'
+     * schedule (Limitr.billing_start); without it, a 'period' limit doesn't reset.
      */
-    fn current_period_start(started: ms, now: ms) -> ms {
+    fn current_period_start(started: ms, now: ms, billing?: ms) -> ms {
         if ((!self.resets && self.reset_sch == null) || started == null) return null; // a schedule means it resets
         if (self.reset_sch != null) {
-            const period_start = Time::start_of_period(now, self.reset_sch);
+            // 'period': the customer's billing period start (`billing`, from the caller)
+            const period_start = self.reset_sch == 'period' ? billing : Time::start_of_period(now, self.reset_sch);
             return period_start != null && started < period_start ? period_start : started;
         }
         const inc = self.reset_increment();
@@ -162,8 +158,8 @@ Limit: {
     /**
      * Would the next operation on a meter that started at `started` begin a new period?
      */
-    fn reset_pending(started: ms, now: ms) -> bool {
-        const period_start = self.current_period_start(started, now);
+    fn reset_pending(started: ms, now: ms, billing?: ms) -> bool {
+        const period_start = self.current_period_start(started, now, billing);
         period_start != null && period_start != started
     }
 

@@ -91,6 +91,8 @@ scoped entitlement), that holder also gets a `customer-set`.
 | `customer-entitlement-restored` | `customer`, `entitlement` | `restore_entitlement` |
 | `plan-set` | the Plan | `set_plan` |
 | `plan-removed` | the Plan | `delete_plan` |
+| `exchange-pair-set` | `name`, `value`, `currency`, `previous_value`, `previous_currency` (null for a new pair) | `set_exchange_pair` |
+| `exchange-pair-removed` | `name`, `value`, `currency` (the rate it had) | `remove_exchange_pair` |
 
 ## Feature events
 

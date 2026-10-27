@@ -119,17 +119,11 @@ Cap: {
     /// Defaults to 30 days when resets is true and reset_sch is not set.
     ms reset_inc: null;
 
-    #[schema((target: obj, target_val: str): bool => {
-        if (!target_val.starts_with('monthly') &&
-            !target_val.starts_with('weekly') &&
-            !target_val.starts_with('nth_weekday') &&
-            !target_val.starts_with('yearly') &&
-            !target_val.starts_with('quarterly')) return <LimitrValidation>.error(`Invalid reset schedule '${target_val}' - must start with monthly, weekly, nth_weekday, yearly, or quarterly`);
-        true
-    })]
+    #[schema(<LimitrValidation>.valid_reset_sch)]
     #[schema_optional]
     /// Calendar reset schedule. Mutually exclusive with reset_inc.
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D', or 'period'
+    /// (the customer's billing period: Customer.period_start and period_end, else the plan's calendar period).
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
 
@@ -168,15 +162,16 @@ Cap: {
      * Ensure this cap is current: drop it if expired, roll it forward
      * through any elapsed reset periods otherwise.
      * Returns false if the cap expired and should be removed by the caller.
+     * `billing` is the holder's billing period start, for a 'period' schedule (Limitr.billing_start).
      */
-    fn ensure_current() -> bool {
+    fn ensure_current(billing?: ms) -> bool {
         const now = Time::now();
         if (self.expires_on != null && self.expires_on < now) {
             return false;
         }
         if (self.resets || self.reset_sch != null) { // a schedule means it resets
             if (self.reset_sch != null) {
-                const period_start = Time::start_of_period(now, self.reset_sch);
+                const period_start = self.reset_sch == 'period' ? billing : Time::start_of_period(now, self.reset_sch);
                 if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
                     self.last_reset = period_start;
                     self.reset_period();

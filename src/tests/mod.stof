@@ -35,6 +35,7 @@ import './plan_topups' as TestPlanTopups;
 import './capabilities' as TestCapabilities;
 import './exchange_pairs' as TestExchangePairs;
 import './schedules' as TestSchedules;
+import './billing_period' as TestBillingPeriod;
 import './overrides' as TestOverrides;
 
 

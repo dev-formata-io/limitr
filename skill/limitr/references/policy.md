@@ -8,7 +8,7 @@ Limitr repo. `!` marks a field that can't be null. Number fields typed `float | 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `version` | ver | engine version | Set by the engine (0.7.4). |
+| `version` | ver | engine version | Set by the engine (0.7.5). |
 | `credits` | obj | `{}` | Credit name -> `Credit`. |
 | `plans` | obj | `{}` | Plan name -> `Plan`. |
 | `exchange` | Exchange | `{}` | Currency conversion and grant strategy. |
@@ -114,7 +114,7 @@ for live rates.
 | `grants_apply` | bool | true | Grants may cover overage. Set false on governors and pure control limits. |
 | `resets` | bool | false | Reset the meter each period. A `reset_sch` turns it on. |
 | `reset_inc` | ms | null | Period length. 30 days when `resets` and no `reset_sch`. |
-| `reset_sch` | str | null | UTC calendar schedule (exclusive with `reset_inc`). |
+| `reset_sch` | str | null | UTC calendar schedule, or `'period'` for each billing period (exclusive with `reset_inc`). |
 | `override_expires_on` | ms | null | Customer overrides only. |
 | `governor_enabled` | bool | false | Token-bucket rate limit below a hard limit. |
 | `governor_capacity` | float, str | null | Bucket size (burst). Required with a governor. |
@@ -161,6 +161,7 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `grants` | obj! | Grant ID -> `Grant`. |
 | `caps` | obj! | Cap ID -> `Cap`. |
 | `metadata` | obj | Anything. `limitr_voucher*` fields are used by Cloud vouchers. |
+| `period_start` / `period_end` | ms | The billing period `'period'` schedules follow (Cloud sets them; `set_customer_period`). Null: the plan's calendar period. |
 
 ## Meter (engine state)
 

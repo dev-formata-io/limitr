@@ -58,8 +58,8 @@ These meter nothing and show the current period (0 after a pending reset).
 | `customer_entitlements(id)` | list | `(name, Entitlement)` pairs the customer has (plan, less taken, plus given). |
 | `credit(id)` / `credit_for(id, entitlement)` | Credit | |
 | `credit_exchange(in, out, value = 1)` | float | Convert between credits and currencies. |
-| `set_exchange_pair(name, value, currency)` | bool | Add or replace a pair. False, with nothing changed, for `rune`, a negative value, or a pair that doesn't reach runes. |
-| `remove_exchange_pair(name)` | bool | A priced credit goes back to its own price. `rune` and `usd` stay. |
+| `set_exchange_pair(name, value, currency, event = true)` | bool | Add or replace a pair. False, with nothing changed, for `rune`, a negative value, or a pair that doesn't reach runes. Sends `exchange-pair-set`. |
+| `remove_exchange_pair(name, event = true)` | bool | A priced credit goes back to its own price. `rune` and `usd` stay. Sends `exchange-pair-removed`. |
 | `credit_remaining(customer_id, credit)` | float | Grant balance in `credit` (other credits converted). |
 
 ## Customers
@@ -70,6 +70,7 @@ These meter nothing and show the current period (0 after a pending reset).
 | `set_customer(stof, event = true)` | Customer | Replace a customer from its Stof/JSON (Ex. loaded from your database). |
 | `customer(id)` / `customer_metadata(id)` / `customer_refs(id)` | | |
 | `set_customer_refs(id, refs)` | bool | |
+| `set_customer_period(id, start?, end?, event = true)` | bool | The billing period `'period'` schedules follow. `end` defaults to one plan period after `start`; no dates: the plan's calendar period. `billing_period(customer)` returns `[start, end]`. |
 | `set_customer_plan(id, plan, overwrite_meters = false)` | bool | Keeps meters unless `overwrite_meters`. Moves included topup balances by the new plan's `plan_change`. |
 | `delete_customer(id)` | bool | |
 | `set_alt_customer_id(id, alt, event = true)` / `delete_alt_customer_id(alt, event = true)` | bool | False for an alt ID with a period. |

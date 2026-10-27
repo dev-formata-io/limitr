@@ -25,7 +25,7 @@ export * from './types.js';
  * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
  * (or refuse clearly). Matches the package version.
  */
-export const LIMITR_SDK_VERSION = '0.7.4';
+export const LIMITR_SDK_VERSION = '0.7.5';
 
 
 /**
@@ -358,23 +358,25 @@ export class Limitr {
      * Set an exchange pair: one `name` is worth `value` of `currency` (a credit, a currency, or 'rune').
      * Adds or replaces the pair, so rates can follow a provider or a currency feed. A pair on a priced credit
      * replaces its price everywhere. False (nothing changed) for 'rune', a negative value, or a pair that
-     * doesn't reach runes.
+     * doesn't reach runes. Sends `exchange-pair-set` (name, value, currency, and the previous_value and
+     * previous_currency, null for a new pair) unless `event` is false.
      *
      * ```ts
      * await limitr.setExchangePair('euro', 1.16, 'usd');
      * await limitr.setExchangePair('sonnet_output', 0.015, 'ai_credit');
      * ```
      */
-    async setExchangePair(name: string, value: number, currency: string = 'rune'): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('policy.set_exchange_pair', name, value, currency)) as boolean;
+    async setExchangePair(name: string, value: number, currency: string = 'rune', event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.set_exchange_pair', name, value, currency, event)) as boolean;
     }
 
 
     /**
      * Remove an exchange pair ('rune' and 'usd' stay). A priced credit goes back to its own price.
+     * Sends `exchange-pair-removed` (name, and the value and currency it had) unless `event` is false.
      */
-    async removeExchangePair(name: string): Promise<boolean> {
-        return await this.gate.run(() => this.doc.call('policy.remove_exchange_pair', name)) as boolean;
+    async removeExchangePair(name: string, event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.remove_exchange_pair', name, event)) as boolean;
     }
 
 
@@ -434,6 +436,19 @@ export class Limitr {
      */
     async setCustomerPlan(id: string, plan: string, overwrite_meters: boolean = true): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('policy.set_customer_plan', id, plan, overwrite_meters)) as boolean;
+    }
+
+
+    /**
+     * Set a customer's billing period, which 'period' reset schedules follow: meters, grants, and caps with
+     * `reset_sch: 'period'` reset when the next period starts. `end` is optional (one plan period after `start`);
+     * no dates goes back to the plan's calendar period (Ex. the 1st of the month). Limitr Cloud sets it from the
+     * customer's ledger; without Cloud, set it from your subscription (Ex. Stripe's current_period_start and _end).
+     * Returns false when the customer doesn't exist or `end` isn't after `start`.
+     */
+    async setCustomerPeriod(id: string, start: number | Date | null, end: number | Date | null = null, event: boolean = true): Promise<boolean> {
+        const ms = (d: number | Date | null) => d instanceof Date ? d.getTime() : d;
+        return await this.gate.run(() => this.doc.call('policy.set_customer_period', id, ms(start), ms(end), event)) as boolean;
     }
 
 

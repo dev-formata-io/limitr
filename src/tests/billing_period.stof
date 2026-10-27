@@ -1,0 +1,187 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Billing period resets: reset_sch 'period' follows the customer's billing period (period_start and period_end,
+// kept by Cloud or the app), else the plan's calendar period. Never validated, like policies from Cloud.
+//
+Limitr TestBillingPeriodPolicy: {
+    credits: {
+        tok: { price: { amount: 0.01 } }
+    }
+
+    plans: {
+        monthly: {
+            label: 'Monthly'
+            period: 'monthly'
+            entitlements: {
+                calls: { limit: { credit: 'tok', mode: 'hard', value: 100, reset_sch: 'period' } }
+                grant_backed: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
+                plain: { limit: { credit: 'tok', mode: 'hard', value: 1000 } }
+            }
+            topups: {
+                included: { credit: 'tok', value: 50, reset_sch: 'period' }
+            }
+        }
+        yearly: {
+            label: 'Yearly'
+            period: 'yearly'
+            entitlements: {
+                calls: { limit: { credit: 'tok', mode: 'hard', value: 100, reset_sch: 'period' } }
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_follows_the_customer_period() {
+        const id = 'bp_dates';
+        self.create_customer(id, 'monthly');
+        const now = Time::now();
+        assert(self.set_customer_period(id, now - 10days, now + 20days, false));
+        assert(self.allow(id, 'calls', 90, false));
+        assert_not(self.check(id, 'calls', 20));
+        assert_eq(self.resets(id, 'calls'), now + 20days);
+
+        // usage from before this period (Ex. the meter started last period) resets
+        const meter: Meter = self.meter_obj(id, 'calls');
+        meter.started = now - 15days;
+        assert_eq(self.value(id, 'calls'), 0); // reads see the new period
+        assert(self.allow(id, 'calls', 20, false));
+        assert_eq(self.value(id, 'calls'), 20);
+        assert_eq(meter.started, now - 10days);
+    }
+
+
+    #[test]
+    fn test_past_the_end_resets_once() {
+        const id = 'bp_late';
+        self.create_customer(id, 'monthly');
+        const now = Time::now();
+        const end = now - 2days;
+        assert(self.set_customer_period(id, Time::add_months(end, -1), end, false));
+        assert(self.allow(id, 'calls', 30, false));
+        const meter: Meter = self.meter_obj(id, 'calls');
+        meter.started = end - 5days; // used last period
+
+        // Cloud hasn't rolled the period yet: the next one starts at the end
+        assert_eq(self.billing_period(self.customer(id))[0], end);
+        assert(self.allow(id, 'calls', 10, false));
+        assert_eq(self.value(id, 'calls'), 10);
+        assert_eq(meter.started, end);
+
+        // then Cloud rolls it to the same boundary: no second reset
+        assert(self.set_customer_period(id, end, Time::add_months(end, 1), false));
+        assert(self.allow(id, 'calls', 10, false));
+        assert_eq(self.value(id, 'calls'), 20);
+    }
+
+
+    #[test]
+    fn test_calendar_period_without_dates() {
+        const m = 'bp_calendar_m';
+        const y = 'bp_calendar_y';
+        self.create_customer(m, 'monthly');
+        self.create_customer(y, 'yearly');
+        const now = Time::now();
+        const month = self.billing_period(self.customer(m), now);
+        assert_eq(month[0], Time::start_of_period(now, 'monthly:1'));
+        assert_eq(month[1], Time::add_months(month[0], 1));
+        const year = self.billing_period(self.customer(y), now);
+        assert_eq(year[0], Time::start_of_period(now, 'yearly:1-1'));
+        assert_eq(self.resets(y, 'calls'), Time::add_months(year[0], 12));
+
+        // a period that hasn't started yet: no period (nothing resets)
+        assert(self.set_customer_period(m, now + 1day, null, false));
+        assert_eq(self.billing_period(self.customer(m), now), null);
+    }
+
+
+    #[test]
+    fn test_end_defaults_to_one_plan_period() {
+        const id = 'bp_no_end';
+        self.create_customer(id, 'yearly');
+        const start = Time::now() - 100days;
+        assert(self.set_customer_period(id, start, null, false));
+        const period = self.billing_period(self.customer(id));
+        assert_eq(period[0], start);
+        assert_eq(period[1], Time::add_months(start, 12));
+        assert_not(self.set_customer_period(id, start, start - 1day, false)); // the end is after the start
+        assert_not(self.set_customer_period(id, null, start, false)); // an end needs a start
+        assert_not(self.set_customer_period('bp_missing', start, null, false));
+    }
+
+
+    #[test]
+    fn test_grant_resets_with_the_period() {
+        const id = 'bp_grant';
+        self.create_customer(id, 'monthly');
+        const now = Time::now();
+        assert(self.set_customer_period(id, now - 10days, now + 20days, false));
+        assert(self.apply_customer_topup(id, 'included'));
+        const grant: Grant = self.customer(id).grants.fields()[0][1];
+        assert(grant.resets);
+
+        assert(self.allow(id, 'grant_backed', 50, false)); // uses the whole grant, which stays (it resets)
+        assert_eq(self.credit_remaining(id, 'tok'), 0);
+        assert_eq(self.credit_remaining(id, 'tok'), 0); // no reset inside the period
+        grant.last_reset = now - 15days; // last period
+        assert_eq(self.credit_remaining(id, 'tok'), 50);
+        assert_eq(grant.last_reset, now - 10days);
+    }
+
+
+    #[test]
+    fn test_cap_resets_with_the_period() {
+        const id = 'bp_cap';
+        self.create_customer(id, 'monthly');
+        const now = Time::now();
+        assert(self.set_customer_period(id, now - 10days, now + 20days, false));
+        const cap = self.add_customer_cap(id, 1, 'period_cap', reset_sch = 'period', events = false);
+        assert(cap.resets);
+        assert(self.allow(id, 'plain', 100, false)); // $1.00
+        assert_not(self.check(id, 'plain', 1));
+        assert_not(self.check(id, 'plain', 1)); // no reset inside the period
+
+        cap.last_reset = now - 15days; // last period
+        assert(self.allow(id, 'plain', 10, false));
+        assert_eq(cap.meter_value.round(6), 0.1);
+    }
+
+
+    #[test]
+    fn test_period_is_a_valid_schedule() {
+        using holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10, reset_sch: 'period' } } }
+                topups: { t: { credit: 'tok', value: 5, reset_sch: 'period' } } } }
+        }`, holder, 'stof');
+        const policy: Limitr = holder.policy;
+        assert(policy.valid());
+        assert(policy.plans.p.entitlements.a.limit.resets);
+        assert(policy.plans.p.topups.t.resets);
+
+        using bad = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10, reset_sch: 'periodic' } } } } }
+        }`, bad, 'stof');
+        const invalid: Limitr = bad.policy;
+        assert_not(invalid.valid());
+    }
+}

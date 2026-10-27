@@ -20,6 +20,39 @@
 // don't reach runes, leaving the old rate in place.
 //
 ExchangePairTests: {
+    /// exchange-pair-* events seen for pairs named evt_* (handlers are document-wide; other tests use other names).
+    list seen: [];
+
+    #[exchange-pair-set]
+    fn on_pair_set(event: obj) {
+        if (event.name.starts_with('evt_')) self.seen.push_back(`set ${event.name} ${event.value} ${event.currency} ${event.previous_value ?? 'none'} ${event.previous_currency ?? 'none'}`);
+    }
+
+    #[exchange-pair-removed]
+    fn on_pair_removed(event: obj) {
+        if (event.name.starts_with('evt_')) self.seen.push_back(`removed ${event.name} ${event.value} ${event.currency}`);
+    }
+
+
+    #[test]
+    fn test_pair_events() {
+        using holder = self.fresh();
+        const policy: Limitr = holder.policy;
+        assert(policy.set_exchange_pair('evt_coin', 2, 'usd'));
+        assert(policy.set_exchange_pair('evt_coin', 3, 'ai_credit'));
+        assert_not(policy.set_exchange_pair('evt_coin', 4, 'nowhere')); // refused: no event
+        assert(policy.set_exchange_pair('evt_quiet', 1, 'usd', false));
+        assert(policy.remove_exchange_pair('evt_coin'));
+        assert_not(policy.remove_exchange_pair('evt_coin'));
+        assert(policy.remove_exchange_pair('evt_quiet', false));
+        assert_eq(self.seen, [
+            'set evt_coin 2 usd none none',
+            'set evt_coin 3 ai_credit 2 usd',
+            'removed evt_coin 3 ai_credit',
+        ]);
+    }
+
+
     /// A fresh policy for one test (declare it with `using`).
     fn fresh() -> obj {
         const holder = new {};

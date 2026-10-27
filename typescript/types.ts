@@ -33,6 +33,10 @@ export interface LimitrCustomer {
     taken?: Record<string, { expires_on: number | null }> | null,
     grants: Record<string, unknown>,
     metadata: Record<string, unknown> | null,
+    /** Start of the current billing period (ms), which 'period' reset schedules follow. Limitr Cloud sets it. */
+    period_start?: number | null,
+    /** End of the current billing period (ms): the next one starts here. */
+    period_end?: number | null,
     
     cloud_test?: boolean | null,
     cloud_updated?: number | null,

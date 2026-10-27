@@ -62,6 +62,14 @@ Customer: {
     /// Optional metadata object.
     obj metadata: null;
 
+    /// Start of this customer's current billing period, which 'period' reset schedules follow. Limitr Cloud keeps
+    /// it in step with the customer's ledger; without Cloud, the app sets it (Ex. from its subscription), or the
+    /// plan's calendar period applies.
+    ms period_start: null;
+
+    /// End of the current billing period: the next one starts here. Optional (the plan's period from the start).
+    ms period_end: null;
+
 
     /**
      * Set an override.
@@ -180,6 +188,55 @@ Customer: {
     }
 
 
+    /**
+     * This customer's billing period at `now`, as [start, end]: what 'period' reset schedules follow. `every` is
+     * the plan's period ('monthly', 'yearly', 'weekly', or 'daily').
+     * - With `period_start`: that period, until `period_end` (or one `every` after the start). Past it (Cloud hasn't
+     *   started the next period yet, or the app hasn't), the next starts at the end and each after it runs one
+     *   `every`, the same boundary Cloud moves to, so a period is never reset twice.
+     * - Without: the calendar period (the 1st of the month, Jan 1, Monday, or midnight UTC).
+     * Null when `period_start` is still ahead.
+     */
+    fn billing_period(now: ms = null, every: str = 'monthly') -> list {
+        now = now ?? Time::now();
+        let start: ms = self.period_start ?? <Customer>.calendar_period_start(now, every);
+        if (start == null || start > now) return null;
+        let end: ms = self.period_end ?? <Customer>.period_after(start, every);
+        while (end <= now) {
+            const next: ms = <Customer>.period_after(end, every);
+            if (next <= end) break;
+            start = end;
+            end = next;
+        }
+        [start, end]
+    }
+
+
+    #[static]
+    /**
+     * One billing period after `ts`: calendar months for 'monthly' and 'yearly' (the day is kept, or the month's
+     * last day when it's shorter), 7 days for 'weekly', 1 day for 'daily'.
+     */
+    fn period_after(ts: ms!, every: str = 'monthly') -> ms {
+        if (every.contains('year')) return Time::add_months(ts, 12);
+        if (every.contains('week')) return Time::add_days(ts, 7);
+        if (every.contains('da')) return Time::add_days(ts, 1); // 'daily', 'day'
+        Time::add_months(ts, 1)
+    }
+
+
+    #[static]
+    /**
+     * The calendar period of `every` holding `now` (UTC): the 1st of the month, Jan 1, Monday, or midnight.
+     */
+    fn calendar_period_start(now: ms!, every: str = 'monthly') -> ms {
+        if (every.contains('year')) return Time::start_of_period(now, 'yearly:1-1');
+        if (every.contains('week')) return Time::start_of_period(now, 'weekly:mon');
+        if (every.contains('da')) return Time::start_of_day(now);
+        Time::start_of_period(now, 'monthly:1')
+    }
+
+
     #[static]
     /**
      * Customer IDs and alt IDs can't contain a period: the policy finds customers by '.' paths.
@@ -209,7 +266,7 @@ Customer: {
      * Find the best grant on this customer for a given credit.
      * Removes expired & resets values.
      */
-    fn best_grant(credit: str!, exchange: Exchange, stof_units: str!) -> Grant {
+    fn best_grant(credit: str!, exchange: Exchange, stof_units: str!, policy?: Limitr) -> Grant {
         const now = Time::now();
         let best = null;
         let best_exact = null;
@@ -221,7 +278,7 @@ Customer: {
             const grant: Grant = pair[1];
             
             // Is this grant expired? Otherwise roll it through any elapsed reset periods.
-            if (!grant.ensure_current(stof_units, now)) {
+            if (!grant.ensure_current(stof_units, now, policy?.billing_start(self, now, grant.reset_sch))) {
                 self.grants.remove(id, shallow = false);
             } else {
                 // Empty grants can't cover anything (resetting grants refill above, next period)
@@ -371,7 +428,7 @@ Customer: {
             // current period only: drop expired grants, apply pending resets (same as allow)
             const grant_credit = ?policy.credit(grant.credit);
             const grant_units = grant_credit != null ? (grant_credit.stof_units ?? 'float') : 'float';
-            if (!grant.ensure_current(grant_units, now)) {
+            if (!grant.ensure_current(grant_units, now, policy?.billing_start(self, now, grant.reset_sch))) {
                 self.grants.remove(field[0], shallow = false);
                 continue;
             }
@@ -415,7 +472,7 @@ Customer: {
         let guard = fields.len() + 1; // every pass drains or covers with one grant - never spin
         while (Num::round(overage, 9) > 0 && guard > 0) { // at 1e-9: float residue isn't overage
             guard -= 1;
-            const grant: Grant = self.best_grant(credit, exchange, stof_units);
+            const grant: Grant = self.best_grant(credit, exchange, stof_units, policy);
             if (grant != null) {
                 // get overage in terms of the grant itself
                 // clamp at 0: consuming more never credits a grant back (e.g. a volume band reprice)
@@ -483,18 +540,19 @@ Customer: {
      * Standing caps that are current (expired ones are removed), followed by any
      * current ephemeral (`extra`) caps.
      */
-    fn current_caps(extra: list = []) -> list {
+    fn current_caps(extra: list = [], policy?: Limitr) -> list {
         const out = [];
+        const now = Time::now();
         for (const pair in self.caps.fields()) {
             const cap: Cap = pair[1];
-            if (!cap.ensure_current()) {
+            if (!cap.ensure_current(policy?.billing_start(self, now, cap.reset_sch))) {
                 self.caps.remove(pair[0], shallow = false);
                 continue;
             }
             out.push_back(cap);
         }
         for (const ext: Cap in extra) {
-            if (ext.ensure_current()) out.push_back(ext);
+            if (ext.ensure_current(policy?.billing_start(self, now, ext.reset_sch))) out.push_back(ext);
         }
         out
     }
@@ -581,7 +639,7 @@ Customer: {
      * has room. Same parameters as check_caps (which is this, as a bool).
      */
     fn denying_cap(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, extra: list = [], stof_units: str = 'float', non_ignore_grants_only: bool = false, position: float = 0, overage_position: float = null) -> Cap {
-        for (const cap: Cap in self.current_caps(extra)) {
+        for (const cap: Cap in self.current_caps(extra, policy)) {
             if (non_ignore_grants_only && cap.ignore_grants) continue;
             if (cap.observe_only) continue; // never denies - accumulates only, see check_and_apply_caps
 
@@ -626,7 +684,7 @@ Customer: {
     fn check_and_apply_caps(policy: Limitr!, entitlement: str!, entitlement_credit: str!, credit_overhead: float!, value: float!, overage: float!, grant_applied: float!, extra: list = [], stof_units: str = 'float', position: float = 0, changed: list = null, force: bool = false, overhead_only: float = null) -> list {
         // Pass 1: roll forward resets, drop expired, and verify - mutate nothing yet.
         const applicable = [];
-        for (const cap: Cap in self.current_caps(extra)) {
+        for (const cap: Cap in self.current_caps(extra, policy)) {
             const converted = self.cap_consumption(policy, cap, entitlement, entitlement_credit, credit_overhead, value, overage, grant_applied, position, null, overhead_only);
             if (converted == null) continue; // not applicable to this entitlement/credit pair
 

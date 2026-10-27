@@ -174,7 +174,11 @@ limit: {
 }
 ```
 
-Schedules: `monthly:N`, `monthly:last`, `weekly:mon`, `nth_weekday:N:mon`, `yearly:M-D`, `quarterly:D`.
+Schedules: `monthly:N`, `monthly:last`, `weekly:mon`, `nth_weekday:N:mon`, `yearly:M-D`, `quarterly:D`, and
+`period`: each billing period, from the customer's `period_start` and `period_end` (Limitr Cloud keeps them with the
+ledger; without Cloud, `set_customer_period(id, start, end?)` from your subscription; no dates: the plan's calendar
+period). Use `period` when usage should reset with the bill, a calendar schedule when it should reset for everyone
+at once, and `reset_inc` for a rolling window (Ex. `1day`).
 
 A **governor** shapes the rate below a hard limit: `governor_enabled: true`, `governor_capacity` (burst), and
 `governor_refill_rate` (tokens per ms). Denials fire `meter-governed`. `allowance()` is what can run right now.
