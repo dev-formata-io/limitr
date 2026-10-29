@@ -175,6 +175,94 @@ LimitrValidation: {
 
     #[static]
     /**
+     * Does any plan in the policy define this entitlement? (Rules can't invent entitlements.)
+     */
+    fn any_plan_has(policy: Limitr, entitlement: str!) -> bool {
+        if (policy == null) return true; // checked once the rule is in a policy
+        for (const pair in policy.plans.fields()) {
+            const plan: Plan = pair[1];
+            if (plan.entitlements.get(entitlement) != null) return true;
+        }
+        false
+    }
+
+
+    #[static]
+    /**
+     * Validate a rule's gives: entitlement -> {} or { plan }, for entitlements a plan defines.
+     */
+    fn valid_rule_given(target: Rule, target_val: obj) -> bool {
+        const policy = self.get_policy(target);
+        for (const pair in target_val.fields()) {
+            const ent = pair[0];
+            const given = pair[1];
+            if (typeof given != 'obj') return self.error(`Rule "${target.name}" gives "${ent}": a give is {} or { plan: '<plan>' }`);
+            if (given.plan != null) {
+                const plan: Plan = policy?.plans.get(given.plan);
+                if (policy != null && plan?.entitlements.get(ent) == null) return self.error(`Rule "${target.name}" gives "${ent}" from plan "${given.plan}", which doesn't define it`);
+            } else if (!self.any_plan_has(policy, ent)) {
+                return self.error(`Rule "${target.name}" gives "${ent}", which no plan defines (rules can't invent entitlements)`);
+            }
+            if (given.expires_on != null) return self.error(`Rule "${target.name}" gives "${ent}" with expires_on: a rule has no dates (whoever assigns it decides when)`);
+        }
+        true
+    }
+
+
+    #[static]
+    /**
+     * Validate a rule's takes: entitlement -> {}, for entitlements a plan defines.
+     */
+    fn valid_rule_taken(target: Rule, target_val: obj) -> bool {
+        const policy = self.get_policy(target);
+        for (const pair in target_val.fields()) {
+            const ent = pair[0];
+            if (typeof pair[1] != 'obj') return self.error(`Rule "${target.name}" takes "${ent}": a take is {}`);
+            if (!self.any_plan_has(policy, ent)) return self.error(`Rule "${target.name}" takes "${ent}", which no plan defines`);
+            if (pair[1].expires_on != null) return self.error(`Rule "${target.name}" takes "${ent}" with expires_on: a rule has no dates (whoever assigns it decides when)`);
+        }
+        true
+    }
+
+
+    #[static]
+    /**
+     * Validate a rule's limit overrides: entitlement -> Limit, for entitlements a plan defines.
+     */
+    fn valid_rule_overrides(target: Rule, target_val: obj) -> bool {
+        const policy = self.get_policy(target);
+        for (const pair in target_val.fields()) {
+            const ent = pair[0];
+            const limit: Limit = pair[1];
+            if (!self.any_plan_has(policy, ent)) return self.error(`Rule "${target.name}" overrides the limit of "${ent}", which no plan defines`);
+            if (!<Limit>.schemafy(limit)) return self.error_message != '' ? false : self.error(`Rule "${target.name}" has an invalid limit for "${ent}"`);
+            if (limit.override_expires_on != null) return self.error(`Rule "${target.name}" limit for "${ent}" has override_expires_on: a rule has no dates (whoever assigns it decides when)`);
+        }
+        true
+    }
+
+
+    #[static]
+    /**
+     * Validate a rule's caps: name -> Cap, in a credit the policy knows (or rune).
+     */
+    fn valid_rule_caps(target: Rule, target_val: obj) -> bool {
+        const policy = self.get_policy(target);
+        for (const pair in target_val.fields()) {
+            const name = pair[0];
+            const cap: Cap = pair[1];
+            if (!<Cap>.schemafy(cap)) return self.error_message != '' ? false : self.error(`Rule "${target.name}" has an invalid cap "${name}"`);
+            if (policy != null && cap.credit != 'rune' && policy.credit(cap.credit) == null && ?policy.exchange.get_pair(cap.credit) == null) {
+                return self.error(`Rule "${target.name}" cap "${name}" is in "${cap.credit}", which isn't a credit or exchange pair in this policy`);
+            }
+            if (cap.expires_on != null) return self.error(`Rule "${target.name}" cap "${name}" has expires_on: a rule has no dates (whoever assigns it decides when)`);
+        }
+        true
+    }
+
+
+    #[static]
+    /**
      * Validate credit tiers.
      */
     fn valid_tiers(target: obj, field: str, target_val: list) -> bool {

@@ -53,6 +53,11 @@ Customer: {
     /// entitlement -> { expires_on }. Null until the first take.
     obj taken: null;
 
+    /// The policy's rules (Limitr.rules) that apply to this customer, by name: looked up after the customer's
+    /// own changes and before its plan. Set with set_customer_rules() (Limitr Cloud sets it from contracts).
+    /// Names the policy doesn't have are skipped. Null when there are none.
+    list rules: null;
+
     /// Credit grants.
     obj! grants: {};
 
@@ -541,6 +546,7 @@ Customer: {
      * current ephemeral (`extra`) caps.
      */
     fn current_caps(extra: list = [], policy?: Limitr) -> list {
+        if (policy != null) self.sync_rule_caps(policy);
         const out = [];
         const now = Time::now();
         for (const pair in self.caps.fields()) {
@@ -555,6 +561,42 @@ Customer: {
             if (ext.ensure_current(policy?.billing_start(self, now, ext.reset_sch))) out.push_back(ext);
         }
         out
+    }
+
+
+    /**
+     * Keep this customer's copies of its rules' caps in step with the policy: a cap for each cap of each rule it
+     * has (made with no usage the first time), following the rule's definition (keeping its usage), and none for
+     * a rule it no longer has or a cap the rule no longer has. Copies are 'rule:<rule>:<cap>' in self.caps.
+     */
+    fn sync_rule_caps(policy: Limitr!) {
+        for (const pair in self.caps.fields()) {
+            const id: str = pair[0];
+            if (id.starts_with('rule:') && policy.rule_cap(self, id) == null) self.caps.remove(id, shallow = false);
+        }
+        if (self.rules == null) return;
+        for (const name in self.rules) {
+            const rule: Rule = policy.rules.get(name);
+            if (rule == null || rule.caps == null) continue;
+            for (const pair in rule.caps.fields()) {
+                const id = `rule:${name}:${pair[0]}`;
+                const def: Cap = pair[1];
+                const cap: Cap = self.caps.get(id);
+                if (cap != null) {
+                    cap.follow(def);
+                    continue;
+                }
+                const made: Cap = copy(def);
+                made.move(self.caps);
+                self.caps.insert(id, made);
+                made.id = id;
+                made.meter_value = 0;
+                made.created_on = Time::now();
+                made.started = Time::now();
+                made.last_reset = null;
+                made.expires_on = null;
+            }
+        }
     }
 
 

@@ -1,0 +1,73 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#[type]
+/**
+ * A Limitr rule: a named set of changes on top of a plan, for the customers it's assigned to (Customer.rules).
+ * It holds the same changes a customer can have of its own, in the same shapes: gives, takes, limit overrides,
+ * and caps (plus prices, which Limitr Cloud applies when it invoices). Rules have no customers and no dates of
+ * their own: who has a rule, and when, is up to whoever assigns it (Ex. a contract in Limitr Cloud).
+ *
+ * For a customer, a customer's own change comes first, then its rules (highest priority first, then in the
+ * order the policy writes them), then its plan.
+ */
+Rule: {
+    #[schema((target_val: str): bool => target_val && !target_val.contains(':') ? true : <LimitrValidation>.error(`Rule name "${target_val}" can't be empty or contain a colon`))]
+    /// Name for this rule (populated automatically from its field name).
+    str name: '';
+
+    /// Human-facing label.
+    str! label: '';
+
+    /// Which rule decides when two of a customer's rules change the same thing: higher first.
+    int! priority: 0;
+
+    #[schema(<LimitrValidation>.valid_rule_given)]
+    #[schema_optional]
+    /// Entitlements given on top of the plan: entitlement -> { plan? }. `plan` is the plan whose definition is
+    /// used (default: the closest plan that has it), as with give_entitlement().
+    obj given: null;
+
+    #[schema(<LimitrValidation>.valid_rule_taken)]
+    #[schema_optional]
+    /// Entitlements taken, even when the plan has them: entitlement -> {}.
+    obj taken: null;
+
+    #[schema(<LimitrValidation>.valid_rule_overrides)]
+    #[schema_optional]
+    /// Limits in place of the plan's: entitlement -> Limit, as create_customer_override() makes.
+    obj overrides: null;
+
+    #[schema(<LimitrValidation>.valid_rule_caps)]
+    #[schema_optional]
+    /// Caps: cap name -> Cap, as add_customer_cap() makes. Each customer keeps its own usage of a rule's cap
+    /// (in customer.caps, as 'rule:<rule>:<cap>'), made the first time it's needed and dropped when the rule
+    /// no longer applies to it.
+    obj caps: null;
+
+    /// Prices for Limitr Cloud's invoices: 'credit:<name>' or 'topup:<name>' -> { price? | modifier? }. The engine
+    /// doesn't read these.
+    obj prices: null;
+
+
+    /// Does this rule give or take the entitlement? ('taken', null), ('given', { plan? }), or null.
+    fn change(entitlement: str!) -> (str, obj) {
+        if (self.taken != null && self.taken.get(entitlement) != null) return ('taken', null);
+        const given = self.given?.get(entitlement);
+        given != null ? ('given', given) : null
+    }
+}

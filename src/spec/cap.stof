@@ -136,6 +136,29 @@ Cap: {
 
 
     /**
+     * Take a rule's definition of this cap (Rule.caps), keeping this cap's own usage: what it watches, its
+     * ceiling, and its schedule. A customer's copy of a rule's cap follows the rule when a policy changes it.
+     */
+    fn follow(def: Cap!) {
+        if (self.value != def.value) self.value = def.value;
+        if (self.credit != def.credit) self.credit = def.credit;
+        if (self.exchangeable != def.exchangeable) self.exchangeable = def.exchangeable;
+        if (self.ignore_grants != def.ignore_grants) self.ignore_grants = def.ignore_grants;
+        if (self.overage_only != def.overage_only) self.overage_only = def.overage_only;
+        if (self.follow_decrements != def.follow_decrements) self.follow_decrements = def.follow_decrements;
+        if (self.observe_only != def.observe_only) self.observe_only = def.observe_only;
+        if (self.overhead_cost != def.overhead_cost) self.overhead_cost = def.overhead_cost;
+        if (self.hard_trailing != def.hard_trailing) self.hard_trailing = def.hard_trailing;
+        if (self.shared != def.shared) self.shared = def.shared;
+        if (self.shared_with != def.shared_with) self.shared_with = def.shared_with;
+        if (self.scope != def.scope) self.scope = def.scope;
+        if (self.resets != def.resets) self.resets = def.resets;
+        if (self.reset_inc != def.reset_inc) self.reset_inc = def.reset_inc;
+        if (self.reset_sch != def.reset_sch) self.reset_sch = def.reset_sch;
+    }
+
+
+    /**
      * Reset this cap's running consumption for a single new period.
      * Always resets to zero - caps don't carry rollover/add semantics
      * like Grant, since they represent "how much have we spent", not

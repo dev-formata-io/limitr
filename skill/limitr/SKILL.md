@@ -273,6 +273,34 @@ feature through a downgrade, pausing one feature):
 - Events: `customer-entitlement-given`, `customer-entitlement-taken`, `customer-entitlement-restored`, plus
   `customer-set`.
 
+**Rules** are the same changes for many customers: a named set of gives, takes, limits, and caps in
+`policy.rules`, applied to the customers that have it (`set_customer_rules(id, ['acme_2027'])`; Limitr Cloud sets
+them from contracts). Use one when a deal or program covers more than one customer, so the deal is written once and
+versioned with the policy.
+
+```stof
+policy: {
+    rules: {
+        acme_2027: {
+            priority: 1
+            given: { audit_log: { plan: 'enterprise' } }
+            taken: { image_gen: {} }
+            overrides: { api: { credit: 'req', mode: 'hard', value: 500000, resets: true, reset_sch: 'period' } }
+            caps: { spend: { credit: 'rune', value: 2000, resets: true, reset_sch: 'period', observe_only: true } }
+        }
+    }
+}
+```
+
+- **Order, always:** the customer's own change, then its rules (highest `priority`, ties in the policy's order),
+  then its plan. A rule can't invent entitlements, and has no dates (whoever assigns it decides when).
+- **Refs:** like gives and takes, a rule's gives and takes reach the customers on its plan through refs (users on
+  their org's plan). A rule's limit applies to the meter of the customer that has the rule, as an override does: to
+  set each user's limit, give the users the rule too. A `shared` rule cap on an org covers everyone who refs it.
+- **Rule caps** keep usage per customer (`caps['rule:<rule>:<cap>']`), follow the rule when the policy changes it,
+  and go when the customer no longer has the rule.
+- `entitlement_source(id, entitlement)` says where access and the limit come from (Ex. `rule:acme_2027`).
+
 ## Pricing and margins
 
 - **Price** is per credit, in runes. `pricing_model`: `flat` (`price`) or `tiered`, `volume`, `stairstep` (`tiers`:

@@ -17,7 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrEngine } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
-import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
+import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEntitlementSource, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
 
 
@@ -25,7 +25,7 @@ export * from './types.js';
  * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
  * (or refuse clearly). Matches the package version.
  */
-export const LIMITR_SDK_VERSION = '0.7.5';
+export const LIMITR_SDK_VERSION = '0.8.0';
 
 
 /**
@@ -667,6 +667,27 @@ export class Limitr {
      */
     async restoreEntitlement(customer: string, entitlement: string): Promise<boolean> {
         return await this.gate.run(() => this.doc.call('policy.restore_entitlement', customer, entitlement)) as boolean;
+    }
+
+
+    /**
+     * Set the policy's rules that apply to a customer, by name, replacing the ones it had (an empty list clears
+     * them). A rule's gives, takes, limits, and caps then apply after the customer's own changes and before its
+     * plan. On Limitr Cloud, contracts set these. False when the customer doesn't exist.
+     */
+    async setCustomerRules(customer: string, rules: string[], event: boolean = true): Promise<boolean> {
+        return await this.gate.run(() => this.doc.call('policy.set_customer_rules', customer, rules, event)) as boolean;
+    }
+
+
+    /**
+     * Where a customer's entitlement comes from: their own change, a rule, their plan, or a customer they refer
+     * to, and whose meter it is. Null when there's no such customer.
+     */
+    async entitlementSource(customer: string, entitlement: string): Promise<LimitrEntitlementSource | null> {
+        const out = await this.gate.run(() => this.doc.call('policy.entitlement_source', customer, entitlement)) as Map<string, unknown> | null;
+        if (!out) return null;
+        return { access: String(out.get('access') ?? ''), limit: (out.get('limit') as string | null) ?? null, customer: String(out.get('customer') ?? customer) };
     }
 
 

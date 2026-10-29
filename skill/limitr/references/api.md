@@ -79,6 +79,9 @@ These meter nothing and show the current period (0 after a pending reset).
 | `give_entitlement(id, entitlement, plan?, expires?)` | bool | Give an entitlement whatever the plan says, defined by `plan` or the closest plan that has it. False if no plan has it. |
 | `take_entitlement(id, entitlement, expires?)` | bool | Deny it even though the plan has it. Meters and overrides are kept. |
 | `restore_entitlement(id, entitlement)` | bool | Undo a give or take. False when there was neither. |
+| `set_customer_rules(id, rules, event = true)` | bool | The policy's rules that apply to the customer, by name, replacing the last list (empty clears). Its rule caps follow right away. |
+| `rule(name)` | Rule | A rule by name, or null. |
+| `entitlement_source(id, entitlement)` | map | Where it comes from: `access` (given, taken, `rule:<name>`, plan, `ref:<id>`, default), `limit` (override, `rule:<name>`, plan, null), and `customer` (whose meter). |
 | `closest_plan_with(customer, entitlement)` | Plan | The plan a give without `plan` uses. |
 | `apply_customer_topup(id, topup)` | bool | Grant a plan topup (after the customer paid for it). |
 | `ensure_included_topups(id, event = true)` | | Create grants for `included` topups now. |

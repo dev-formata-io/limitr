@@ -90,7 +90,8 @@ in several places. Limitr works differently:
 - **Feature flags and rollouts:** kill switches, percentage rollouts, and rules per call, next to the plans, with
   events to measure them.
 - **Custom deals:** give one customer a feature their plan doesn't have, take one away, or change their limits, with
-  expiry, without a new plan for each deal.
+  expiry, without a new plan for each deal. For a deal that covers many customers (an org and its users, a
+  program), write it once as a rule in the policy and assign it to each customer.
 - **Prepaid credits:** credit packs with expiry, resets, and rollover, spent across features at their own rates.
 - **Org-level budgets and seats:** limits and caps shared by every user in a team or org.
 - **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.

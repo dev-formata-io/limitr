@@ -8,9 +8,10 @@ Limitr repo. `!` marks a field that can't be null. Number fields typed `float | 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `version` | ver | engine version | Set by the engine (0.7.5). |
+| `version` | ver | engine version | Set by the engine (0.8.0). |
 | `credits` | obj | `{}` | Credit name -> `Credit`. |
 | `plans` | obj | `{}` | Plan name -> `Plan`. |
+| `rules` | obj | `{}` | Rule name -> `Rule`: changes on top of a plan for the customers that have them. |
 | `exchange` | Exchange | `{}` | Currency conversion and grant strategy. |
 | `notifications` | Notifications | `{}` | Notification name -> `Notification`. |
 | `customers` | obj | `{}` | Customer ID -> `Customer` (engine state). |
@@ -88,6 +89,22 @@ for live rates.
 | `hidden` | bool | false | Hide from pricing pages. |
 | `default` | bool | false | Used when a customer is created without a plan. |
 
+## Rule
+
+A named set of changes on top of a plan, for the customers that have it (`Customer.rules`). The same shapes a
+customer's own changes have. No customers or dates of its own: whoever assigns it decides who and when.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `name` | str | field name | Filled by the engine. Can't contain a colon. |
+| `label` | str! | `''` | |
+| `priority` | int! | 0 | When two of a customer's rules set the same thing, higher wins; ties go to the policy's order. |
+| `given` | obj | null | Entitlement -> `{ plan? }` (as `give_entitlement`). No `expires_on`. |
+| `taken` | obj | null | Entitlement -> `{}` (as `take_entitlement`). No `expires_on`. |
+| `overrides` | obj | null | Entitlement -> `Limit` in place of the plan's. No `override_expires_on`. |
+| `caps` | obj | null | Cap name -> `Cap`. Each customer keeps its own usage as `rule:<rule>:<cap>` in `caps`. No `expires_on`. |
+| `prices` | obj | null | `'credit:<name>'` or `'topup:<name>'` -> price override, for Limitr Cloud's invoices (the engine doesn't read it). |
+
 ## Entitlement
 
 | Field | Type | Default | Notes |
@@ -158,6 +175,7 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `overrides` | obj! | Entitlement -> `Limit`. |
 | `given` | obj | Entitlement -> `{ plan, expires_on }`: given on top of the plan (`give_entitlement`). Null until the first. |
 | `taken` | obj | Entitlement -> `{ expires_on }`: taken even though the plan has it (`take_entitlement`). Null until the first. |
+| `rules` | list | Rule names that apply (`set_customer_rules`; Cloud sets them from contracts). Unknown names are skipped. Null when none. |
 | `grants` | obj! | Grant ID -> `Grant`. |
 | `caps` | obj! | Cap ID -> `Cap`. |
 | `metadata` | obj | Anything. `limitr_voucher*` fields are used by Cloud vouchers. |

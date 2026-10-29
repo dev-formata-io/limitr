@@ -1,0 +1,356 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Rules tests: named sets of changes on top of a plan (Limitr.rules), for the customers that have them
+// (Customer.rules, set_customer_rules()). A rule holds what a customer can have of its own (gives, takes, limit
+// overrides, caps), and for a customer the order is always: its own change, then its rules (highest priority
+// first, then the policy's order), then its plan. Users on their org's plan get the org's rules through refs,
+// as they get its gives and takes. Each customer keeps its own usage of a rule's cap.
+//
+Limitr TestRulesPolicy: {
+    credits: {
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        free: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 10 } }
+            }
+        }
+        pro: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 100 } }
+                sso: {}
+                export: { limit: { credit: 'req', mode: 'hard', value: 50 } }
+            }
+        }
+        enterprise: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 1000 } }
+                sso: {}
+                audit_log: {}
+            }
+        }
+        org_plan: {
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 100 } }
+            }
+        }
+    }
+
+    rules: {
+        acme: {
+            label: 'Acme 2027'
+            given: { audit_log: { plan: 'enterprise' } }
+            taken: { export: {} }
+            overrides: {
+                api: { credit: 'req', mode: 'hard', value: 500 }
+            }
+            caps: {
+                calls: { credit: 'req', value: 3, exchangeable: false }
+            }
+            prices: {
+                'credit:req': { modifier: { type: 'percent', amount: -20 } }
+            }
+        }
+        same_priority: {
+            overrides: {
+                api: { credit: 'req', mode: 'hard', value: 300 }
+            }
+        }
+        boost: {
+            priority: 5
+            overrides: {
+                api: { credit: 'req', mode: 'hard', value: 700 }
+            }
+        }
+        pooled: {
+            caps: {
+                pool: { credit: 'req', value: 4, exchangeable: false, shared: true }
+            }
+        }
+    }
+
+
+    // customer id -> the rules each customer-rules-set event said it has now
+    map rule_events: map();
+
+
+    #[customer-rules-set]
+    fn on_rules_set(event: obj) {
+        if (event.customer.parent().parent() != self) return;
+        self.rule_events.insert(event.customer.id, event.rules);
+    }
+
+
+    #[test]
+    fn test_rules_policy_valid() {
+        assert(self.valid());
+        assert_eq(self.rule('acme').label, 'Acme 2027');
+        assert_null(self.rule('nope'));
+    }
+
+
+    #[test]
+    /**
+     * A rule gives, takes, and sets limits for the customers that have it, and nobody else; clearing a
+     * customer's rules puts its plan back.
+     */
+    fn test_rule_changes_its_customers() {
+        const id = 'rules_changes';
+        const other = 'rules_changes_other';
+        self.create_customer(id, 'pro');
+        self.create_customer(other, 'pro');
+        assert(self.set_customer_rules(id, ['acme']));
+        assert_eq(self.rule_events.get(id), ['acme']);
+
+        assert(self.check(id, 'audit_log'));          // given, from enterprise
+        assert_not(self.check(id, 'export'));          // taken, though pro has it
+        assert_eq(self.limit(id, 'api'), 500);
+        assert(self.check(id, 'sso'));                 // the plan's, untouched
+        assert(self.features(id).contains('audit_log'));
+        assert_not(self.features(id).contains('export'));
+
+        assert_not(self.check(other, 'audit_log'));    // a rule applies only to who has it
+        assert_eq(self.limit(other, 'api'), 100);
+
+        const source = self.entitlement_source(id, 'api');
+        assert_eq(source.get('access'), 'plan');
+        assert_eq(source.get('limit'), 'rule:acme');
+        assert_eq(source.get('customer'), id);
+        assert_eq(self.entitlement_source(id, 'audit_log').get('access'), 'rule:acme');
+        assert_eq(self.entitlement_source(id, 'export').get('access'), 'rule:acme');
+
+        assert(self.set_customer_rules(id, []));
+        assert_null(self.customer(id).rules);
+        assert_not(self.check(id, 'audit_log'));
+        assert(self.check(id, 'export'));
+        assert_eq(self.limit(id, 'api'), 100);
+        assert_eq(self.entitlement_source(id, 'api').get('limit'), 'plan');
+        assert_not(self.set_customer_rules('rules_nobody', ['acme']));
+    }
+
+
+    #[test]
+    /**
+     * A customer's own change wins over its rules: its own limit, and its own give of what a rule takes.
+     */
+    fn test_own_changes_win() {
+        const id = 'rules_own';
+        self.create_customer(id, 'pro');
+        self.set_customer_rules(id, ['acme'], false);
+        assert(self.create_customer_override(id, 'api', value = 50) != null);
+        assert_eq(self.limit(id, 'api'), 50);
+        assert_eq(self.entitlement_source(id, 'api').get('limit'), 'override');
+        assert(self.give_entitlement(id, 'export'));
+        assert(self.check(id, 'export'));
+        assert_eq(self.entitlement_source(id, 'export').get('access'), 'given');
+
+        assert(self.remove_customer_override(id, 'api'));
+        assert_eq(self.limit(id, 'api'), 500);         // back to the rule's, not the plan's
+    }
+
+
+    #[test]
+    /**
+     * When two rules set the same thing, the higher priority one decides; at the same priority, the one the
+     * policy writes first. The order of the customer's list doesn't matter.
+     */
+    fn test_rule_priority() {
+        const a = 'rules_priority_a';
+        const b = 'rules_priority_b';
+        const c = 'rules_priority_c';
+        self.create_customer(a, 'pro');
+        self.create_customer(b, 'pro');
+        self.create_customer(c, 'pro');
+        self.set_customer_rules(a, ['acme', 'boost'], false);
+        self.set_customer_rules(b, ['boost', 'acme'], false);
+        self.set_customer_rules(c, ['same_priority', 'acme'], false);
+        assert_eq(self.limit(a, 'api'), 700);
+        assert_eq(self.limit(b, 'api'), 700);
+        assert_eq(self.entitlement_source(a, 'api').get('limit'), 'rule:boost');
+        assert_eq(self.limit(c, 'api'), 500);          // acme is written before same_priority
+        assert(self.check(a, 'audit_log'));            // boost doesn't give it, acme still does
+    }
+
+
+    #[test]
+    /**
+     * A rule's cap: each customer keeps its own usage (as 'rule:<rule>:<cap>'), which follows the rule when the
+     * policy changes it, and goes when the customer no longer has the rule.
+     */
+    fn test_rule_caps() {
+        const id = 'rules_caps';
+        const other = 'rules_caps_other';
+        self.create_customer(id, 'pro');
+        self.create_customer(other, 'pro');
+        self.set_customer_rules(id, ['acme'], false);
+        self.set_customer_rules(other, ['acme'], false);
+        const cap: Cap = self.customer_cap(id, 'rule:acme:calls');
+        assert(cap != null);
+        assert_eq(cap.meter_value, 0);
+
+        assert(self.allow(id, 'api', 2, false));
+        assert_not(self.allow(id, 'api', 2, false));   // the rule's cap of 3
+        assert(self.allow(other, 'api', 3, false));    // its own usage of the same cap
+        assert_eq(self.customer_cap(id, 'rule:acme:calls').meter_value, 2);
+
+        self.rules.acme.caps.calls.value = 10;          // the policy raises it: usage is kept
+        assert(self.allow(id, 'api', 2, false));
+        assert_eq(self.customer_cap(id, 'rule:acme:calls').meter_value, 4);
+        assert_eq(self.customer_cap(id, 'rule:acme:calls').value, 10);
+        self.rules.acme.caps.calls.value = 3;
+
+        self.set_customer_rules(id, ['boost'], false);
+        assert_null(self.customer_cap(id, 'rule:acme:calls'));
+        assert(self.allow(id, 'api', 5, false));
+    }
+
+
+    #[test]
+    /**
+     * Users on their org's plan get the org's rules' gives and takes through refs, as with the org's own; a
+     * limit stays the user's meter's, so an org rule's limit doesn't reach them (the same as the org's own limit
+     * overrides). A deal that sets users' limits gives the rule to the users too.
+     */
+    fn test_rules_through_refs() {
+        const org = 'rules_org';
+        const user = 'rules_org_user';
+        self.create_customer(org, 'org_plan', 'org');
+        self.create_customer(user, '', 'user', 'User', [org]);
+        self.customer(user).plan = '';
+        self.set_customer_rules(org, ['acme'], false);
+        assert(self.check(user, 'audit_log'));
+        assert_eq(self.entitlement_source(user, 'audit_log').get('access'), `ref:${org}`);
+        assert_eq(self.limit(user, 'api'), 100);             // the user's meter: the org plan's limit
+        assert_eq(self.limit(org, 'api'), 500);
+        self.set_customer_rules(user, ['acme'], false);
+        assert_eq(self.limit(user, 'api'), 500);
+        assert_eq(self.entitlement_source(user, 'api').get('limit'), 'rule:acme');
+    }
+
+
+    #[test]
+    /**
+     * A shared rule cap on an org applies to every customer that refs it, with one usage on the org.
+     */
+    fn test_shared_rule_cap() {
+        const org = 'rules_pool_org';
+        const a = 'rules_pool_a';
+        const b = 'rules_pool_b';
+        self.create_customer(org, 'org_plan', 'org');
+        self.create_customer(a, 'pro', 'user', 'User', [org]);
+        self.create_customer(b, 'pro', 'user', 'User', [org]);
+        self.set_customer_rules(org, ['pooled'], false);
+        assert(self.allow(a, 'api', 3, false));
+        assert_not(self.allow(b, 'api', 2, false));    // the org's pool of 4
+        assert(self.allow(b, 'api', 1, false));
+        assert_eq(self.customer_cap(org, 'rule:pooled:pool').meter_value, 4);
+    }
+
+
+    #[test]
+    /**
+     * Names the policy doesn't have are kept on the customer and skipped; repeats are kept once.
+     */
+    fn test_unknown_rules_skipped() {
+        const id = 'rules_unknown';
+        self.create_customer(id, 'pro');
+        assert(self.set_customer_rules(id, ['nope', 'acme', 'acme', '']));
+        assert_eq(self.customer(id).rules, ['nope', 'acme']);
+        assert_eq(self.limit(id, 'api'), 500);
+        assert(self.set_customer_rules(id, ['nope']));
+        assert_eq(self.limit(id, 'api'), 100);
+        assert_eq(self.entitlement_source(id, 'api').get('access'), 'plan');
+    }
+
+
+    #[test]
+    /**
+     * A rule can't invent entitlements or carry dates of its own, and its limits and caps are checked like a
+     * customer's.
+     */
+    fn test_rule_validation() {
+        for (const bad in [
+            `rules: { r: { given: { teleport: {} } } }`,
+            `rules: { r: { given: { audit_log: { plan: 'p' } } } }`,
+            `rules: { r: { taken: { teleport: {} } } }`,
+            `rules: { r: { overrides: { a: { credit: 'nope', value: 5 } } } }`,
+            `rules: { r: { overrides: { a: { credit: 'tok', value: 5, override_expires_on: 1 } } } }`,
+            `rules: { r: { caps: { c: { credit: 'nope', value: 5 } } } }`,
+            `rules: { r: { caps: { c: { credit: 'tok', value: 5, expires_on: 1 } } } }`,
+            `rules: { 'r:x': { overrides: { a: { credit: 'tok', value: 5 } } } }`,
+        ]) {
+            using holder = new {};
+            parse(`Limitr policy: {
+                credits: { tok: {} }
+                plans: {
+                    p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10 } } } }
+                    q: { entitlements: { audit_log: {} } }
+                }
+                ${bad}
+            }`, holder, 'stof');
+            const policy: Limitr = holder.policy;
+            assert_not(policy.valid());
+        }
+
+        using good = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: {
+                p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10 } } } }
+                q: { entitlements: { audit_log: {} } }
+            }
+            rules: { r: {
+                given: { audit_log: {} }
+                overrides: { a: { credit: 'tok', value: 20, reset_sch: 'period' } }
+                caps: { c: { credit: 'rune', value: 5, observe_only: true } }
+            } }
+        }`, good, 'stof');
+        const policy: Limitr = good.policy;
+        assert(policy.valid());
+        assert(policy.rules.r.overrides.a.resets);
+    }
+
+
+    #[test]
+    /**
+     * A whole policy update replaces the rules (none when it has none); customers keep their rule names.
+     */
+    fn test_policy_update_replaces_rules() {
+        using holder = new {};
+        parse(`Limitr policy: {
+            credits: { tok: {} }
+            plans: { p: { default: true, entitlements: { a: { limit: { credit: 'tok', value: 10 } } } } }
+            rules: { r: { overrides: { a: { credit: 'tok', value: 20 } } } }
+        }`, holder, 'stof');
+        const policy: Limitr = holder.policy;
+        policy.create_customer('rules_update', 'p');
+        policy.set_customer_rules('rules_update', ['r'], false);
+        assert_eq(policy.limit('rules_update', 'a'), 20);
+
+        policy.update_policy_internals(`{ "policy": { "plans": { "p": { "default": true, "entitlements": { "a": { "limit": { "credit": "tok", "value": 10 } } } } },
+            "rules": { "r": { "overrides": { "a": { "credit": "tok", "value": 30 } } } } } }`);
+        assert_eq(policy.limit('rules_update', 'a'), 30);
+
+        policy.update_policy_internals(`{ "policy": { "plans": { "p": { "default": true, "entitlements": { "a": { "limit": { "credit": "tok", "value": 10 } } } } } } }`);
+        assert_eq(policy.limit('rules_update', 'a'), 10);
+        assert_eq(policy.customer('rules_update').rules, ['r']);
+    }
+}

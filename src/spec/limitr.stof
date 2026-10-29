@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.7.5;
+    ver version: 0.8.0;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -36,6 +36,9 @@ Limitr: {
 
     /// Available plan definitions by ID.
     obj plans: {};
+
+    /// Rules by name: changes on top of a plan for the customers that have them (Customer.rules). See Rule.
+    obj rules: {};
 
     /// Customers by ID.
     obj customers: {};
@@ -91,6 +94,12 @@ Limitr: {
             const plan: Plan = pair[1];
             plan.name = pair[0];
             if (!<Plan>.schemafy(plan)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Plan "${pair[0]}" is not valid`);
+        }
+        for (const pair in self.rules.fields()) {
+            if (pair[0].contains(':')) return <LimitrValidation>.error(`Rule name "${pair[0]}" can't contain a colon`);
+            const rule: Rule = pair[1];
+            rule.name = pair[0];
+            if (!<Rule>.schemafy(rule)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Rule "${pair[0]}" is not valid`);
         }
         if (!<Exchange>.schemafy(self.exchange)) return false;
         for (const pair in self.exchange.fields()) {
@@ -1178,22 +1187,23 @@ Limitr: {
 
 
     /**
-     * A customer's entitlement, found the way its plan is: the customer's own give or take, else its plan,
-     * else (when it has no plan of its own) the same from each customer it refs, in order. So a customer that
-     * gets its plan from another (Ex. users on their org's plan) also gets that customer's gives and takes.
+     * A customer's entitlement, found the way its plan is: the customer's own give or take, else its rules'
+     * (highest priority first), else its plan, else (when it has no plan of its own) the same from each customer
+     * it refs, in order. So a customer that gets its plan from another (Ex. users on their org's plan) also gets
+     * that customer's gives, takes, and rules.
      * Returns (found, entitlement): found is false when no give, take, or plan applies (the default plan does).
      */
     fn customer_access(customer: Customer!, entitlement: str!, depth: int = 0) -> (bool, Entitlement) {
-        if (customer.given != null || customer.taken != null) {
-            const change = customer.entitlement_change(entitlement);
-            if (change != null) {
-                if (change[0] == 'taken') return (true, null);
-                // The plan it was given from, or the closest plan that still has it (plans can change)
-                const from: Plan = self.plans.get(change[1].plan ?? '');
-                const ent = from?.entitlements.get(entitlement);
-                if (ent != null) return (true, ent);
-                return (true, self.closest_plan_with(customer, entitlement)?.entitlements.get(entitlement));
-            }
+        let change = null;
+        if (customer.given != null || customer.taken != null) change = customer.entitlement_change(entitlement);
+        if (change == null && customer.rules != null) change = self.changing_rule(customer, entitlement)?.change(entitlement);
+        if (change != null) {
+            if (change[0] == 'taken') return (true, null);
+            // The plan it was given from, or the closest plan that still has it (plans can change)
+            const from: Plan = self.plans.get(change[1].plan ?? '');
+            const ent = from?.entitlements.get(entitlement);
+            if (ent != null) return (true, ent);
+            return (true, self.closest_plan_with(customer, entitlement)?.entitlements.get(entitlement));
         }
         const plan: Plan = self.plans.get(customer.plan);
         if (plan != null) return (true, plan.entitlements.get(entitlement));
@@ -1222,6 +1232,11 @@ Limitr: {
         for (const holder in holders) {
             if (holder.given != null) for (const pair in holder.given.fields()) {
                 if (!names.contains(pair[0])) names.push_back(pair[0]);
+            }
+            if (holder.rules != null) for (const rule: Rule in self.customer_rule_list(holder)) {
+                if (rule.given != null) for (const pair in rule.given.fields()) {
+                    if (!names.contains(pair[0])) names.push_back(pair[0]);
+                }
             }
         }
         const out = [];
@@ -1495,6 +1510,55 @@ Limitr: {
 
 
     /**
+     * Set the rules that apply to a customer (Customer.rules), by name, replacing the ones it had: an empty list
+     * clears them. Names the policy doesn't have are kept (a later policy may add them) and skipped until then.
+     * Limitr Cloud sets these from contracts; without Cloud, set them from your own deals. The customer's copies
+     * of its rules' caps follow right away. False when the customer doesn't exist.
+     */
+    fn set_customer_rules(id: str!, rules: list!, event: bool = true) -> bool {
+        const customer = self.customer(id);
+        if (customer == null) return false;
+        const names = [];
+        for (const name in rules) {
+            if (typeof name == 'str' && name.len() > 0 && !names.contains(name)) names.push_back(name);
+        }
+        const previous = customer.rules ?? [];
+        customer.rules = names.any() ? names : null;
+        customer.sync_rule_caps(self);
+        if (event) {
+            await <Event>.send('customer-set', customer);
+            await <Event>.send_tmp('customer-rules-set', new { customer, rules: names, previous });
+        }
+        true
+    }
+
+
+    /**
+     * Where a customer's entitlement comes from, for showing why they have what they have:
+     * map(('access', a), ('limit', l), ('customer', id)).
+     * `access` is 'given' or 'taken' (the customer's own), 'rule:<name>', 'plan', 'ref:<customer id>' (through a
+     * customer it refs, Ex. its org), or 'default' (the default plan). `limit` is 'override' (the customer's own),
+     * 'rule:<name>', 'plan', or null (no limit). `customer` is the customer whose meter it is (Ex. the org's).
+     * Null when there's no such customer.
+     */
+    fn entitlement_source(id: str!, entitlement: str!) -> map {
+        const customer = self.customer(id);
+        if (customer == null) return null;
+        const pair = self.customer_entitlement(id, entitlement);
+        const holder: Customer = pair != null ? pair[0] : customer;
+        let limit = null;
+        if (pair != null && pair[1] != null) {
+            const own: Limit = holder.overrides.get(entitlement);
+            const rule = own == null && holder.rules != null ? self.overriding_rule(holder, entitlement) : null;
+            if (own != null) limit = 'override';
+            else if (rule != null) limit = `rule:${rule.name}`;
+            else if (pair[1].limit != null) limit = 'plan';
+        }
+        map(('access', self.access_source(customer, entitlement)), ('limit', limit), ('customer', holder.id))
+    }
+
+
+    /**
      * Set an alternative customer ID (must be unique).
      * False when the alt ID contains a period (logged).
      */
@@ -1547,6 +1611,7 @@ Limitr: {
         let existing_limit = ent.limit;
         const override: Limit = customer.overrides.get(entitlement);
         if (override != null) existing_limit = override;
+        else if (customer.rules != null) existing_limit = self.overriding_rule(customer, entitlement)?.overrides.get(entitlement) ?? existing_limit;
 
         // Create the limit
         if (reset_inc != null && reset_sch != null) return null; // mutually exclusive
@@ -1959,6 +2024,16 @@ Limitr: {
         pn = self.plan_for(id, false);
         if (pn == null && default) pn = self.default_plan();
         pn
+    }
+
+
+    /**
+     * A rule by name (Limitr.rules), or null.
+     */
+    fn rule(name: str!) -> Rule {
+        const rule: Rule = self.rules.get(name);
+        if (rule != null) rule.name = name;
+        rule
     }
 
 
@@ -2504,6 +2579,15 @@ Limitr: {
                 self.remove('plans', shallow = false);
                 self.plans = p.policy.plans;
                 p.policy.plans.move(self);
+
+                // a whole policy: its rules replace these (none when it has none)
+                self.remove('rules', shallow = false);
+                if (typeof p.policy.rules == 'obj') {
+                    self.rules = p.policy.rules;
+                    p.policy.rules.move(self);
+                } else {
+                    self.rules = new {} on self;
+                }
             }
             if (typeof p.policy.credits == 'obj') {
                 self.remove('credits', shallow = false);
@@ -2661,16 +2745,103 @@ Limitr: {
      */
     fn customer_entitlement_limit(customer?: Customer, entitlement?: str, ent?: Entitlement) -> Limit {
         if (customer == null || entitlement == null || ent == null) return null;
-        let limit = ent.limit;
         const override: Limit = customer.overrides.get(entitlement);
         if (override != null) {
             if (override.override_expires_on != null && Time::now() >= override.override_expires_on) {
                 customer.overrides.remove(entitlement, shallow = false);
             } else {
-                limit = override;
+                return override;
             }
         }
-        limit
+        // the customer's own limit comes first, then its rules', then the plan's
+        if (customer.rules != null) {
+            const ruled: Limit = self.overriding_rule(customer, entitlement)?.overrides.get(entitlement);
+            if (ruled != null) return ruled;
+        }
+        ent.limit
+    }
+
+
+    // Rules -------------------------------------------------------------------
+
+
+    /**
+     * A customer's rules that the policy has, highest priority first, then in the order the policy writes them.
+     */
+    fn customer_rule_list(customer: Customer!) -> list {
+        const out = [];
+        if (customer.rules == null) return out;
+        for (const pair in self.rules.fields()) {
+            if (!customer.rules.contains(pair[0])) continue;
+            const rule: Rule = pair[1];
+            rule.name = pair[0];
+            // after every rule of the same or higher priority, so the policy's order breaks ties
+            let at = 0;
+            while (at < out.len() && (out[at].priority ?? 0) >= (rule.priority ?? 0)) at += 1;
+            out.insert(at, rule);
+        }
+        out
+    }
+
+
+    /**
+     * The customer's first rule that gives or takes an entitlement, or null.
+     */
+    fn changing_rule(customer: Customer!, entitlement: str!) -> Rule {
+        for (const rule: Rule in self.customer_rule_list(customer)) {
+            if (rule.change(entitlement) != null) return rule;
+        }
+        null
+    }
+
+
+    /**
+     * The customer's first rule that overrides an entitlement's limit, or null.
+     */
+    fn overriding_rule(customer: Customer!, entitlement: str!) -> Rule {
+        for (const rule: Rule in self.customer_rule_list(customer)) {
+            if (rule.overrides != null && rule.overrides.get(entitlement) != null) return rule;
+        }
+        null
+    }
+
+
+    /**
+     * The rule cap a customer's cap copy ('rule:<rule>:<cap>') follows, when the customer still has that rule and
+     * the rule still has that cap; else null.
+     */
+    fn rule_cap(customer: Customer!, id: str!) -> Cap {
+        if (customer.rules == null) return null;
+        for (const name in customer.rules) {
+            const prefix = `rule:${name}:`;
+            if (!id.starts_with(prefix)) continue;
+            const rule: Rule = self.rules.get(name);
+            const def: Cap = rule?.caps?.get(id.substring(prefix.len()));
+            if (def != null) return def;
+        }
+        null
+    }
+
+
+    /**
+     * Where a customer's access to an entitlement comes from (see entitlement_source), following customer_access.
+     */
+    fn access_source(customer: Customer!, entitlement: str!, depth: int = 0) -> str {
+        if (customer.given != null || customer.taken != null) {
+            const change = customer.entitlement_change(entitlement);
+            if (change != null) return change[0];
+        }
+        if (customer.rules != null) {
+            const rule = self.changing_rule(customer, entitlement);
+            if (rule != null) return `rule:${rule.name}`;
+        }
+        if (self.plans.get(customer.plan) != null) return 'plan';
+        if (depth < 8) for (const ref in customer.refs) {
+            const other = self.customers.get(ref) ?? self.customer(ref);
+            if (other == null) continue;
+            if (self.customer_access(other, entitlement, depth + 1)[0]) return `ref:${other.id}`;
+        }
+        'default'
     }
 
 
@@ -2706,6 +2877,7 @@ Limitr: {
     fn shared_caps_for(caller: Customer!) -> list {
         const out = [];
         for (const holder in self.ref_customers(caller)) {
+            holder.sync_rule_caps(self); // its rules' caps, which may be shared
             for (const pair in holder.caps.fields()) {
                 const cap: Cap = pair[1];
                 if (!cap.shared) continue;

@@ -26,6 +26,7 @@ import './estimate';
 import './grant';
 import './topup';
 import './cap';
+import './rule';
 import './exchange';
 import './capability';
 import './notification';

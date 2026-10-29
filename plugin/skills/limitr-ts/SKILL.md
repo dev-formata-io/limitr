@@ -131,6 +131,10 @@ await limitr.giveEntitlement(orgId, 'sso');                          // from the
 await limitr.giveEntitlement(orgId, 'api', 'enterprise', Date.now() + 14 * 86_400_000); // that plan's limit, 14 days
 await limitr.takeEntitlement(orgId, 'exports');                      // pause one feature
 await limitr.restoreEntitlement(orgId, 'exports');
+
+// Deals for many customers: the policy's rules (policy.rules), by name
+await limitr.setCustomerRules(orgId, ['acme_2027']);
+const why = await limitr.entitlementSource(userId, 'api'); // { access: 'ref:org_1', limit: 'plan', customer: userId }
 ```
 
 - `features(customer, context?)` returns entitlement names (or null for an unknown customer). It's access, not
@@ -138,6 +142,8 @@ await limitr.restoreEntitlement(orgId, 'exports');
 - Give/take return false for an unknown customer, and give returns false when no plan defines the entitlement.
   Gives and takes are stored on the customer (`given`, `taken`), so persisting customers persists them. An org's
   apply to the users on its plan.
+- `setCustomerRules(id, names)` replaces the customer's rules (an empty list clears them). On Limitr Cloud,
+  contracts set rules: don't set them from the app there.
 - Per-customer targeting (a beta list) is customer metadata: `createCustomer(id, plan, type, label, refs, alts,
   { beta: true })` or `setCustomer`, read by the rule as `customer.metadata`.
 - Entitlements with `track: true` send `feature-checked` (`caller.id`, `entitlement`, `enabled`) on every check:

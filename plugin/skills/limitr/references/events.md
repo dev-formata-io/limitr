@@ -82,13 +82,14 @@ scoped entitlement), that holder also gets a `customer-set`.
 
 | Event | Payload | From |
 |---|---|---|
-| `customer-set` | the Customer | create, set, plan change, overrides, gives and takes, alt IDs, caps, included topups |
+| `customer-set` | the Customer | create, set, plan change, overrides, gives and takes, rules, alt IDs, caps, included topups |
 | `customer-removed` | the Customer | `delete_customer` |
 | `customer-plan-changed` | `previous_plan`, `new_plan`, `customer` | `set_customer_plan` |
 | `customer-topup-granted` | `customer`, `topup_name`, `plan_name`, `topup` | `apply_customer_topup` |
 | `customer-entitlement-given` | `customer`, `entitlement`, `plan` (whose definition), `expires_on` | `give_entitlement` |
 | `customer-entitlement-taken` | `customer`, `entitlement`, `expires_on` | `take_entitlement` |
 | `customer-entitlement-restored` | `customer`, `entitlement` | `restore_entitlement` |
+| `customer-rules-set` | `customer`, `rules` (now), `previous` | `set_customer_rules` |
 | `plan-set` | the Plan | `set_plan` |
 | `plan-removed` | the Plan | `delete_plan` |
 | `exchange-pair-set` | `name`, `value`, `currency`, `previous_value`, `previous_currency` (null for a new pair) | `set_exchange_pair` |

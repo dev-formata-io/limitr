@@ -31,6 +31,8 @@ export interface LimitrCustomer {
     given?: Record<string, { plan: string, expires_on: number | null }> | null,
     /** Entitlements taken away, even though the plan has them: entitlement -> { expires_on }. */
     taken?: Record<string, { expires_on: number | null }> | null,
+    /** The policy's rules that apply to this customer, by name (setCustomerRules; Limitr Cloud sets them from contracts). */
+    rules?: string[] | null,
     grants: Record<string, unknown>,
     metadata: Record<string, unknown> | null,
     /** Start of the current billing period (ms), which 'period' reset schedules follow. Limitr Cloud sets it. */
@@ -47,6 +49,18 @@ export interface LimitrCustomer {
 /**
  * A standing spend cap on a customer, as returned by addCustomerCap/customerCap.
  */
+/**
+ * Where a customer's entitlement comes from (entitlementSource).
+ * `access`: 'given' or 'taken' (the customer's own), 'rule:<name>', 'plan', 'ref:<customer id>', or 'default'.
+ * `limit`: 'override' (the customer's own), 'rule:<name>', 'plan', or null. `customer`: whose meter it is.
+ */
+export interface LimitrEntitlementSource {
+    access: string;
+    limit: string | null;
+    customer: string;
+}
+
+
 export interface LimitrCap {
     id: string;
     credit: string;

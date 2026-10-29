@@ -37,6 +37,7 @@ import './exchange_pairs' as TestExchangePairs;
 import './schedules' as TestSchedules;
 import './billing_period' as TestBillingPeriod;
 import './overrides' as TestOverrides;
+import './rules' as TestRules;
 
 
 Limitr policy: {

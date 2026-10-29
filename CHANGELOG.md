@@ -4,6 +4,40 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.0
+
+### Added
+
+- **Rules: one set of changes for many customers.** `policy.rules` holds named rules, each a set of the changes a
+  customer can have of its own, in the same shapes: `given` (entitlement -> `{ plan? }`), `taken` (entitlement ->
+  `{}`), `overrides` (entitlement -> `Limit`), and `caps` (name -> `Cap`), plus `prices` for Limitr Cloud's invoices
+  (the engine doesn't read them), a `label`, and a `priority`. A rule has no customers or dates of its own.
+- **`Customer.rules`** lists the rules that apply to a customer, set with `set_customer_rules(id, rules, event =
+  true)` (TypeScript: `setCustomerRules(id, rules)`), which sends `customer-rules-set` (`customer`, `rules`,
+  `previous`) and `customer-set`. Names the policy doesn't have are kept and skipped. Limitr Cloud sets them from
+  contracts.
+- **One order everywhere:** for access and for limits, the customer's own change comes first, then its rules
+  (highest `priority` first, ties in the order the policy writes them), then its plan. A rule's gives and takes
+  reach customers on its plan through refs (users on their org's plan), as the customer's own do; a rule's limit
+  applies to the meter of the customer that has the rule, as an override does.
+- **Rule caps keep usage per customer:** a customer's copy of a rule's cap is `caps['rule:<rule>:<cap>']`, made
+  the first time it's needed, following the rule's definition (usage kept) when the policy changes it, and removed
+  when the customer no longer has the rule. A `shared` rule cap on an org covers everyone who refs it.
+- **`entitlement_source(id, entitlement)`** (TypeScript: `entitlementSource`) says where a customer's entitlement
+  comes from: `access` (`given`, `taken`, `rule:<name>`, `plan`, `ref:<customer id>`, or `default`), `limit`
+  (`override`, `rule:<name>`, `plan`, or null), and `customer` (whose meter it is). `rule(name)` returns a rule.
+- **Validation:** a rule can't invent entitlements (a give or take needs a plan that defines it, and a named plan
+  must define it), its limits and caps are checked like a customer's, its credits must exist, it can't carry dates
+  (`expires_on`, `override_expires_on`), and its name can't contain a colon.
+
+### Changed
+
+- `update_policy_internals` with a whole policy (plans included) replaces the rules too (none when it has none).
+  Customers keep their rule names.
+- Cap IDs starting with `rule:` are reserved for rule caps: a customer cap with such an ID that no rule of the
+  customer's defines is removed the next time the customer's caps are checked. Policies can't use `rules` at the top
+  of `policy` for anything else.
+
 ## 0.7.5
 
 ### Added
