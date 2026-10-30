@@ -71,7 +71,7 @@ These meter nothing and show the current period (0 after a pending reset).
 | `customer(id)` / `customer_metadata(id)` / `customer_refs(id)` | | |
 | `set_customer_refs(id, refs)` | bool | |
 | `set_customer_period(id, start?, end?, event = true)` | bool | The billing period `'period'` schedules follow. `end` defaults to one plan period after `start`; no dates: the plan's calendar period. `billing_period(customer)` returns `[start, end]`. |
-| `set_customer_plan(id, plan, overwrite_meters = false)` | bool | Keeps meters unless `overwrite_meters`. Moves included topup balances by the new plan's `plan_change`. |
+| `set_customer_plan(id, plan, overwrite_meters = false)` | bool | Keeps meters unless `overwrite_meters`; kept meters move to the new plan's credit. Moves included topup balances by the new plan's `plan_change`. |
 | `delete_customer(id)` | bool | |
 | `set_alt_customer_id(id, alt, event = true)` / `delete_alt_customer_id(alt, event = true)` | bool | False for an alt ID with a period. |
 | `create_customer_override(id, entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)` | Limit | Per-customer limit. Unset fields copy the current limit. |

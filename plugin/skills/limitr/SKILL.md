@@ -201,9 +201,10 @@ flag), given a `credit`.
   customer of that type in its refs is denied.
 - **Alt IDs** (`alt_ids`, `set_alt_customer_id`) let other identifiers (an auth ID, a Stripe customer ID) resolve to a
   customer.
-- `set_customer_plan(id, plan, overwrite_meters = false)` changes plans and fires `customer-plan-changed`. Included
-  topup balances move to the new plan's included topup in the same credit by its `plan_change` (`top_up` by
-  default: raise to the new amount, never lower); purchased ones stay.
+- `set_customer_plan(id, plan, overwrite_meters = false)` changes plans and fires `customer-plan-changed`. Kept
+  meters move to the new plan's credit for their entitlement (0.8.1). Included topup balances move to the new plan's
+  included topup in the same credit by its `plan_change` (`top_up` by default: raise to the new amount, never lower);
+  purchased ones stay.
 - **IDs** and alt IDs can't contain a period (fields are found by '.' paths). `create_customer`, `set_customer`, and
   `set_alt_customer_id` refuse one and log an error. For an email, replace its periods with your own placeholder, or
   keep it in metadata.

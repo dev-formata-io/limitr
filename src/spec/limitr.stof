@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.8.0;
+    ver version: 0.8.1;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1454,6 +1454,12 @@ Limitr: {
                 if (typeof ent == 'obj' && ent.limit != null) {
                     ent as Entitlement;
                     const existing = sub.meters.get(name);
+                    // a meter kept from the plan before is on this plan's credit now (the same entitlement can be
+                    // priced on another credit: Ex. pro_month and business_month), its value kept
+                    if (!overwrite_meters && existing != null) {
+                        existing as Meter;
+                        if (existing.credit != ent.limit.credit) existing.credit = ent.limit.credit;
+                    }
                     if (overwrite_meters || existing == null) {
                         if (existing != null) drop(existing); // replaced below (it would stay in the document otherwise)
                         const met = new Meter {

@@ -32,6 +32,10 @@ Limitr TestLifecyclePolicy: {
             description: 'Seat'
             price: { amount: 20 }
         }
+        ai_plus: {
+            description: 'AI credit, on the plus plan'
+            price: { amount: 0.02 }
+        }
     }
 
     plans: {
@@ -72,6 +76,14 @@ Limitr TestLifecyclePolicy: {
                 // purchasable packs that individual tests retire from the plan
                 retired_pack_a: { credit: 'ai_credit', value: 500 }
                 retired_pack_b: { credit: 'ai_credit', value: 500 }
+            }
+        }
+        plus: {
+            label: 'Plus'
+            entitlements: {
+                ai: {
+                    limit: { credit: 'ai_plus', mode: 'soft', value: 0 }
+                }
             }
         }
         solo: {
@@ -256,6 +268,24 @@ Limitr TestLifecyclePolicy: {
         // explicit overwrite resets
         assert(self.set_customer_plan(id, 'team', true));
         assert_eq(self.value(id, 'ai'), 0);
+    }
+
+
+    #[test]
+    /**
+     * A meter kept across a plan change is on the new plan's credit (the same entitlement priced on another credit),
+     * with its value kept.
+     */
+    fn test_plan_change_meter_follows_credit() {
+        const id = 'lc_meter_credit';
+        self.create_customer(id, 'solo');
+        assert(self.allow(id, 'ai', 5, false));
+        assert_eq(self.customer(id).meters.get('ai').credit, 'ai_credit');
+        assert(self.set_customer_plan(id, 'plus'));
+        assert_eq(self.customer(id).meters.get('ai').credit, 'ai_plus');
+        assert_eq(self.value(id, 'ai'), 5);
+        assert(self.set_customer_plan(id, 'solo'));
+        assert_eq(self.customer(id).meters.get('ai').credit, 'ai_credit');
     }
 
 

@@ -76,7 +76,7 @@ caps come through refs only when the customers they lead to are loaded: without 
 team before the user, Ex. when restoring customers from your database; with Cloud, they're loaded with it.
 
 Note: `setCustomerPlan(id, plan, overwrite_meters = true)` resets meters by default in TypeScript; pass `false` to
-keep usage across the plan change. Included topup balances move to the new plan's included topups (`top_up` by
+keep usage across the plan change (kept meters move to the new plan's credit). Included topup balances move to the new plan's included topups (`top_up` by
 default: raised to the new amount, never lowered), and purchased ones stay.
 
 `reset_sch: 'period'` limits, topups, and caps reset with each customer's billing period. On Limitr Cloud the

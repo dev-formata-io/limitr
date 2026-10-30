@@ -4,6 +4,15 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.1
+
+### Fixed
+
+- **A meter kept across a plan change follows the new plan's credit.** `set_customer_plan` keeps a customer's meters
+  (without `overwrite_meters`), but a kept meter stayed on the old plan's credit when the new plan prices the same
+  entitlement on another one (Ex. a `subscription` on `pro_month`, then on `business_month`), so it was priced and
+  limited as the old plan. The meter now takes the new plan's credit, and keeps its value.
+
 ## 0.8.0
 
 ### Added
