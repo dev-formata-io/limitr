@@ -89,7 +89,7 @@ Limit: {
     #[schema(<LimitrValidation>.valid_reset_sch)]
     #[schema_optional]
     /// Calendar reset schedule. Mutually exclusive with reset_inc.
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D', or 'period'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'semiannual:M-D', 'quarterly:D', or 'period'
     /// (the customer's billing period: Customer.period_start and period_end, else the plan's calendar period).
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
@@ -143,7 +143,7 @@ Limit: {
         if ((!self.resets && self.reset_sch == null) || started == null) return null; // a schedule means it resets
         if (self.reset_sch != null) {
             // 'period': the customer's billing period start (`billing`, from the caller)
-            const period_start = self.reset_sch == 'period' ? billing : Time::start_of_period(now, self.reset_sch);
+            const period_start = self.reset_sch == 'period' ? billing : <Limitr>.reset_period_start(now, self.reset_sch);
             return period_start != null && started < period_start ? period_start : started;
         }
         const inc = self.reset_increment();

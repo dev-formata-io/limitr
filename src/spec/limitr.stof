@@ -71,6 +71,21 @@ Limitr: {
 
     #[static]
     /**
+     * The start of the reset period holding `now` (UTC) for a calendar schedule: Time::start_of_period's schedules,
+     * plus 'semiannual:M-D', twice a year on month M day D and six months later (Ex. 'semiannual:1-1' is Jan 1 and
+     * Jul 1; a day past a month's end is its last day). Null for a schedule it doesn't know.
+     */
+    fn reset_period_start(now: ms!, reset_sch: str) -> ms {
+        if (!reset_sch.starts_with('semiannual')) return Time::start_of_period(now, reset_sch);
+        const year = Time::start_of_period(now, reset_sch.replace('semiannual', 'yearly'));
+        if (year == null) return year;
+        const half = Time::add_months(year, 6);
+        now >= half ? half : year
+    }
+
+
+    #[static]
+    /**
      * The policy: the Limitr at root.policy, the one place a policy lives.
      * A policy parsed from JSON, YAML, or TOML has no type yet - this gives it one (the return type
      * casts it). SDKs call it once after loading or replacing a policy, then call the policy's
@@ -352,7 +367,7 @@ Limitr: {
             if (limit != null && (valid || limit.mode == 'soft' || force)) {
                 if (existing_meter == null) existing_meter = new Meter { started: Time::now() } on customer.meters;
                 const old_value = prior_value; // events report the value before this call (pre-reset on a reset)
-                const changed = new_value != old_value || call_overhead != 0; // overhead alone (Ex. a failed call that still cost) is a change
+                const changed = new_value != old_value || call_overhead != 0 || existing_meter_reset; // overhead alone (Ex. a failed call that still cost) is a change, and so is a reset (a new period's usage, even when it's the same number as the last's)
                 existing_meter.credit = limit.credit;
                 existing_meter.value = new_value;
                 existing_meter.overhead = overhead_total;
@@ -2968,6 +2983,7 @@ Limitr: {
         let next_ts = now;
         if (reset_sch.starts_with('weekly')) next_ts = Time::add_days(now, 7);
         else if (reset_sch.starts_with('yearly')) next_ts = Time::add_months(now, 12);
+        else if (reset_sch.starts_with('semiannual')) return <Limitr>.reset_period_start(<Limitr>.reset_period_start(now, reset_sch) + 190days, reset_sch);
         else if (reset_sch.starts_with('quarterly')) next_ts = Time::add_months(now, 3);
         else next_ts = Time::add_months(now, 1);
         // Note: for nth_weekday schedules, returns null if the Nth occurrence

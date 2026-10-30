@@ -13,6 +13,6 @@
   "license": "Apache-2.0",
   "keywords": ["limitr", "pricing", "usage-based-billing", "metering", "rate-limits", "credits", "feature-flags", "ai-costs", "typescript", "stof"],
   "icon": "./icon.png",
-  "documentationUrl": "https://limitr.dev/spec/welcome",
+  "documentationUrl": "https://limitr.dev/docs/introduction",
   "supportUrl": "https://github.com/dev-formata-io/limitr/issues"
 }

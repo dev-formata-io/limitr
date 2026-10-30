@@ -174,7 +174,8 @@ limit: {
 }
 ```
 
-Schedules: `monthly:N`, `monthly:last`, `weekly:mon`, `nth_weekday:N:mon`, `yearly:M-D`, `quarterly:D`, and
+Schedules: `monthly:N`, `monthly:last`, `weekly:mon`, `nth_weekday:N:mon`, `yearly:M-D`, `semiannual:M-D` (that day and six
+months later), `quarterly:D`, and
 `period`: each billing period, from the customer's `period_start` and `period_end` (Limitr Cloud keeps them with the
 ledger; without Cloud, `set_customer_period(id, start, end?)` from your subscription; no dates: the plan's calendar
 period). Use `period` when usage should reset with the bill, a calendar schedule when it should reset for everyone

@@ -41,6 +41,7 @@ Limitr TestBillingEventsPolicy: {
                 tiered_soft: { limit: { credit: 'tiered', mode: 'soft', value: 0 } }
                 unpriced: { limit: { credit: 'unpriced', mode: 'soft', value: 10 } }
                 org_flat: { limit: { credit: 'flat', mode: 'soft', value: 1000 } }
+                fee: { limit: { credit: 'flat', mode: 'soft', value: 0, reset_sch: 'period' } }
             }
         }
     }
@@ -84,6 +85,31 @@ Limitr TestBillingEventsPolicy: {
     fn last(id: str!) -> map {
         const list = self.seen.get(id);
         list != null ? list.back() : null
+    }
+
+
+    #[test]
+    /**
+     * A meter that resets and is metered back to the same value (Ex. a fee of 1 a period) still reports it: the
+     * new period's usage is a change, even when it's the same number as the last period's.
+     */
+    fn test_reset_to_the_same_value_is_reported() {
+        const id = 'bill_fee';
+        self.create_customer(id, 'p');
+        const now = Time::now();
+        assert(self.set_customer_period(id, now - 10days, now + 20days, false));
+        assert(self.allow(id, 'fee', 1));
+        assert_eq(self.last(id).get('type'), 'meter-overage');
+        const count = self.seen.get(id).len();
+        const meter: Meter = self.meter_obj(id, 'fee');
+        meter.started = now - 15days; // last period's
+        assert(self.allow(id, 'fee', 1));
+        assert_eq(self.value(id, 'fee'), 1);
+        assert(self.seen.get(id).len() > count);
+        const e = self.last(id);
+        assert_eq(e.get('type'), 'meter-overage');
+        assert_eq(e.get('overage'), 1);
+        assert_eq(e.get('price_diff'), 1);
     }
 
 

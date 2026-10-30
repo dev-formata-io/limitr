@@ -118,14 +118,14 @@ LimitrValidation: {
     #[static]
     /**
      * Valid reset schedule (`reset_sch`): 'period' (the customer's billing period) or a calendar schedule starting
-     * with monthly, weekly, nth_weekday, yearly, or quarterly.
+     * with monthly, weekly, nth_weekday, yearly, semiannual, or quarterly.
      */
     fn valid_reset_sch(target: obj, target_val: str) -> bool {
         if (target_val == 'period') return true;
-        for (const kind in ['monthly', 'weekly', 'nth_weekday', 'yearly', 'quarterly']) {
+        for (const kind in ['monthly', 'weekly', 'nth_weekday', 'yearly', 'semiannual', 'quarterly']) {
             if (target_val.starts_with(kind)) return true;
         }
-        self.error(`Invalid reset schedule '${target_val}' - must be 'period' or start with monthly, weekly, nth_weekday, yearly, or quarterly`)
+        self.error(`Invalid reset schedule '${target_val}' - must be 'period' or start with monthly, weekly, nth_weekday, yearly, semiannual, or quarterly`)
     }
 
 

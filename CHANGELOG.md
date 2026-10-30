@@ -29,6 +29,10 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 - **Validation:** a rule can't invent entitlements (a give or take needs a plan that defines it, and a named plan
   must define it), its limits and caps are checked like a customer's, its credits must exist, it can't carry dates
   (`expires_on`, `override_expires_on`), and its name can't contain a colon.
+- **A semi-annual reset schedule:** `reset_sch: 'semiannual:M-D'` resets twice a year, on month M day D and six
+  months later (Ex. `'semiannual:1-1'` is Jan 1 and Jul 1; a day past a month's end is its last day), for limits,
+  credit packs, grants, and caps. `Limitr.reset_period_start(now, reset_sch)` gives any schedule's current period
+  start. Limitr Cloud bills contract fees on it (a fee invoiced twice a year).
 
 ### Changed
 
@@ -37,6 +41,22 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 - Cap IDs starting with `rule:` are reserved for rule caps: a customer cap with such an ID that no rule of the
   customer's defines is removed the next time the customer's caps are checked. Policies can't use `rules` at the top
   of `policy` for anything else.
+
+### Fixed
+
+- **A meter that resets and is metered back to the same value reports it.** A call that starts a new period (a reset)
+  and leaves the meter at the value it had last period (Ex. a fee of 1 a period, or a subscription incremented by 1
+  each cycle) sent no `meter-overage`, `meter-changed`, or `meter-reset`, because it compared against last period's
+  value. A reset is always a change now, so hosts and Limitr Cloud see each period's usage.
+- **A customer Limitr Cloud sends no longer sets back meters this engine changed since** (TypeScript SDK). Cloud reads
+  a customer when it sends it; a call metered after that read used to be lost from this engine's meter until Cloud
+  sent the customer again. The SDK now has an instance ID (in `hello`) and numbers each message that changes a meter
+  (`seq`); Cloud says with each customer the last one it has (`cloud_seq`), and the SDK adds back the rest before
+  loading it. Needs a Cloud server with `meter-seq`; with an older server, nothing changes.
+- **A customer loaded from Limitr Cloud comes with the customers its refs lead to** (TypeScript SDK). An app that
+  asked Cloud for a user got only the user, so a user on its org's plan was on the default plan (and without the
+  org's gives, rules, and shared caps) until the app loaded the org itself. The SDK now loads a customer's refs with
+  it, at any depth (up to 64), when they change, and before `ensureCustomer` creates a customer with refs.
 
 ## 0.7.5
 

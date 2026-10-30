@@ -139,7 +139,7 @@ customer's own changes have. No customers or dates of its own: whoever assigns i
 | `ewma_alpha` | float | 0.2 | Smoothing for the rate trend (0 to 1). |
 
 Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon` (Ex. second Tuesday),
-`yearly:M-D`, `quarterly:D`.
+`yearly:M-D`, `semiannual:M-D` (twice a year: Ex. `semiannual:1-1` is Jan 1 and Jul 1), `quarterly:D`.
 
 ## Topup
 

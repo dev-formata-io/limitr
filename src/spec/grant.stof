@@ -52,7 +52,7 @@ Grant: {
     ms reset_inc: 30days;
 
     /// Calendar reset schedule (mutually exclusive with reset_inc).
-    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'quarterly:D', or 'period'
+    /// Formats: 'monthly:N', 'monthly:last', 'weekly:mon', 'nth_weekday:N:mon', 'yearly:M-D', 'semiannual:M-D', 'quarterly:D', or 'period'
     /// (the customer's billing period: Customer.period_start and period_end, else the plan's calendar period).
     /// All schedules use UTC. When set, reset_inc is ignored.
     str reset_sch: null;
@@ -92,7 +92,7 @@ Grant: {
         self.reset_inc = top.reset_inc;
         self.reset_sch = top.reset_sch;
         // this period is the first ('period': from now, so the next billing period resets it)
-        if (self.reset_sch != null && self.last_reset == null) self.last_reset = self.reset_sch == 'period' ? Time::now() : Time::start_of_period(Time::now(), self.reset_sch);
+        if (self.reset_sch != null && self.last_reset == null) self.last_reset = self.reset_sch == 'period' ? Time::now() : <Limitr>.reset_period_start(Time::now(), self.reset_sch);
         self.expires_on = top.expires_after != null ? self.created_on + top.expires_after : null;
         self.reset_mode = top.reset_mode;
         self.rollover_min = top.rollover_min;
@@ -126,7 +126,7 @@ Grant: {
         if (!self.resets && self.reset_sch == null) return true;
         if (self.reset_sch != null) {
             // Calendar-based reset: fire once when a new period has started
-            const period_start = self.reset_sch == 'period' ? billing : Time::start_of_period(now, self.reset_sch);
+            const period_start = self.reset_sch == 'period' ? billing : <Limitr>.reset_period_start(now, self.reset_sch);
             if (period_start != null && (self.last_reset == null || self.last_reset < period_start)) {
                 self.last_reset = period_start;
                 self.reset_period(units);

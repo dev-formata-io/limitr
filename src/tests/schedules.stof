@@ -32,6 +32,7 @@ Limitr TestSchedulesPolicy: {
             entitlements: {
                 // a schedule without resets: true
                 monthly: { limit: { credit: 'tok', mode: 'hard', value: 100, reset_sch: 'monthly:1' } }
+                halves: { limit: { credit: 'tok', mode: 'hard', value: 100, reset_sch: 'semiannual:1-1' } }
                 grant_backed: { limit: { credit: 'tok', mode: 'hard', value: 0 } }
                 plain: { limit: { credit: 'tok', mode: 'hard', value: 100 } }
             }
@@ -110,5 +111,45 @@ Limitr TestSchedulesPolicy: {
         assert(policy.valid());
         assert(policy.plans.p.entitlements.a.limit.resets);
         assert(policy.plans.p.topups.t.resets);
+    }
+
+
+    #[test]
+    fn test_semiannual_period_start() {
+        const at = (day: str): ms => Time::from_rfc3339(day + 'T12:00:00Z');
+        const start = (day: str): ms => Time::from_rfc3339(day + 'T00:00:00Z');
+        // Jan 1 and Jul 1
+        assert_eq(<Limitr>.reset_period_start(at('2027-03-15'), 'semiannual:1-1'), start('2027-01-01'));
+        assert_eq(<Limitr>.reset_period_start(at('2027-07-01'), 'semiannual:1-1'), start('2027-07-01'));
+        assert_eq(<Limitr>.reset_period_start(at('2027-12-31'), 'semiannual:1-1'), start('2027-07-01'));
+        // a term starting Jul 1: Jul 1 and Jan 1 of the next year
+        assert_eq(<Limitr>.reset_period_start(at('2027-03-15'), 'semiannual:7-1'), start('2027-01-01'));
+        assert_eq(<Limitr>.reset_period_start(at('2027-09-15'), 'semiannual:7-1'), start('2027-07-01'));
+        // Aug 31 and the end of February
+        assert_eq(<Limitr>.reset_period_start(at('2027-03-15'), 'semiannual:8-31'), start('2027-02-28'));
+        // the other schedules are Time::start_of_period's
+        assert_eq(<Limitr>.reset_period_start(at('2027-03-15'), 'quarterly:1'), start('2027-01-01'));
+        // the next reset is the next half
+        assert_eq(self.next_period_start(at('2027-03-15'), 'semiannual:1-1'), start('2027-07-01'));
+        assert_eq(self.next_period_start(at('2027-09-15'), 'semiannual:1-1'), start('2028-01-01'));
+    }
+
+
+    #[test]
+    fn test_semiannual_limit_resets() {
+        const id = 'sch_halves';
+        self.create_customer(id, 'scheduled');
+        assert(self.allow(id, 'halves', 90, false));
+        assert_not(self.check(id, 'halves', 20));
+        const next = self.resets(id, 'halves');
+        assert(next != null && next > Time::now() && next <= Time::now() + 185days);
+
+        const meter: Meter = self.meter_obj(id, 'halves');
+        meter.started = Time::now() - 200days; // the half before
+        assert(self.allow(id, 'halves', 20, false));
+        assert_eq(self.value(id, 'halves'), 20);
+
+        // it validates
+        assert(<LimitrValidation>.valid_reset_sch(new {}, 'semiannual:1-1'));
     }
 }

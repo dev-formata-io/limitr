@@ -24,7 +24,7 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.10.7 or later for Limitr 0.7.4). Import only from `@formata/limitr`.
+The package depends on `@formata/stof` (0.10.8 or later for Limitr 0.8). Import only from `@formata/limitr`.
 It ships this skill, the limitr skill, and the stof skill (the Stof language) in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
 
@@ -71,7 +71,9 @@ await limitr.customer(userId);                                                //
 
 Arguments are `(id, plan = '', type = 'user', label = 'User', refs = null, alts = null, metadata = null)`. An empty
 plan inherits from refs, then the policy's default plan. Use refs for user to team to org, and alts for other IDs
-(auth subject, Stripe customer) that should resolve to the same customer.
+(auth subject, Stripe customer) that should resolve to the same customer. A customer's plan, gives, rules, and shared
+caps come through refs only when the customers they lead to are loaded: without Cloud, load (or ensure) the org and
+team before the user, Ex. when restoring customers from your database; with Cloud, they're loaded with it.
 
 Note: `setCustomerPlan(id, plan, overwrite_meters = true)` resets meters by default in TypeScript; pass `false` to
 keep usage across the plan change. Included topup balances move to the new plan's included topups (`top_up` by
@@ -309,8 +311,9 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   sends each right away).
 - A Cloud policy can reach any host over HTTP by default (`httpHosts: true`), so capabilities can call the services
   they list. Pass a list to allow only those hosts (Ex. `['api.limitr.dev', 'api.example.com']`), or `false` for none.
-- A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), and `ensureCustomer`
-  creates it only when Cloud doesn't have it. `addVoucher(code)` redeems a Limitr voucher as a customer.
+- A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), with the customers its refs
+  lead to (its team and org, any depth), and `ensureCustomer` creates it only when Cloud doesn't have it (loading its
+  refs from Cloud first, so a new user is on its org's plan). `addVoucher(code)` redeems a Limitr voucher as a customer.
 - Call `await limitr.close()` on shutdown to flush pending updates.
 
 ## Common mistakes

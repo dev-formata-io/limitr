@@ -76,7 +76,7 @@ after a second: true
 - **Rolling periods.** `resets: true` with `reset_inc` starts a new period that long after the last one began (`1s`,
   `1hr`, `1day`, `30days`). It's 30 days if you don't say.
 - **Calendar periods.** `reset_sch` lines periods up with the calendar, in UTC: `'monthly:1'` (the 1st of each month),
-  `'monthly:last'`, `'weekly:mon'`, `'yearly:1-1'`, `'quarterly:1'`.
+  `'monthly:last'`, `'weekly:mon'`, `'yearly:1-1'`, `'semiannual:1-1'` (Jan 1 and Jul 1), `'quarterly:1'`.
 - `resets(customer, entitlement)` returns when the current period ends, in milliseconds.
 - A limit with no `resets` (storage here) never resets. It's a running total, and usage can go back down with a
   negative value or `decrement`.

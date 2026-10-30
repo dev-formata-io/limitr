@@ -32,7 +32,31 @@ export const LIMITR_SDK_VERSION = '0.8.0';
  * What this SDK can take from Limitr Cloud, sent in hello.
  * 'policy-source': Cloud sends the policy only, and this SDK keeps the engine it ships with.
  */
-const CLOUD_ACCEPTS = ['policy-source'];
+const CLOUD_ACCEPTS = ['policy-source', 'meter-seq'];
+
+/** How long a meter message Cloud hasn't confirmed is added back onto a customer it sends (then Cloud's copy wins). */
+const METER_PENDING_MS = 5 * 60 * 1000;
+/** The most customers a customer's refs load from Cloud with it (its teams and orgs, at any depth). */
+const MAX_CLOUD_REFS = 64;
+
+/**
+ * A random ID (32 hex characters), for telling instances and requests apart (never for security). Uses
+ * `crypto.randomUUID` where there is one; it's missing in a browser page served over plain HTTP (not a secure
+ * context) and in Node before 19 without a flag, so then `crypto.getRandomValues`, then Math.random.
+ */
+function randomId(): string {
+    const c = (globalThis as { crypto?: Crypto }).crypto;
+    try {
+        if (typeof c?.randomUUID === 'function') return c.randomUUID().replace(/-/g, '');
+    } catch { /* not a secure context */ }
+    const bytes = new Uint8Array(16);
+    if (typeof c?.getRandomValues === 'function') c.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** A meter change this instance sent Cloud that a customer Cloud sends may not have yet (see rebaseCloudCustomer). */
+interface PendingMeter { seq: number; entitlement: string; diff: number; overhead: number; started?: number; at: number }
 
 
 /**
@@ -110,6 +134,10 @@ export class Limitr {
 
     /** Batching window for Cloud messages (see LimitrCloudInit.batchMs). */
     protected cloudBatchMs: number = 250;
+    /** This instance, to Cloud: its numbered meter messages are confirmed per instance (Cloud 'meter-seq'). */
+    readonly cloudInstance: string = randomId();
+    private _meterSeq = 0;
+    private _meterPending: Map<string, PendingMeter[]> = new Map();
 
     /** Hosts a Cloud policy can reach over HTTP (see LimitrCloudInit.httpHosts). */
     protected cloudHttpHosts: string[] | boolean = true;
@@ -501,6 +529,10 @@ export class Limitr {
                 }
             }
         }
+        // a new customer's plan comes from its refs when it has none: load them from Cloud first
+        if (refs?.length && this.ws?.readyState === WebSocket.OPEN) {
+            for (const ref of refs) if (ref && ref !== id) await this.addCloudCustomer(ref);
+        }
         let meta: string | null = null;
         if (typeof metadata === 'string') meta = metadata;
         else if (metadata) meta = JSON.stringify(metadata);
@@ -707,7 +739,7 @@ export class Limitr {
     private _topupRequests: Map<string, (ok: boolean) => void> = new Map();
 
     private async purchaseCloudTopup(id: string, topup: string, timeoutMs: number = 30000): Promise<boolean> {
-        const request = globalThis.crypto.randomUUID();
+        const request = randomId();
         const result = new Promise<boolean>((resolve) => {
             const timer = setTimeout(() => {
                 this._topupRequests.delete(request);
@@ -1374,7 +1406,7 @@ export class Limitr {
                 // A new connection starts with no subscriptions on the Cloud side: say who we are, which customers
                 // this engine holds, and catch up on policy changes published while we were away.
                 const customers = Object.keys(await limitr.customers() ?? {});
-                ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, customers, accepts: CLOUD_ACCEPTS }));
+                ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, customers, accepts: CLOUD_ACCEPTS, instance: limitr.cloudInstance }));
                 ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
             }
         };
@@ -1383,7 +1415,7 @@ export class Limitr {
         limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
         await waitOpen;
 
-        limitr.ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, accepts: CLOUD_ACCEPTS }));
+        limitr.ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, accepts: CLOUD_ACCEPTS, instance: limitr.cloudInstance }));
         limitr.ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
         await awaitInit();
         if (validate) {
@@ -1450,6 +1482,7 @@ export class Limitr {
             const poll = async () => {
                 if (await this.gate.run(() => this.doc.sync_call('policy.customer', id))) {
                     await this.ensureCustomerIncludedTopups(id, false);
+                    if (!voucher && !this._noRefs.has(id)) await this.addCloudRefs(id);
                     resolve(true);
                     return;
                 }
@@ -1466,6 +1499,30 @@ export class Limitr {
             };
             poll();
         });
+    }
+
+
+    /**
+     * Load the customers a customer's refs lead to from Cloud, at any depth (Ex. a user's team and org), so what
+     * comes through refs applies to it: the plan it's on, its org's gives, takes, and rules, and shared caps.
+     * Already loaded refs are walked, not fetched again.
+     */
+    private async addCloudRefs(id: string, seen: Set<string> = new Set([id])): Promise<void> {
+        const refs = await this.gate.run(() => this.doc.sync_call('policy.customer_refs', id)) as string[] | null;
+        for (const ref of refs ?? []) {
+            if (typeof ref !== 'string' || !ref || seen.has(ref) || seen.size >= MAX_CLOUD_REFS) continue;
+            seen.add(ref);
+            const loaded = await this.gate.run(() => this.doc.sync_call('policy.customer', ref));
+            if (!loaded && !await this.addCloudCustomerOnly(ref)) continue;
+            await this.addCloudRefs(ref, seen);
+        }
+    }
+
+
+    /** addCloudCustomer without its refs (addCloudRefs walks them itself). */
+    private async addCloudCustomerOnly(id: string): Promise<boolean> {
+        this._noRefs.add(id);
+        try { return await this.addCloudCustomer(id); } finally { this._noRefs.delete(id); }
     }
 
 
@@ -1552,6 +1609,7 @@ export class Limitr {
     private _batch: string[] = [];
     private _batchTimer?: ReturnType<typeof setTimeout>;
     async wsSend(data: string) {
+        if (this.cloudFeatures.has('meter-seq')) data = this.numberMeterMessage(data);
         if (this.cloudBatchMs > 0 && this.cloudFeatures.has('batch')) {
             this._batch.push(data);
             if (!this._batchTimer) {
@@ -1563,6 +1621,64 @@ export class Limitr {
             return;
         }
         await this.wsSendNow(data);
+    }
+
+
+    /**
+     * Number a message that changes a meter (a set-customer with usage, or a meter-overage) and keep its change until
+     * Cloud confirms it has it: a customer Cloud sends carries `cloud_seq`, the last of this instance's messages
+     * already in its meters, and the rest are added back onto it (rebaseCloudCustomer), so a copy Cloud read before
+     * these arrived can't set this engine's meters back.
+     */
+    private numberMeterMessage(data: string): string {
+        if (!data.startsWith('{"type":"set-customer"') && !data.startsWith('{"type":"meter-overage"')) return data;
+        let m: any;
+        try { m = JSON.parse(data); } catch { return data; }
+        const id = m?.customer?.id;
+        const usage = m.type === 'set-customer' ? m.usage : m;
+        const entitlement = m.type === 'set-customer' ? usage?.resource : m.resource;
+        if (typeof id !== 'string' || !usage || typeof entitlement !== 'string') return data;
+        const diff = Number(m.type === 'set-customer' ? usage.diff : (m.diff ?? m.overage)) || 0;
+        const overhead = Math.max(0, Number(usage.overhead_diff) || 0);
+        if (diff === 0 && overhead === 0) return data;
+        const seq = ++this._meterSeq;
+        const started = Number(m.customer?.meters?.[entitlement]?.started);
+        const list = this._meterPending.get(id) ?? [];
+        list.push({ seq, entitlement, diff, overhead, ...(Number.isFinite(started) ? { started } : {}), at: Date.now() });
+        if (list.length > 5000) list.splice(0, list.length - 5000);
+        this._meterPending.set(id, list);
+        return `{"seq":${seq},` + data.slice(1);
+    }
+
+
+    /**
+     * A customer from Cloud, with this instance's meter changes it doesn't have yet added back (see
+     * numberMeterMessage). Changes from an older period than Cloud's meter are over; one from a newer period (a reset
+     * here Cloud hasn't seen) starts the meter over first. A server without 'meter-seq' sends no cloud_seq: as is.
+     */
+    private rebaseCloudCustomer(record: any): string | undefined {
+        if (typeof record?.cloud_seq !== 'number') return undefined;
+        const acked = record.cloud_seq;
+        delete record.cloud_seq;
+        const now = Date.now();
+        const pending = (this._meterPending.get(record.id) ?? []).filter(p => p.seq > acked && now - p.at < METER_PENDING_MS);
+        if (pending.length) this._meterPending.set(record.id, pending); else this._meterPending.delete(record.id);
+        if (pending.length && record.meters && typeof record.meters === 'object') {
+            for (const p of pending) {
+                let meter = record.meters[p.entitlement];
+                if (!meter) meter = record.meters[p.entitlement] = { started: p.started ?? now, value: 0, overhead: 0 };
+                const started = typeof meter.started === 'number' ? meter.started : undefined;
+                if (p.started !== undefined && started !== undefined && p.started < started) continue; // an older period's
+                if (p.started !== undefined && started !== undefined && p.started > started) {
+                    meter.started = p.started;
+                    meter.value = 0;
+                    meter.overhead = 0;
+                }
+                meter.value = (Number(meter.value) || 0) + p.diff;
+                meter.overhead = (Number(meter.overhead) || 0) + p.overhead;
+            }
+        }
+        return JSON.stringify(record);
     }
 
 
@@ -1670,6 +1786,7 @@ export class Limitr {
 
             for (const customer of Array.isArray(record.customers) ? record.customers : []) {
                 if (typeof customer?.id !== 'string' || doc.get(`policy.customers.${customer.id}`) != null) continue;
+                delete customer.cloud_seq; // a customer this engine doesn't have yet: nothing of its to add back
                 await doc.call('policy.update_customer_internals', JSON.stringify(customer), 'json');
                 added.push(customer.id);
             }
@@ -1685,6 +1802,8 @@ export class Limitr {
      * Cloud message received.
      */
     private _deniedCloudCustomers: Set<string> = new Set();
+    /** Customers being fetched from Cloud without their refs (addCloudRefs walks those). */
+    private _noRefs: Set<string> = new Set();
     //deno-lint-ignore no-explicit-any
     protected async cloudMessageReceived(message: MessageEvent<any>) {
         const data = message.data;
@@ -1715,8 +1834,11 @@ export class Limitr {
                 } else if (record.type === 'customer-invoices' && !!record.data.invoices && !!record.id) {
                     await this.gate.run(() => this.doc.call('policy.update_customer_invoices', data, 'json'));
                 } else if (!!record.type && !!record.id) {
-                    await this.gate.run(() => this.doc.call('policy.update_customer_internals', data, 'json'));
+                    // in the gate: no call can meter (and number) a change between the rebase and the update
+                    await this.gate.run(() => this.doc.call('policy.update_customer_internals', this.rebaseCloudCustomer(record) ?? data, 'json'));
                     await this.ensureCustomerIncludedTopups(record.id, false);
+                    // refs that changed in Cloud (Ex. a user moved to another org): load the new ones
+                    if (Array.isArray(record.refs) && record.refs.length && this.ws?.readyState === WebSocket.OPEN) void this.addCloudRefs(record.id).catch(() => {});
                 }
             } catch {
                 // nada..
