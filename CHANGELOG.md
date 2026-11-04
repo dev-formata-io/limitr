@@ -4,6 +4,23 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.2
+
+### Changed
+
+- **Stof 0.10.9** (`@formata/stof ^0.10.9`). For the engine, that means:
+  - **Memory stays flat.** Every `allow()` left about 14 KB in memory for the life of the engine, because Stof kept
+    each object a call created and dropped. A long-running engine (Ex. a `Limitr.cloud` instance in a server) now
+    stays flat however many calls it checks.
+  - **Errors from policy functions say what went wrong.** When an entitlement's `enabled` rule or a credit's
+    `overhead` function fails, the engine logs the error's message (Ex. "cannot multiply null: the right value is
+    null or missing"), where it logged only an error code. The entitlement is still off, and the call still falls back
+    to `overhead_cost`.
+  - Policies can use what's new in Stof: messages on asserts (`assert_eq(total, 42, 'total after refunds')`), the
+    message of a caught error (`catch (e, message)`), and `Infinity` and `NaN`. The Stof skill in the package covers
+    them.
+- The skills say which version they describe (0.8.2) and the Stof version Limitr needs (0.10.9 or later).
+
 ## 0.8.1
 
 ### Fixed

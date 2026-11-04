@@ -281,8 +281,9 @@ Credit: {
                 spent += (next - cur) * slope;
             } else if (next == null) {
                 // unlimited units for a fixed fee (stairstep top band, or a free last tier)
-                // Finite on purpose: inf panics Stof's JSON export (events, customer-set), see UNBOUNDED_QUANTITY.
-                // TODO(stof runtime): make JSON export of inf/NaN safe, then revisit using real infinity.
+                // Finite on purpose, see UNBOUNDED_QUANTITY. Stof 0.10.9 can export Infinity (JSON writes the string
+                // "Infinity" and reads it back), but events and customer state also go to Limitr Cloud and other
+                // JSON consumers, which would see a string where they expect a number.
                 return <Credit>.UNBOUNDED_QUANTITY;
             }
             cur = next;

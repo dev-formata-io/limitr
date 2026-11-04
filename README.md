@@ -15,14 +15,15 @@
 </h1>
 
 <p align="center">
-    <b>Usage-based billing, limits, and feature flags that run inside your app, and belong to you like the rest of your code.</b>
+    <b>Usage, priced and enforced at runtime.</b>
     <br>
-    One policy decides what every customer can use, what it costs you, and what you charge, checked in-process on every call.
+    Limitr prices, limits, and meters every unit of usage inside your app, and your team changes it live, for every plan, contract, and customer. The engine is open source and yours, like the rest of your code.
 </p>
 
 Limitr is an open-source engine for usage-based pricing. It meters usage (API calls, AI tokens, seats, storage,
-anything you count), enforces plans and limits, prices every call, and tells your code what to bill. It runs in your
-process, in Node, Bun, Deno, or the browser, with no service to run and no network call in the middle of a request.
+anything you count), enforces plans and limits, prices every call, and tells your code what to bill. It's a library,
+not a service: it runs in your process, in Node, Bun, Deno, or the browser, so there's nothing to deploy or self-host
+and no network call in the middle of a request.
 
 ## Quick start
 
@@ -66,21 +67,24 @@ That's a plan with a monthly AI token allowance, overage billed past it, and mar
 [tutorial](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial) builds on it in 15 short,
 runnable chapters.
 
-## Why it's different
+## Billing you own, not billing that owns you
 
-Pricing is part of your product. Every business has its own units, costs, and deals, and a billing service outside
-your app can only bend so far. That's why so many teams end up building it themselves.
+Pricing never sits still. Costs, usage, and deals change every month, and every change lands on your code and the
+customers you already have. Most billing platforms are fast to start, and put your pricing in their system: usage is
+sent to a vendor, counted on their servers, one event at a time, after it happens. Building it yourself keeps control,
+and costs engineering time on every plan and every deal.
 
-Limitr gives you that control without the build. The engine is yours, like your code:
+Limitr is the control without the build. The engine is yours, like your code:
 
-- **Inside your app.** Every check runs in your process, with no network call.
+- **Inside your app.** Every check runs in your process, before the work runs, with no network call.
+- **Priced across the task, not one call at a time.** One task is dozens of calls across models, tools, and vendors.
+  The engine sees every one with the customer, their plan, and what the task has cost so far, so it prices and limits
+  the whole task as it runs.
 - **Shaped to your business.** Plans, prices, costs, limits, and every customer's deal in one policy document.
 - **Extends like code.** Your own pricing functions, feature conditions, rules, and tools run in the policy, written
   in [Stof](https://stof.dev).
-- **Margin on every call.** Every call is checked before the work runs, and priced at what you charge and what it
-  costs you.
-
-With Limitr Cloud or without it, it's the same engine, and it's still yours.
+- **Margin on every call,** priced at what you charge and what it costs you.
+- **Never a share of your revenue,** and yours if you leave: with Limitr Cloud or without it, it's the same engine.
 
 ## What you can build with it
 
@@ -98,12 +102,13 @@ With Limitr Cloud or without it, it's the same engine, and it's still yours.
 - **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.
 - **Billing events:** overage, limits hit, and thresholds crossed, sent to your code as they happen.
 
-## A deal without a new plan
+## Every deal, enforced as written
 
 A customer signs for more than their plan: 250,000 API calls a month, SSO, audit logs from your Business plan, and no
-exports. Write the deal once as a rule, and give it to every customer that signs it:
+exports. Write the deal once as a rule, and give it to every customer that signs it. Their terms apply on their next
+call, with no new plan and no engineering ticket:
 
-```stof
+```typescript
 rules: {
     acme_2027: {
         label: 'Acme 2027'
@@ -131,10 +136,11 @@ in). Point your coding agent at them and it can write, review, and debug policie
 of guessing. The Limitr skills are also packaged as zips in
 [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for uploading to an agent.
 
-## On your own, or with Limitr Cloud
+## Self-hosting: on your own, or with Limitr Cloud
 
-The engine is the whole product in your process, open source (Apache 2.0), and free. The same policy and the same
-calls work either way, so you can start on one and move to the other.
+There is no Limitr server to deploy. The engine is the npm package, running inside your app wherever your app runs,
+open source (Apache 2.0) and free. "Self-hosting" Limitr is `npm i @formata/limitr` and a policy in your repo. The
+same policy and the same calls work with or without Limitr Cloud, so you can start on one and move to the other.
 
 **On your own** (`Limitr.new(policy)`), you own the parts around the engine:
 
@@ -161,8 +167,8 @@ still runs in your process:
 - **Contracts:** rules on a schedule, with ramps, fees, commitments, and recognition.
 - **Analytics:** usage, cost, and margin by customer, account, feature, model, or task.
 
-Limitr Cloud has a free plan: [start free](https://cloud.limitr.dev/?signup) and have the Analyst write your first
-policy.
+Limitr Cloud has a free plan, and never takes a share of what you bill: [start free](https://cloud.limitr.dev/?signup)
+and have the Analyst write your first policy.
 
 ## Learn more
 

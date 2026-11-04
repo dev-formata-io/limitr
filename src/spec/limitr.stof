@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.8.1;
+    ver version: 0.8.2;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -3013,8 +3013,8 @@ Limitr: {
         try {
             const cost = credit.overhead(units, context);
             if (cost != null) return (cost as float).remove_units();
-        } catch (e: str) {
-            err(`Limitr: overhead() for credit '${Obj::name(credit)}' failed, using overhead_cost: ${e}`);
+        } catch (e, message: str) {
+            err(`Limitr: overhead() for credit '${Obj::name(credit)}' failed, using overhead_cost: ${message}`);
         }
         (units * (credit.overhead_cost ?? 0)).remove_units()
     }

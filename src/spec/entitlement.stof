@@ -237,8 +237,8 @@ Entitlement: {
         if (typeof rule == 'fn') {
             try {
                 return rule(customer, entitlement, context) == true;
-            } catch (e: str) {
-                err(`Limitr: enabled() for '${entitlement}' failed, so it is off: ${e}`);
+            } catch (e, message: str) {
+                err(`Limitr: enabled() for '${entitlement}' failed, so it is off: ${message}`);
                 return false;
             }
         }

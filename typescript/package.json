@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",
@@ -36,7 +36,7 @@
         "url": "https://github.com/dev-formata-io/limitr/issues"
     },
     "dependencies": {
-        "@formata/stof": "^0.10.8"
+        "@formata/stof": "^0.10.9"
     },
     "devDependencies": {
         "cpy-cli": "^7.0.0",
