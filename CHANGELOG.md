@@ -4,6 +4,32 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.3
+
+### Security
+
+- **The engine is sealed.** The TypeScript SDK seals the engine's types (`LimitrTypes`) right after loading them,
+  with Stof 0.10.10's sealing. A policy, a Cloud function, or anything else parsed into the document later can't
+  change, remove, or replace the engine's functions, or declare a type with an engine type's name (Ex.
+  `#[type] Limitr`); it fails with a "sealed" error and the engine is unchanged. Fields still change as the engine
+  runs, and policies customize behavior the same ways as before: functions on their own typed objects (Ex. a
+  credit's `overhead`), their own types (including subtypes that override engine functions, Ex. `Limitr MyLimitr`),
+  and `#[init]` functions. The engine Limitr Cloud sends on first connect is sealed the same way.
+- **Cloud policies stay off your private network.** `httpHosts: true` (the default) now means any public host:
+  `localhost`, private network addresses, and the cloud metadata service are refused unless you list them in
+  `httpHosts`. (`limitr.doc.allowHttp()` on a `Limitr.new` engine works the same way.)
+
+### Changed
+
+- **Stof 0.10.11** (`@formata/stof ^0.10.11`), for sealing. It also brings a memory limit on every policy call (256
+  MB of growth, `limitr.doc.setMaxMemory(bytes)` to change it), private network addresses blocked for `Http`, and
+  stricter HTML export.
+- The skills say which version they describe (0.8.3) and the Stof version Limitr needs (0.10.11 or later).
+- **The stof skill comes from Stof.** `@formata/stof` now ships its skill (`node_modules/@formata/stof/skill/stof`),
+  so this package no longer copies it into `skill/stof`; it ships the `limitr` and `limitr-ts` skills. The skills
+  say where to find it. `npm run plugin` (part of `prepublishOnly`) refreshes the Claude plugin's skills from
+  `skill/limitr`, `typescript/skill/limitr-ts`, and the installed Stof package.
+
 ## 0.8.2
 
 ### Changed

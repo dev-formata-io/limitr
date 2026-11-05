@@ -32,10 +32,16 @@ This file is the working guide. Details are in `references/`:
 
 ## Layers
 
-- **stof skill:** the language. Syntax, types, units, libraries, `using`, tests.
+- **stof skill:** the language. Syntax, types, units, libraries, `using`, tests. It ships with Stof: in JavaScript,
+  `node_modules/@formata/stof/skill/stof/` (next to this skill in `node_modules/@formata/limitr/skill/`).
 - **limitr skill (this one):** the policy and engine semantics, the same in every SDK.
 - **SDK skills (Ex. limitr-ts):** installing, constructing the engine, calling it from application code, handling
   events, and Limitr Cloud. The SDKs are thin wrappers that call `root.policy`'s functions in the embedded document.
+- **The engine is sealed.** The SDKs seal the engine's types (`LimitrTypes`: `<Limitr>`, `<Credit>`, `<Entitlement>`
+  ...) when they load it, so nothing parsed or run later can change, remove, or replace the engine's functions, or
+  declare another type with an engine type's name. Fields still change as the engine runs. A policy customizes
+  behavior with functions on its own objects (Ex. a credit's `overhead`), and with its own types, including subtypes
+  that override engine functions (`Limitr MyLimitr: {...}`, see `references/policy.md`).
 
 ## Mental model
 
@@ -468,3 +474,6 @@ compiled spec with `stof run project.stof` (writes `typescript/limitr.ts`), and 
     add it.
 12. **Random rollouts.** A random number per call flips a feature between calls; use `customer.bucket(key)`.
 13. **Tracking every entitlement.** `track: true` sends an event per check; track what you're measuring.
+14. **Redefining an engine type.** `#[type] Credit: {...}` or adding a function to `<Limitr>` fails: the engine is
+    sealed. Put the function on the policy's object (`Credit tokens: { fn overhead(...) {...} }`) or in a subtype
+    of your own (`Limitr MyLimitr: { fn allow(...) {...} }`).

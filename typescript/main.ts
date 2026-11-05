@@ -25,7 +25,7 @@ export * from './types.js';
  * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
  * (or refuse clearly). Matches the package version.
  */
-export const LIMITR_SDK_VERSION = '0.8.2';
+export const LIMITR_SDK_VERSION = '0.8.3';
 
 
 /**
@@ -85,8 +85,9 @@ export interface LimitrCloudInit {
     validate?: boolean;
 
     /**
-     * Hosts the policy can reach over HTTP. Any host by default (true), so capabilities can call the services they
-     * list. Pass a list to allow only those hosts (Ex. ['api.limitr.dev', 'api.example.com']), or false for none.
+     * Hosts the policy can reach over HTTP. Any public host by default (true), so capabilities can call the services
+     * they list: localhost and private network addresses are refused unless listed. Pass a list to allow only those
+     * hosts (Ex. ['api.limitr.dev', 'api.example.com']), or false for none.
      * Limitr.new() policies have no network access unless you call limitr.doc.allowHttp(...).
      */
     httpHosts?: string[] | boolean;
@@ -159,9 +160,20 @@ export class Limitr {
         }
         this.doc = new StofDoc();
         this.doc.parse(limitrEngine, 'bstf'); // the compiled engine (src/spec)
+        Limitr.sealEngine(this.doc);
         this.doc.parse(policy, format);
         this.doc.sync_call('<Limitr>.load'); // root.policy becomes a Limitr (JSON, YAML, and TOML policies have no type)
         this.doc.setMaxExecutionTime(this.maxExecutionTime);
+    }
+
+
+    /**
+     * Seal the engine's types (LimitrTypes), so a policy (or anything parsed into the document later) can't change or
+     * replace the engine's functions. Policies still customize behavior the usual ways: their own objects, functions on
+     * a typed object (Ex. a credit's overhead), and their own types. Fields keep changing as the engine runs.
+     */
+    protected static sealEngine(doc: StofDoc) {
+        if (doc.get('LimitrTypes') != null) doc.seal('LimitrTypes');
     }
 
 
@@ -1864,6 +1876,7 @@ export class Limitr {
                             const cleanBuffer = doc.blobify('bstf');
                             await this.doc.call('policy.update_policy_internals', cleanBuffer, 'bstf');
                         } else {
+                            Limitr.sealEngine(doc);
                             this.doc = doc;
                             this.doc.sync_call('<Limitr>.load');
                             this.setupCloudDoc();

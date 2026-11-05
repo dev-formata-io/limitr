@@ -24,8 +24,9 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.10.9 or later for Limitr 0.8.2). Import only from `@formata/limitr`.
-It ships this skill, the limitr skill, and the stof skill (the Stof language) in `node_modules/@formata/limitr/skill/`. A step-by-step tutorial with
+The package depends on `@formata/stof` (0.10.11 or later: the SDK seals the engine when it loads it). Import only
+from `@formata/limitr`. It ships this skill and the limitr skill in `node_modules/@formata/limitr/skill/`; the stof
+skill (the Stof language) ships with Stof, in `node_modules/@formata/stof/skill/stof/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
 
 ## Create the engine
@@ -286,7 +287,7 @@ returns its result as plain data (text, a number, a list, or an object as a reco
 use it. For anything else, call the engine directly:
 `await limitr.docCall('policy.some_function', ...args)`. `limitr.doc` is the underlying `StofDoc`, for
 registering host functions the policy can call (`limitr.doc.lib('App', 'name', fn)`) or allowing HTTP from the
-policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any host).
+policy (`limitr.doc.allowHttp(['api.example.com'])` for listed hosts, or `limitr.doc.allowHttp()` for any public host).
 A `Limitr.new` policy is sandboxed: no network, file system, or environment access unless you add it.
 
 Read-only questions about the policy can go straight to the document: `limitr.doc.get('policy.plans.pro.label')`,
@@ -309,8 +310,9 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   while disconnected, to protect shared state), `validate`, `httpHosts`, `maxExecutionTime` (ms, default 5000),
   `batchMs` (how long usage and customer updates are collected before they're sent together; 250 by default, `0`
   sends each right away).
-- A Cloud policy can reach any host over HTTP by default (`httpHosts: true`), so capabilities can call the services
-  they list. Pass a list to allow only those hosts (Ex. `['api.limitr.dev', 'api.example.com']`), or `false` for none.
+- A Cloud policy can reach any public host over HTTP by default (`httpHosts: true`), so capabilities can call the
+  services they list. `localhost` and private network addresses are refused unless you list them. Pass a list to
+  allow only those hosts (Ex. `['api.limitr.dev', 'api.example.com']`), or `false` for none.
 - A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), with the customers its refs
   lead to (its team and org, any depth), and `ensureCustomer` creates it only when Cloud doesn't have it (loading its
   refs from Cloud first, so a new user is on its org's plan). `addVoucher(code)` redeems a Limitr voucher as a customer.

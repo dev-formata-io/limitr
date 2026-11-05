@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.8.2",
+    "version": "0.8.3",
     "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",
@@ -20,9 +20,10 @@
     ],
     "scripts": {
         "build": "tsc",
-        "skills": "cpy \"limitr/**\" ../typescript/skill/limitr --cwd=../skill && cpy \"stof/**\" ../typescript/skill/stof --cwd=../skill",
+        "skills": "rimraf skill/limitr skill/stof && cpy . ../../typescript/skill/limitr --cwd=../skill/limitr",
+        "plugin": "rimraf ../plugin/skills && cpy . ../../plugin/skills/limitr --cwd=../skill/limitr && cpy . ../../../plugin/skills/limitr-ts --cwd=skill/limitr-ts && cpy . ../../../../../../plugin/skills/stof --cwd=node_modules/@formata/stof/skill/stof",
         "readme": "cpy README.md LICENSE typescript --cwd=..",
-        "prepublishOnly": "npm run skills && npm run readme && npm run build",
+        "prepublishOnly": "npm run skills && npm run plugin && npm run readme && npm run build",
         "clean": "rimraf dist"
     },
     "license": "Apache-2.0",
@@ -36,7 +37,7 @@
         "url": "https://github.com/dev-formata-io/limitr/issues"
     },
     "dependencies": {
-        "@formata/stof": "^0.10.9"
+        "@formata/stof": "^0.10.11"
     },
     "devDependencies": {
         "cpy-cli": "^7.0.0",

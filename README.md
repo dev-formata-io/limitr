@@ -83,6 +83,9 @@ Limitr is the control without the build. The engine is yours, like your code:
 - **Shaped to your business.** Plans, prices, costs, limits, and every customer's deal in one policy document.
 - **Extends like code.** Your own pricing functions, feature conditions, rules, and tools run in the policy, written
   in [Stof](https://stof.dev).
+- **Safe in your process.** A policy runs sandboxed: no files or environment, no network unless it's allowed (and
+  never your private network unless you list it), and time and memory limits on every call. The engine is sealed
+  when it loads, so a policy can build on it but can't change it.
 - **Margin on every call,** priced at what you charge and what it costs you.
 - **Never a share of your revenue,** and yours if you leave: with Limitr Cloud or without it, it's the same engine.
 
@@ -130,10 +133,10 @@ user on its org's plan gets the org's rules too.
 
 ## Made for AI coding agents
 
-The npm package ships three skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
-engine function, and every event), `limitr-ts` (the TypeScript SDK), and `stof` (the language policies are written
-in). Point your coding agent at them and it can write, review, and debug policies and integrations correctly, instead
-of guessing. The Limitr skills are also packaged as zips in
+The npm package ships two skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
+engine function, and every event) and `limitr-ts` (the TypeScript SDK). The third, `stof` (the language policies are
+written in), ships with Stof in `node_modules/@formata/stof/skill/stof`. Point your coding agent at all three and it
+can write, review, and debug policies and integrations correctly, instead of guessing. The Limitr skills are also packaged as zips in
 [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for uploading to an agent.
 
 ## Self-hosting: on your own, or with Limitr Cloud
@@ -177,6 +180,7 @@ and have the Analyst write your first policy.
 - [Limitr skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr): the policy reference, every engine
   function, and every event (`limitr-ts` for TypeScript is in
   [typescript/skill](https://github.com/dev-formata-io/limitr/tree/main/typescript/skill))
+- [Stof skill](https://github.com/dev-formata-io/stof/blob/main/content/SKILL.md): the language policies are written in
 - [Docs](https://limitr.dev/docs/introduction) and [limitr.dev](https://limitr.dev)
 - [Changelog](https://github.com/dev-formata-io/limitr/blob/main/CHANGELOG.md)
 - [Issues](https://github.com/dev-formata-io/limitr/issues): bugs and feature requests
