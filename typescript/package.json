@@ -1,7 +1,7 @@
 {
     "name": "@formata/limitr",
     "version": "0.8.3",
-    "description": "Open-source usage-based billing that runs inside your app: limits, credits, pricing, margins, feature flags, and AI cost control from one policy, checked in-process.",
+    "description": "Limits, credits, and billing inside your AI product: an open-source engine that decides what each customer can do, what it costs you, and what to bill, on every call, in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",
     "main": "./dist/main.js",

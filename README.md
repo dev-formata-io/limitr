@@ -15,15 +15,16 @@
 </h1>
 
 <p align="center">
-    <b>Usage, priced and enforced at runtime.</b>
+    <b>Limits, credits, and billing, inside your AI product.</b>
     <br>
-    Limitr prices, limits, and meters every unit of usage inside your app, and your team changes it live, for every plan, contract, and customer. The engine is open source and yours, like the rest of your code.
+    An open-source engine that decides, on every call, what each customer can do, what it costs you, and what to bill. You build on it: your rules, your UI, your coding agent. Limitr Cloud keeps every plan, price, and contract live, with no release.
 </p>
 
-Limitr is an open-source engine for usage-based pricing. It meters usage (API calls, AI tokens, seats, storage,
-anything you count), enforces plans and limits, prices every call, and tells your code what to bill. It's a library,
-not a service: it runs in your process, in Node, Bun, Deno, or the browser, so there's nothing to deploy or self-host
-and no network call in the middle of a request.
+Limitr is an open-source engine for usage control and billing. It meters usage (AI tokens by model, API calls,
+agent runs, seats, anything you count), enforces plans and limits, prices every call at what it costs you and what you
+charge, and tells your code what to bill. It's a library, not a service: it runs in your process, in Node, Bun, Deno,
+or the browser, so there's nothing to deploy or self-host and no network call in the middle of a request. It's built
+for usage that doesn't follow the plan, which is most AI usage.
 
 ## Quick start
 
