@@ -4,6 +4,23 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.4
+
+### Changed
+
+- **Stof 0.11.0** (`@formata/stof ^0.11.0`). For the engine:
+  - **The sealed engine is sealed more tightly.** Code parsed into the document later (a policy, a Cloud
+    function) can no longer change the engine's fields in place through a shared list or map, and assigning to a
+    sealed field is refused before anything is written.
+  - **Destructuring respects `#[private]`:** `const { field } = obj` from outside the object is `null`, like
+    `obj.field`.
+  - The engine is compiled with Stof 0.11 (`typescript/limitr.ts`). Policies, customers, and their exports are
+    unchanged.
+  - Stof 0.11 also adds keys and signatures (the `Key` library) and confined seals (`reads`, `hosts`) for code from
+    somewhere else, which Limitr Network will build on.
+- The skills say Limitr needs Stof 0.11.0 or later. The Stof skill (from `@formata/stof`) covers seals, keys, and
+  confinement.
+
 ## 0.8.3
 
 ### Security
