@@ -23,4 +23,4 @@ package: {
     repository: 'https://github.com/dev-formata-io/limitr'
     homepage: 'https://docs.stof.dev'
 }
-import: 'src/mod.stof'
+import: ['src/mod.stof', 'src/network/mod.stof']

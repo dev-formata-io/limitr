@@ -8,6 +8,13 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Added
 
+- **Limitr Network 0.1 (the protocol module).** `src/network/`: one policy uses another's services and pays for
+  them, peer to peer, with signed messages and no shared secrets (see `src/network/SPEC.md`). A provider publishes
+  its terms from its policy; a consumer signs a voucher (a plan, a spend, an expiry); the provider meters a voucher
+  customer with the spend as a cap and grants its endpoints; the consumer gets a capability per endpoint, whose
+  HTTP call is sealed and confined to the provider's host; every call is signed, checked for replay, and answered
+  with a signed receipt. Compiled next to the engine (`typescript/limitr.ts` exports `limitrNetwork`) and loaded
+  only by policies that use it. 17 tests in `src/network/tests/`, run by `stof test` with the engine's.
 - **Customer expiry.** `Customer.expires` (ms), set with `set_customer_expires(id, expires)` (TypeScript
   `setCustomerExpires`): from then on the customer has no entitlements, so `allow()` and `check()` refuse. Its
   meters, grants, and caps are kept, and a later time (or null, never) gives its access back. For trials, temporary

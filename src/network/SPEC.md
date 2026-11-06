@@ -1,7 +1,6 @@
 # Limitr Network: protocol and module spec (draft 0.1)
 
-Status: draft 0.1, decisions made Nov 6, 2026. The engine changes (customer expiry, old vouchers removed) are done;
-the module isn't built yet.
+Status: draft for review. Nothing here is built yet. Decisions marked **(decide)** are open.
 
 ## What it is
 
@@ -39,8 +38,8 @@ the host (the SDK), never in the policy document.
   A consumer may include it in `hello`; a provider may require it. The POC accepts self-issued keys.
 
 The policy never holds a secret key. The SDK registers one host function, `Network::sign(context, message)`, that
-signs with the policy's own key, so the protocol code (in Stof) can sign without seeing the key. It signs only under
-`limitr-network/` contexts, so nothing in a policy can use the key to sign anything else.
+signs with the policy's own key, so the protocol code (in Stof) can sign without seeing the key. **(decide)** whether
+signing should be restricted to `limitr-network/` contexts (recommended: yes).
 
 ## Messages
 
@@ -170,13 +169,10 @@ sealed with `{ publicKey, signature }` and confined the same way. The same conne
 - **Verifying a call.** `policy.network.verify(headers, method, path, body)` checks the signature, the voucher, the
   expiry, and replay; then the endpoint's host code calls `allow()` as usual. The SDK has one helper that does both
   and builds the receipt: `limitr.network.serve(req, entitlement, value, handler)`.
-- **Ending: a tab with a closing time.** Every voucher has an `expires` (required; the provider can shorten it, up
-  to its `max_voucher` duration, 30 days by default), and it's the voucher customer's `expires`. So a consumer that
-  never cancels doesn't leave a tab open: at the expiry the customer stops being allowed. A revoke or cancel sets
-  the expiry to now. Reaching the cap doesn't end a voucher (the consumer can send an update with more spend).
-  An ended voucher customer is kept for `keep_ended` (7 days by default) so its usage can be read and billed, then
-  `network.sweep()` sends `network-voucher-ended` (the customer with its final usage) and deletes it. The SDK's
-  `serve` runs the sweep at most once an hour, so there's nothing for the host to call.
+- **Ending.** Revoke, cancel, the cap reached, or the expiry: the customer stops being allowed. It's kept until the
+  provider's usage for it is reported (to Cloud, or the host's billing), then deleted. **(decide)** how long a
+  closed voucher customer is kept when there's no Cloud (proposal: until the host calls `closeVoucher(id)`, with an
+  event so the host knows when).
 
 ## The consumer's side
 
@@ -190,35 +186,27 @@ sealed with `{ publicKey, signature }` and confined the same way. The same conne
   (Ex. "this agent may spend $5 a day across all providers"), checked before the capability runs. That's the
   engine as it is today: a capability's `#[run]` step can call `allow()` first.
 
-## Engine changes (the voucher rework, done)
+## Engine changes (the voucher rework)
 
-- **The old vouchers are gone:** `Customer.ensure_voucher`, the `limitr_voucher*` metadata checks in `allow()` and
-  `update_customer_internals`, and the TS SDK's `addVoucher` and `limitr_v1_` path. (Left over from an early Cloud
-  POC; the server's leftovers go in the Cloud pass.)
-- **Customer expiry** (general, not only for vouchers): `Customer.expires` (ms, null never), set with
-  `set_customer_expires(id, expires)` (TS `setCustomerExpires`). From then on the customer has no entitlements:
-  `allow()` and `check()` refuse, like an entitlement it doesn't have. Its meters, grants, and caps are kept, and a
-  later time gives access back. Useful on its own for trials and temporary access.
+- **Remove the old vouchers:** `Customer.ensure_voucher`, the `limitr_voucher*` metadata checks in `allow()` and
+  `update_customer_internals`, `Capability.voucher`, and the TS SDK's `addVoucher` and `limitr_v1_` path.
+  **(decide)** confirm Limitr Cloud doesn't use them (they were the Cloud POC).
+- **Customer expiry** (general, not only for vouchers): `Customer.expires` (ms, optional). After it, `allow()` and
+  `check()` refuse with reason `expired`, and a `customer-expired` event is sent once. Useful on its own for trials
+  and temporary access.
 - **Spend comes from caps.** A voucher's spend is a cap, so everything caps already do (exchange, overage only,
   thresholds, events) applies, and there's one way to limit spend.
 
-## The module, and how modules work
+## The module
 
-The Network is the first Limitr module, and the pattern for the ones after it (ours or anyone's):
-
-- **Source:** `src/network/` (types `NetworkProvider`, `NetworkConsumer`, `Voucher`, `Grant`, `Receipt`,
-  `Endpoint`, `Connection`, and the message functions), with its own version (`<LimitrNetwork>.version`, 0.1.0) and
-  its tests in `src/network/tests/`. It builds on the engine's types (`Customer`, `Cap`, `Capability`) and never
-  changes them.
-- **Build:** `project.stof` compiles it next to the engine, into the same `typescript/limitr.ts`:
-  `export const limitrEngine = ...` and `export const limitrNetwork = ...`. A policy that doesn't use the Network
-  never loads it, so its document doesn't grow.
-- **Load:** `limitr.network()` parses the module into the document as `LimitrNetwork` (once; later calls return the
-  same handle) and seals it, like the engine's `LimitrTypes`. Underneath is a general `limitr.module(name, bytes)`,
-  which is how anyone adds their own: compile a Stof package to `bstf`, load it by name, sealed.
-- **Tests:** `pkg.stof` imports both, so `stof test` in the limitr folder runs the engine's and the Network's tests.
-- **SDK (TS first):** the handle has `connect`, `update`, `cancel`, `serve`, key custody (a `secretKey` option, or a
-  generated one handed to a `keyStore` callback), and HTTP transport with `fetch`.
+- **Where:** `src/network/*.stof` (types `NetworkProvider`, `NetworkConsumer`, `Voucher`, `Grant`, `Receipt`,
+  `Endpoint`, `Connection`, and the message functions), tests in `src/tests/network/`, its own version
+  (`network.version`, starting 0.1.0).
+- **Loading (decide):** compiled into the engine but inert unless a policy has `network: {}` (simplest; the engine
+  grows by the module's size), or compiled separately (`limitr-network.ts`) and loaded when a policy asks for it
+  (smaller engine, one more thing to version). Proposal: separate, sealed when loaded, like `LimitrTypes`.
+- **SDK (TS first):** `limitr.network` with `connect`, `update`, `cancel`, `serve`, key custody (a `secretKey`
+  option, or one generated and handed to a `keyStore` callback), and HTTP transport with `fetch`.
 
 ## Payment
 
@@ -241,12 +229,12 @@ same messages.
 
 ## Build order
 
-1. Engine: customer expiry; remove the old vouchers. Tests. **Done.**
+1. Engine: customer expiry; remove the old vouchers. Tests.
 2. Module: messages (build, sign, verify), manifest from a policy, voucher and grant, voucher customers, request
    verification and receipts, connections and capabilities. Stof tests with a provider and a consumer in one
    document, messages passed as text.
 3. TS SDK: `limitr.network`, key custody, HTTP transport, `serve`.
 4. Demo: two Node processes (a provider with a real endpoint, a consumer agent using it as a Claude tool), in
-   `typescript/demos/network/` (`examples/` stays CJ's area). As small as it can be and still show the whole flow.
+   `typescript/` **(decide where: `examples/` is your area; proposal `typescript/demos/network/`)**.
 5. Docs and skills: a Network section in the limitr and limitr-ts skills; a limitr.dev page.
 6. Later: discovery (an index of manifests), Cloud (payments, issued identities, analytics), provider logic (0.2).

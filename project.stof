@@ -15,12 +15,16 @@
 //
 
 import 'src/mod' as self.Imported;
+import 'src/network/mod' as self.Network;
 
 
 #[typescript]
+/// The engine (src/spec) and each module (src/network), compiled to bstf: an SDK loads the engine, and a module only
+/// when a policy uses it (Ex. limitr.network()).
 async fn create_typescript() {
-    const array: list = blobify('bstf', self.Imported);
-    const out = `export const limitrEngine = new Uint8Array(${str(array)});`;
+    const engine: list = blobify('bstf', self.Imported);
+    const network: list = blobify('bstf', self.Network);
+    const out = `export const limitrEngine = new Uint8Array(${str(engine)});\nexport const limitrNetwork = new Uint8Array(${str(network)});\n`;
     fs::write('typescript/limitr.ts', out);
 }
 

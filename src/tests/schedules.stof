@@ -150,6 +150,6 @@ Limitr TestSchedulesPolicy: {
         assert_eq(self.value(id, 'halves'), 20);
 
         // it validates
-        assert(<LimitrValidation>.valid_reset_sch(new {}, 'semiannual:1-1'));
+        assert(<LimitrValidation>.valid_reset_sch(using new {}, 'semiannual:1-1'));
     }
 }
