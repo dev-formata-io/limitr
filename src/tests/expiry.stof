@@ -1,0 +1,109 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+//
+// Customer expiry: after Customer.expires a customer has no entitlements (allow() and check() refuse, like an
+// entitlement it doesn't have), its usage is kept, and a later time (or null) gives its access back.
+//
+Limitr TestExpiryPolicy: {
+    credits: {
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        free: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 10 } }
+                export: {}
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_never_expires_by_default() {
+        const id = 'exp_default';
+        self.create_customer(id, 'free');
+        assert_null(self.customer(id).expires);
+        assert(self.allow(id, 'api', 1));
+    }
+
+
+    #[test]
+    fn test_expired_refuses() {
+        const id = 'exp_past';
+        self.create_customer(id, 'free');
+        assert(self.allow(id, 'api', 2));
+        assert(self.set_customer_expires(id, Time::now() - 1s, false));
+
+        assert_not(self.allow(id, 'api', 1), 'metered entitlements refuse');
+        assert_not(self.check(id, 'api', 1));
+        assert_not(self.allow(id, 'export'), 'feature flags too');
+        assert_null(self.entitlement(id, 'api'), 'not the default plan either');
+        assert_eq(self.customer(id).meters.get('api').value, 2, 'its usage is kept');
+    }
+
+
+    #[test]
+    fn test_future_expiry_allows() {
+        const id = 'exp_future';
+        self.create_customer(id, 'free');
+        assert(self.set_customer_expires(id, Time::now() + 1day, false));
+        assert(self.allow(id, 'api', 1));
+        assert(self.check(id, 'export'));
+    }
+
+
+    #[test]
+    fn test_extend_and_clear() {
+        const id = 'exp_extend';
+        self.create_customer(id, 'free');
+        self.set_customer_expires(id, Time::now() - 1s, false);
+        assert_not(self.allow(id, 'api', 1));
+
+        self.set_customer_expires(id, Time::now() + 1hr, false);
+        assert(self.allow(id, 'api', 1), 'a later time gives access back');
+
+        self.set_customer_expires(id, Time::now() - 1s, false);
+        self.set_customer_expires(id, null, false);
+        assert(self.allow(id, 'api', 1), 'null never expires');
+        assert_eq(self.value(id, 'api'), 2, 'and its usage carried on');
+    }
+
+
+    #[test]
+    fn test_unknown_customer() {
+        assert_not(self.set_customer_expires('exp_nobody', Time::now(), false));
+    }
+
+
+    #[test]
+    /**
+     * Expiry travels with the customer's record (Ex. from Limitr Cloud).
+     */
+    fn test_expiry_syncs() {
+        const id = 'exp_sync';
+        self.create_customer(id, 'free');
+        self.set_customer_expires(id, Time::now() - 1s, false);
+        const record = stringify('json', self.customer(id));
+        self.delete_customer(id);
+        self.update_customer_internals(record);
+        assert(self.customer(id).expires != null);
+        assert_not(self.allow(id, 'api', 1));
+    }
+}

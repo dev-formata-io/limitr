@@ -18,7 +18,7 @@
 //
 // Precision tests.
 //
-// Decisions (limit checks, cap ceilings, grant coverage, vouchers) compare at
+// Decisions (limit checks, cap ceilings, grant coverage) compare at
 // 1e-9 so float drift can't flip them; running totals stay at full precision
 // so sub-nano amounts still accumulate; numbers in events go out rounded to 1e-9.
 //
@@ -151,22 +151,6 @@ Limitr TestPrecisionPolicy: {
         assert(self.allow(id, 'tok_grant', 6, false));
         assert_not(grant.exists()); // drained exactly, non-resetting grant removed
         assert_not(self.allow(id, 'tok_grant', 1, false));
-    }
-
-
-    #[test]
-    /**
-     * A voucher balance that exactly covers the overage allows it.
-     */
-    fn test_voucher_exact_coverage() {
-        const id = 'prec_voucher';
-        self.create_customer(id, 'p', metadata = new {
-            limitr_voucher: 'v_prec',
-            limitr_voucher_expires: Time::now() + 1day,
-            limitr_voucher_runes: 2.4,
-        });
-        assert(self.allow(id, 'tok_soft', 6, false));
-        assert_not(self.allow(id, 'tok_soft', 1, false));
     }
 
 

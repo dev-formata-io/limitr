@@ -39,6 +39,8 @@ export interface LimitrCustomer {
     period_start?: number | null,
     /** End of the current billing period (ms): the next one starts here. */
     period_end?: number | null,
+    /** When the customer's access ends (ms): no entitlements from then on. Null never expires. */
+    expires?: number | null,
     
     cloud_test?: boolean | null,
     cloud_updated?: number | null,

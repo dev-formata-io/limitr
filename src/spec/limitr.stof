@@ -399,15 +399,6 @@ Limitr: {
                         event_value.overage = overage;
                         cap_overage += overage; // before grants applied to overage of course
                         if (!limit.grants_apply || customer.apply_overage_grants(self, pl, limit.credit, event_value, stof_units, billable)) {
-                            // intercept here with voucher mode to protect your costs if using a voucher with max spend
-                            // if customer operating with a voucher and the voucher cannot cover the additional overage, return false!
-                            if (!customer.ensure_voucher(limit.credit, event_value, self.exchange, billable) && !force) {
-                                // if meter was reset, this goes to 0 (meter_value), not to the old value
-                                existing_meter.value = meter_value;
-                                existing_meter.overhead = overhead_base;
-                                return false;
-                            }
-
                             // What to bill (runes): the overage grants didn't cover, priced from where their coverage
                             // ended. With no grant applied, that is exactly the call's billable worth (price_diff).
                             const covered = event_value.grant_value_applied ?? 0;
@@ -520,9 +511,8 @@ Limitr: {
             // Cap commit: only now that the entitlement-side outcome is final
             // do we actually advance cap meter_values. A call that the cap
             // gate above already allowed but that failed for an unrelated
-            // reason (hard limit with no grant coverage, voucher exhausted,
-            // governor deny) must not consume cap room for a call that
-            // never went through.
+            // reason (hard limit with no grant coverage, governor deny)
+            // must not consume cap room for a call that never went through.
             if (valid && credit_name != null) {
                 const changed_caps = [];
                 // overhead with no units (Ex. a failed call that still cost) only moves overhead caps
@@ -1194,6 +1184,7 @@ Limitr: {
             if (alt != null) customer = self.customers.get(alt);
         }
         if (customer != null) {
+            if (customer.expires != null && Time::now() >= customer.expires) return null; // its access has ended
             const found = self.customer_access(customer, entitlement);
             if (found[0]) return found[1];
         }
@@ -1525,6 +1516,20 @@ Limitr: {
         if (start != null && end != null && end <= start) return false;
         customer.period_start = start;
         customer.period_end = end;
+        if (event) await <Event>.send('customer-set', customer);
+        true
+    }
+
+
+    /**
+     * Set when a customer's access ends (Customer.expires): from then on it has no entitlements, so allow() and
+     * check() refuse. Null never expires. Its meters, grants, and caps are kept, so its usage can still be read,
+     * billed, or extended (set a later time). False when the customer doesn't exist.
+     */
+    fn set_customer_expires(id: str!, expires?: ms, event: bool = true) -> bool {
+        const customer = self.customer(id);
+        if (customer == null) return false;
+        customer.expires = expires;
         if (event) await <Event>.send('customer-set', customer);
         true
     }
@@ -2684,19 +2689,6 @@ Limitr: {
             self.customers.remove(id, shallow = false);
             self.customers.insert(id, c as Customer);
             for (const alt in c.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
-            if (c.metadata != null && c.metadata.limitr_voucher != null && c.metadata.limitr_voucher_expires != null) {
-                if (c.metadata.limitr_voucher_expires <= Time::now() || (c.metadata.limitr_voucher_runes != null && c.metadata.limitr_voucher_runes <= 0)) {
-                    const vchr = c.metadata.limitr_voucher;
-                    for (const pair in self.capabilities.fields()) {
-                        const cap: Capability = pair[1];
-                        if (cap.voucher == vchr || (cap.customers != null && cap.customers.len() == 1 && cap.customers.contains(vchr))) {
-                            self.capabilities.remove(pair[0], shallow = false);
-                        } else if (cap.customers != null) {
-                            cap.customers.remove_all(vchr);
-                        }
-                    }
-                }
-            }
             await <Event>.send('internal-customer-updated', c);
         } catch {
             drop(c);

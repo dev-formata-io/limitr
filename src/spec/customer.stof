@@ -75,6 +75,11 @@ Customer: {
     /// End of the current billing period: the next one starts here. Optional (the plan's period from the start).
     ms period_end: null;
 
+    /// When this customer's access ends (Ex. a trial, temporary access, or a Network voucher). From then on the
+    /// customer has no entitlements: allow() and check() refuse, like an entitlement it doesn't have. Its meters,
+    /// grants, and caps are kept. Null (the default) never expires. Set with set_customer_expires().
+    ms expires: null;
+
 
     /**
      * Set an override.
@@ -507,33 +512,6 @@ Customer: {
         event_value.grant_value_applied = grant_value_applied;
         event_value.overage = max(0, overage);
         Num::round(overage, 9) > 0
-    }
-
-
-    /**
-     * Ensure voucher max spend (for local allow only - max spend hard enforced remotely for customers).
-     * If self.metadata.limitr_voucher_runes < overage, prevent the allow to protect provider (your) costs!
-     */
-    fn ensure_voucher(credit: str!, event_value: obj!, exchange: Exchange, position: float = 0) -> bool {
-        if (self.metadata.limitr_voucher != null && self.metadata.limitr_voucher_expires != null) {
-            if (self.metadata.limitr_voucher_runes != null) {
-                if (exchange == null) return false;
-
-                // remaining overage starts after whatever grants covered (tier position)
-                const overage = event_value.overage ?? 0;
-                const overage_from = max(0, position) + (event_value.grant_value_applied ?? 0);
-                let overage_runes = exchange.to_runes(overage, credit, overage_from);
-                if (overage_runes == null) return false;
-                overage_runes = max(0, overage_runes); // a volume band reprice never adds voucher balance
-
-                const res = Time::now() < self.metadata.limitr_voucher_expires && Num::round(self.metadata.limitr_voucher_runes, 9) >= Num::round(overage_runes, 9); // at 1e-9
-                if (res) self.metadata.limitr_voucher_runes -= overage_runes;
-                return res;
-            } else {
-                return Time::now() < self.metadata.limitr_voucher_expires;
-            }
-        }
-        true
     }
 
 

@@ -493,6 +493,17 @@ export class Limitr {
 
 
     /**
+     * Set when a customer's access ends (Ex. a trial or temporary access): from then on it has no entitlements, so
+     * allow() and check() refuse. Its meters, grants, and caps are kept, so its usage can still be read or billed,
+     * and a later time (or null, never) gives its access back. Returns false when the customer doesn't exist.
+     */
+    async setCustomerExpires(id: string, expires: number | Date | null, event: boolean = true): Promise<boolean> {
+        const ms = expires instanceof Date ? expires.getTime() : expires;
+        return await this.gate.run(() => this.doc.call('policy.set_customer_expires', id, ms, event)) as boolean;
+    }
+
+
+    /**
      * Ensure this customer has the included plan topups created as grants.
      * Also ensure this customer doesn't have included topups that are no longer applicable given their plan.
      */
@@ -1457,44 +1468,28 @@ export class Limitr {
 
 
     /**
-     * Convenience method to authenticate a voucher via addCloudCustomer.
-     * Typically used in auth/user signup workflows in conjunction with ensureCustomer, etc.
-     */
-    async addVoucher(voucher: string, handler?: ()=>Promise<boolean> | boolean): Promise<boolean> {
-        if (voucher.startsWith('limitr_v1_')) return await this.addCloudCustomer(voucher);
-        return handler ? handler() : false;
-    }
-
-
-    /**
      * Add a customer from Limitr Cloud.
      * Does not create a new customer if needed - see ensureCustomer for that.
-     * Will (re)validate vouchers when used as customer ID.
      *
-     * @param id The customer or voucher ID to add from Limitr Cloud ("limitr_" prefixes are reserved).
+     * @param id The customer ID to add from Limitr Cloud ("limitr_" prefixes are reserved).
      * @param timeout The max amount of time to wait for the customer to arrive locally.
      * @returns true if the customer exists and is ready to interact with.
      */
     async addCloudCustomer(id: string, timeout: number = 3000): Promise<boolean> {
-        const voucher = id.startsWith('limitr_v1_');
-        if (voucher) await this.gate.run(() => this.doc.call('policy.delete_customer', id));
-        if (!voucher) {
-            const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
-            if (existing) return true;
-        }
+        const existing = await this.gate.run(() => this.doc.sync_call('policy.customer', id));
+        if (existing) return true;
 
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         this._deniedCloudCustomers.delete(id);
-        if (voucher) { this.ws.send(JSON.stringify({ type: 'ensure-voucher-customer', id })); }
-        else { this.ws.send(JSON.stringify({ type: 'customer', id })); }
-        
+        this.ws.send(JSON.stringify({ type: 'customer', id }));
+
         return new Promise<boolean>((resolve) => {
             const intervalMs = 50;
             const start = Date.now();
             const poll = async () => {
                 if (await this.gate.run(() => this.doc.sync_call('policy.customer', id))) {
                     await this.ensureCustomerIncludedTopups(id, false);
-                    if (!voucher && !this._noRefs.has(id)) await this.addCloudRefs(id);
+                    if (!this._noRefs.has(id)) await this.addCloudRefs(id);
                     resolve(true);
                     return;
                 }

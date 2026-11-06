@@ -214,6 +214,9 @@ flag), given a `credit`.
 - **IDs** and alt IDs can't contain a period (fields are found by '.' paths). `create_customer`, `set_customer`, and
   `set_alt_customer_id` refuse one and log an error. For an email, replace its periods with your own placeholder, or
   keep it in metadata.
+- **Expiry:** `set_customer_expires(id, expires)` (ms, null never) ends a customer's access: from then on it has no
+  entitlements, so `allow()` and `check()` refuse. Its meters, grants, and caps are kept, and a later time gives
+  access back. For trials, temporary access, and Network vouchers.
 - **Plan subscription:** `ensure_plan_subscription(id)` increments the plan's `subscription` entitlement once
   (after the `trial_period`), so a credit priced as the plan fee bills it. Never called automatically.
 

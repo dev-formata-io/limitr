@@ -38,6 +38,7 @@ import './schedules' as TestSchedules;
 import './billing_period' as TestBillingPeriod;
 import './overrides' as TestOverrides;
 import './rules' as TestRules;
+import './expiry' as TestExpiry;
 
 
 Limitr policy: {

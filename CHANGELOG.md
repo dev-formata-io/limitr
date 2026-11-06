@@ -4,6 +4,21 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## Unreleased
+
+### Added
+
+- **Customer expiry.** `Customer.expires` (ms), set with `set_customer_expires(id, expires)` (TypeScript
+  `setCustomerExpires`): from then on the customer has no entitlements, so `allow()` and `check()` refuse. Its
+  meters, grants, and caps are kept, and a later time (or null, never) gives its access back. For trials, temporary
+  access, and Limitr Network vouchers.
+
+### Removed
+
+- **The old vouchers.** `Customer.ensure_voucher`, the `limitr_voucher*` metadata checks in `allow()` and
+  `update_customer_internals`, and the TypeScript SDK's `addVoucher` and `limitr_v1_` customer IDs. They were left
+  from an early Cloud proof of concept and never used; Limitr Network replaces them (`src/network/SPEC.md`).
+
 ## 0.8.4
 
 ### Changed

@@ -178,8 +178,9 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `rules` | list | Rule names that apply (`set_customer_rules`; Cloud sets them from contracts). Unknown names are skipped. Null when none. |
 | `grants` | obj! | Grant ID -> `Grant`. |
 | `caps` | obj! | Cap ID -> `Cap`. |
-| `metadata` | obj | Anything. `limitr_voucher*` fields are used by Cloud vouchers. |
+| `metadata` | obj | Anything. |
 | `period_start` / `period_end` | ms | The billing period `'period'` schedules follow (Cloud sets them; `set_customer_period`). Null: the plan's calendar period. |
+| `expires` | ms | When the customer's access ends: no entitlements from then on (`set_customer_expires`). Null never expires. |
 
 ## Meter (engine state)
 

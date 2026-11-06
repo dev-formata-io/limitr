@@ -67,6 +67,7 @@ await limitr.ensureCustomer(userId, 'pro', 'user', 'Ada', [orgId], [authId]); //
 await limitr.createCustomer(orgId, 'pro', 'org', 'Acme');                     // returns the customer record
 await limitr.setCustomerPlan(userId, 'team');                                 // plan change
 await limitr.setCustomerPeriod(orgId, sub.current_period_start * 1000, sub.current_period_end * 1000); // billing period (without Cloud)
+await limitr.setCustomerExpires(trialId, Date.now() + 14 * 86_400_000);       // access ends (null: never)
 await limitr.customer(userId);                                                // LimitrCustomer | undefined
 ```
 
@@ -315,7 +316,7 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   allow only those hosts (Ex. `['api.limitr.dev', 'api.example.com']`), or `false` for none.
 - A customer not loaded locally is fetched from Cloud on first use (`addCloudCustomer`), with the customers its refs
   lead to (its team and org, any depth), and `ensureCustomer` creates it only when Cloud doesn't have it (loading its
-  refs from Cloud first, so a new user is on its org's plan). `addVoucher(code)` redeems a Limitr voucher as a customer.
+  refs from Cloud first, so a new user is on its org's plan).
 - Call `await limitr.close()` on shutdown to flush pending updates.
 
 ## Common mistakes
