@@ -1,0 +1,132 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Entry points for the document's policy (root.policy), so a host can call them by path with plain values
+// (Ex. doc.call('LimitrNetwork.connect', url, plan, spend, expires)). Each one is a line: the work is in the types.
+//
+
+/// Type and check the policy's network (call after loading the module, and after the policy changes). Throws with
+/// the reason when it isn't valid.
+fn load() {
+    if (!<Network>.load(root.policy)) throw(<LimitrValidation>.error_message);
+}
+
+#[limitr_valid]
+/// The policy's valid() checks its network too, when this module is loaded (Network.check(): nothing is added to a
+/// policy without one).
+fn valid(policy: obj) -> bool { <Network>.check(policy) }
+
+/// Set this policy's identity: its public key (the host keeps the secret key), and how it calls itself.
+fn identity(key: str!, name?: str) {
+    <Network>.load(root.policy);
+    root.policy.network.key = key;
+    if (name != null) root.policy.network.name = name;
+}
+
+/// The policy's provider (throws when the policy doesn't offer anything).
+fn provider() -> NetworkProvider {
+    const provider = root.policy.network?.provider;
+    if (provider == null) throw('this policy has no network provider (policy.network.provider)');
+    provider
+}
+
+
+// Provider
+
+/// See NetworkProvider.done(): finish a request after its work. Returns the headers to send with it (its receipt).
+fn done(customer: str!, request: int!, body: str!) -> map { map((<Network>.RECEIPT_HEADER, self.provider().done(customer, request, body))) }
+
+/// See NetworkProvider.manifest().
+fn manifest() -> str { self.provider().manifest() }
+
+/// See NetworkProvider.handle(): a NetworkRequest map in, a NetworkResponse map out.
+fn handle(request: map!) -> map { self.provider().handle(request) }
+
+/// See NetworkProvider.revoke().
+fn revoke(voucher: str!, reason: str = '') -> str { self.provider().revoke(voucher, reason) }
+
+/// See NetworkProvider.sweep().
+fn sweep() -> int { self.provider().sweep() }
+
+
+// Consumer
+
+/// See Network.connect().
+fn connect(url: str!, plan: str!, spend: float!, expires: ms!, budget?: str, trust?: str, may_call?: list, max?: float) -> list { root.policy.network.connect(url, plan, spend, expires, budget, trust, may_call, max) }
+
+/// See Network.trust().
+fn trust(name: str!, trust: str!, may_call?: list) -> list { root.policy.network.trust(name, trust, may_call) }
+
+/// See Network.update().
+fn update(name: str!, spend?: float, expires?: ms) -> list { root.policy.network.update(name, spend, expires) }
+
+/// See Network.cancel().
+fn cancel(name: str!) -> bool { root.policy.network.cancel(name) }
+
+/// See Network.revoked().
+fn revoked(envelope: str!) -> bool { root.policy.network.revoked(envelope) }
+
+/// A connection as JSON (NetworkConnection.json()), or null.
+fn connection(name: str!) -> str { root.policy.network.connection(name)?.json() }
+
+/// See Network.budget(): open (or, with `id`, change) a budget at a state operator. Returns its ID.
+fn budget(operator: str!, spend: float!, expires: ms!, providers?: list, id?: str) -> str { root.policy.network.budget(operator, spend, expires, providers, id) }
+
+/// A budget as JSON (NetworkBudget.json()), or null.
+fn budget_info(id: str!) -> str { root.policy.network.budget_named(id)?.json() }
+
+/// List this provider at its discovery operator (NetworkProvider.list()): 'public', or 'private' to members (public
+/// keys) and subjects.
+fn list(visibility: str = 'public', members?: list, subjects?: list) -> bool { self.provider().list(visibility, members, subjects) }
+
+/// Remove this provider's listing at its discovery operator.
+fn unlist() -> bool { self.provider().unlist() }
+
+/// Search a discovery operator for providers (Network.discover()): a list of maps (key, name, label, url, terms).
+fn discover(query: str = '', limit: int = 20, operator?: str) -> list { root.policy.network.discover(query, limit, operator) }
+
+/// A key rotation statement for a new key, signed by this policy's key (Network.rotation()): an operator publishes it
+/// in service.rotations, then signs with the new key.
+fn rotation(key: str!) -> str { root.policy.network.rotation(key) }
+
+/// Get an identity statement for this policy's key from an identity operator (sent with every voucher from now on).
+/// Returns the subject the operator gave.
+fn identify(operator?: str) -> str { root.policy.network.identify(operator) }
+
+
+// Operators
+
+/// The URLs of this policy's operators (a host lets Http::fetch reach them).
+fn operator_urls() -> list { root.policy.network.operator_urls() }
+
+/// Check every operator's manifest (NetworkOperator.check()). Throws with the reason when one is off.
+fn check_operators() -> bool {
+    for (const (_, op) in (root.policy.network.operators ?? new {}).fields()) op.check();
+    true
+}
+
+/// When this policy is an operator: its signed manifest (NetworkOperatorService.manifest()).
+fn operator_manifest() -> str { root.policy.network.service?.manifest() }
+
+/// When this policy is an operator: answer a request (NetworkOperatorService.handle()), a NetworkRequest map in, a
+/// NetworkResponse map out.
+fn operate(request: map!) -> map {
+    const service = root.policy.network.service;
+    if (service == null) throw('this policy is not an operator (policy.network.service)');
+    service.handle(request)
+}

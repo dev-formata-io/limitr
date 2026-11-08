@@ -1,0 +1,99 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// The reference state operator: any policy can be one (policy.network.service), and its network key is the
+
+//
+// The discovery role: an index of providers' signed manifests. A provider lists itself (its manifest, signed by its
+// own key, so an index can't forge or change one) as public or private (to some keys, or to subjects its operator
+// identified); anyone searches with a signed message, so the index knows who's asking and shows private listings
+// only to their members. Results are the manifests, unchanged; the consumer checks each one's signature, and
+// connect() reads the manifest from the provider's own URL.
+//
+
+#[type]
+/**
+ * A listing (provider to discovery operator, the body of a signed 'list' message): its signed manifest, and who may
+ * find it.
+ */
+NetworkListing: {
+    /// The provider's signed manifest (signed by the key that signs this message).
+    str! manifest: '';
+
+    #[schema((target_val: str!): bool => ['public', 'private'].contains(target_val) ? true : <LimitrValidation>.error(`A network listing's visibility must be 'public' or 'private', not "${target_val}"`))]
+    /// 'public' (anyone finds it) or 'private' (only its members).
+    str! visibility: 'public';
+
+    /// private: the public keys that may find it.
+    list! members: [];
+
+    /// private: the subjects that may find it (by an identity statement from the discovery operator itself, Ex. an
+    /// organization it identified).
+    list! subjects: [];
+}
+
+
+#[type]
+/**
+ * A search (anyone to a discovery operator, the body of a signed 'search' message).
+ */
+NetworkSearch: {
+    /// Words to find in a provider's name, label, and its routes' and tools' descriptions (all of them, any case).
+    /// Empty: every listing the searcher may see.
+    str! query: '';
+
+    /// The most results.
+    int! limit: 20;
+
+    /// An identity statement for the searcher's key from this operator (for listings private to subjects), or null.
+    str identity: null;
+}
+
+
+#[type]
+/**
+ * A listing a discovery operator holds (service.listings.<provider key>).
+ */
+NetworkListingRecord: {
+    str! provider: '';
+    str! manifest: '';
+    str! visibility: 'public';
+    list! members: [];
+    list! subjects: [];
+
+    /// What its search matches: the terms' name, label, and descriptions, lowercase.
+    str! text: '';
+
+    /// When it was listed.
+    ms! listed: 0;
+
+
+    /// May a searcher (by key, and subject when identified) find it?
+    fn visible_to(key: str!, subject: str) -> bool {
+        if (self.visibility == 'public' || key == self.provider) return true;
+        self.members.contains(key) || (subject != null && self.subjects.contains(subject))
+    }
+
+
+    /// Does it have every word of a query?
+    fn matches(query: str!) -> bool {
+        for (const word in query.lower().split(' ')) {
+            if (word.len() > 0 && !self.text.contains(word)) return false;
+        }
+        true
+    }
+}

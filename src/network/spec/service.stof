@@ -1,0 +1,555 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// The reference state operator: any policy can be one (policy.network.service), and its network key is the
+// operator's key. It holds budgets (consumers') and vouchers (providers'), and answers the state role's messages.
+// It's what the tests run against, and a small operator on its own. A hosted operator (Ex. Limitr Cloud) answers the
+// same messages from its own store.
+//
+//   network: {
+//       key: '<operator public key>'
+//       service: { label: 'Example Operator', modes: ['strict', 'bounded'] }
+//   }
+//
+
+#[type]
+/**
+ * What a policy serves as an operator (policy.network.service), and the state it holds.
+ */
+NetworkOperatorService: {
+    /// How people see it.
+    str! label: '';
+
+    #[schema((target_val: list!): bool => {
+        for (const role in target_val) {
+            if (!['state', 'identity', 'discovery'].contains(role)) return <LimitrValidation>.error(`The reference operator serves 'state', 'identity', and 'discovery' (not "${role}")`);
+        }
+        true
+    })]
+    /// The roles it serves.
+    list! roles: ['state'];
+
+    #[schema((target_val: list!): bool => {
+        for (const mode in target_val) {
+            if (!['strict', 'bounded'].contains(mode)) return <LimitrValidation>.error(`Network state mode "${mode}" must be 'strict' or 'bounded'`);
+        }
+        true
+    })]
+    /// The state modes it supports.
+    list! modes: ['strict', 'bounded'];
+
+    /// How many recent request numbers it keeps a voucher (it sees calls from every provider instance, and bounded
+    /// ones late, so its window is wider than a provider's).
+    int! window: 1024;
+
+    /// The longest a lease may run before it's released (unsettled spend on it isn't charged).
+    ms! max_lease: 10min;
+
+    /// Its key rotations, in order from its first key (Network.rotation(), each signed by the key before it), published
+    /// in its manifest so the policies that name it by its first key can follow it to the key it signs with now.
+    list rotations: null;
+
+    /// identity: who's behind the keys it knows (subject, by public key), Ex. from the host's own accounts. It issues
+    /// statements only for these.
+    obj identities: null;
+
+    /// identity: how long a statement it issues holds.
+    ms! identity_ttl: 30days;
+
+    #[schema((target: obj, target_val: list!): bool => {
+        for (const side in target_val) {
+            if (!['provider', 'consumer'].contains(side)) return <LimitrValidation>.error(`A network operator requires identity of 'provider' and 'consumer', not "${side}"`);
+        }
+        if (target_val.len() > 0 && !(target.roles ?? []).contains('identity')) return <LimitrValidation>.error('A network operator that requires identity serves identity too');
+        true
+    })]
+    /// Who must be identified to use it (by this operator: a key in `identities`, so it serves identity too):
+    /// 'provider' (registering vouchers, listing) and 'consumer' (vouchers registered for it, budgets, searches). In its
+    /// manifest, so both sides know before they connect.
+    list! requires: [];
+
+    /// discovery: the listings it holds, a NetworkListingRecord each, by the provider's key.
+    obj listings: null;
+
+    /// The budgets it holds: a NetworkBudgetState each, by ID.
+    obj budgets: null;
+
+    /// The vouchers it holds: a NetworkVoucherRecord each, by ID.
+    obj vouchers: null;
+
+
+    /// Make its stores, and type what's in them (Network.load() calls this).
+    fn load() {
+        if (self.budgets == null) self.budgets = new {} on self;
+        if (self.vouchers == null) self.vouchers = new {} on self;
+        if (self.listings == null) self.listings = new {} on self;
+        for (const (_, l) in self.listings.fields()) {
+            const typed: NetworkListingRecord = l;
+        }
+        for (const (_, b) in self.budgets.fields()) {
+            const typed: NetworkBudgetState = b;
+        }
+        for (const (_, v) in self.vouchers.fields()) {
+            const typed: NetworkVoucherRecord = v;
+        }
+    }
+
+
+    /// The network this service belongs to (its key is the operator's).
+    fn network() -> Network {
+        <LimitrValidation>.get_policy(self).network
+    }
+
+
+    /// Its manifest, signed: what it serves. Published at GET /.well-known/limitr-network-operator.
+    fn manifest() -> str {
+        using body = new NetworkOperatorManifest { label: self.label, roles: self.roles, modes: self.modes, rotations: self.rotations, requires: self.requires };
+        self.network().envelope('operator', '', body, 1day)
+    }
+
+
+    /**
+     * Answer a request (a NetworkRequest map): its manifest, and the state role's messages (POST
+     * /limitr-network/operator/<type>). Returns a NetworkResponse map: the signed answer, or a signed refusal (400).
+     */
+    fn handle(request: map!) -> map {
+        using req = new NetworkRequest {
+            method: (request.get('method') ?? 'GET').upper(),
+            url: request.get('url') ?? '/',
+            headers: <NetworkRequest>.lower_headers(request.get('headers') ?? map()),
+            body: request.get('body') ?? '',
+        };
+        const route = req.path().split('?')[0];
+        const json = map(('content-type', 'application/json'));
+        if (req.method == 'GET' && route == <Network>.OPERATOR_MANIFEST_PATH) return <NetworkResponse>.of(200, json, self.manifest());
+        if (req.method != 'POST' || !route.starts_with(<Network>.OPERATOR_PATH)) return <NetworkResponse>.of(404, json, '{"error":"not found"}');
+
+        const type = route.substring(<Network>.OPERATOR_PATH.len());
+        if (type == 'identify') return self.identify(req.body);
+        if (type == 'list' || type == 'unlist' || type == 'search') return self.discovery(type, req.body);
+        const answers = map(('budget', 'budgeted'), ('register', 'registered'), ('find', 'found'), ('claim', 'claimed'), ('lease', 'leased'), ('settle', 'settled'), ('end', 'ended'));
+        const answer = answers.get(type);
+        if (answer == null) return <NetworkResponse>.of(404, json, '{"error":"not found"}');
+        if (!self.roles.contains('state')) return <NetworkResponse>.of(404, json, '{"error":"not served"}');
+
+        using msg = new {};
+        try self.network().open(req.body, type, msg, null, self.addressed(req.body));
+        catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(null, '', why));
+
+        using out = new NetworkStateAnswer {};
+        let refused = null;
+        const now: ms = Time::now();
+        if (type == 'budget') refused = self.budget(msg, out, now);
+        else refused = self.voucher_message(type, msg, out, now);
+        if (refused != null) {
+            // a refusal about a provider's voucher says where it stands, so the provider's receipt is current
+            const rec: NetworkVoucherRecord = type != 'budget' ? self.vouchers.get(out.voucher) : null;
+            if (rec != null && rec.provider == msg.from) {
+                rec.answer(rec.budget != null ? self.budgets.get(rec.budget) : null, out);
+                return <NetworkResponse>.of(400, json, self.refuse(msg.from, out.voucher, refused, out));
+            }
+            return <NetworkResponse>.of(400, json, self.refuse(msg.from, out.voucher, refused));
+        }
+        <NetworkResponse>.of(200, json, self.network().envelope(answer, msg.from, out))
+    }
+
+
+    /**
+     * identity: a signed 'identify' from a key it knows (identities) gets a statement for that key (`{ statement }`,
+     * in a signed 'identified' answer): "this key is <subject>", signed by this operator, for identity_ttl. Returns a
+     * NetworkResponse map.
+     */
+    fn identify(body: str!) -> map {
+        const json = map(('content-type', 'application/json'));
+        if (!self.roles.contains('identity')) return <NetworkResponse>.of(404, json, '{"error":"not served"}');
+        const network = self.network();
+        using msg = new {};
+        try network.open(body, 'identify', msg, null, self.addressed(body));
+        catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(null, '', why));
+        const subject = self.identities?.get(msg.from);
+        if (typeof subject != 'str' || subject.len() < 1) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', 'this operator doesn\'t know your key'));
+        const expires: ms = Time::now() + self.identity_ttl;
+        using who = new NetworkIdentity { key: msg.from, subject, expires };
+        using out = new { statement: network.envelope('identity', '', who, self.identity_ttl) };
+        <NetworkResponse>.of(200, json, network.envelope('identified', msg.from, out))
+    }
+
+
+    /**
+     * discovery: 'list' (a provider's listing: its signed manifest, and who may find it; listing again replaces it),
+     * 'unlist', and 'search' (signed by the searcher: the manifests it may see that match, unchanged). Answers
+     * 'listed', 'unlisted', and 'results' ({ manifests }). Returns a NetworkResponse map.
+     */
+    fn discovery(type: str!, body: str!) -> map {
+        const json = map(('content-type', 'application/json'));
+        if (!self.roles.contains('discovery')) return <NetworkResponse>.of(404, json, '{"error":"not served"}');
+        const network = self.network();
+        using msg = new {};
+        try network.open(body, type, msg, null, self.addressed(body));
+        catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(null, '', why));
+
+        if (type == 'unlist') {
+            self.listings.remove(msg.from);
+            using none = new {};
+            return <NetworkResponse>.of(200, json, network.envelope('unlisted', msg.from, none));
+        }
+        const unknown = self.unidentified(type == 'search' ? 'consumer' : 'provider', msg.from);
+        if (type != 'unlist' && unknown != null) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', unknown));
+        if (type == 'list') {
+            const listing: NetworkListing = msg.body;
+            if (!<NetworkListing>.schemafy(listing)) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', <LimitrValidation>.error_message));
+            // the manifest must be the lister's own (an index never holds one a provider didn't sign)
+            using m = new {};
+            using terms = new {};
+            try {
+                network.open(listing.manifest, 'manifest', m, msg.from, null, false);
+                parse(m.body?.terms ?? '', terms, 'json');
+            } catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', `not your manifest: ${why}`));
+            let text = `${terms.name ?? ''} ${terms.label ?? ''}`;
+            for (const (_, r) in (terms.routes ?? new {}).fields()) text += ' ' + (r.description ?? '');
+            for (const (_, t) in (terms.tools ?? new {}).fields()) text += ' ' + (t.description ?? '');
+            self.listings.remove(msg.from);
+            const record = new NetworkListingRecord {
+                provider: msg.from,
+                manifest: listing.manifest,
+                visibility: listing.visibility,
+                members: listing.members,
+                subjects: listing.subjects,
+                text: text.lower(),
+                listed: Time::now(),
+            } on self.listings;
+            self.listings.insert(msg.from, record);
+            using done = new {};
+            return <NetworkResponse>.of(200, json, network.envelope('listed', msg.from, done));
+        }
+
+        const search: NetworkSearch = msg.body;
+        if (!<NetworkSearch>.schemafy(search)) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', <LimitrValidation>.error_message));
+        let subject = null;
+        if (search.identity != null && search.identity.len() > 0) {
+            using who = new {};
+            try network.identity_of(search.identity, network.key, who);
+            catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', `the identity statement doesn't check out: ${why}`));
+            if (who.key != msg.from) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', 'the identity statement is for another key'));
+            subject = who.subject;
+        }
+        const limit = search.limit < 1 ? 1 : (search.limit > 100 ? 100 : search.limit);
+        const manifests = [];
+        for (const (_, record) in self.listings.fields()) {
+            if (manifests.len() >= limit) break;
+            if (record.visible_to(msg.from, subject) && record.matches(search.query)) manifests.push_back(record.manifest);
+        }
+        using out = new { manifests };
+        <NetworkResponse>.of(200, json, network.envelope('results', msg.from, out))
+    }
+
+
+    /// Why a key can't use this operator as `side` ('provider' or 'consumer') when it requires that side identified
+    /// and doesn't know the key; otherwise null.
+    fn unidentified(side: str!, key: str!) -> str {
+        if (!self.requires.contains(side)) return null;
+        const subject = self.identities?.get(key);
+        if (typeof subject == 'str' && subject.len() > 0) return null;
+        `this operator requires the ${side} to be identified (by it)`
+    }
+
+
+    /// Who a message is for, when it's this operator under a key it rotated from (a sender that hasn't followed the
+    /// rotation yet); otherwise null (this policy's key).
+    fn addressed(envelope: str!) -> str {
+        const to = <Network>.peek(envelope)?.get('to');
+        if (to == null || to == '' || self.rotations == null) return null;
+        for (const text in self.rotations) {
+            if (<Network>.peek(text)?.get('previous') == to) return to;
+        }
+        null
+    }
+
+
+    /// A consumer's budget: open or change it. Returns null (and fills `out`), or why it's refused.
+    fn budget(msg: NetworkMessage!, out: NetworkStateAnswer!, now: ms!) -> str {
+        const b: NetworkBudgetMessage = msg.body;
+        if (!<NetworkBudgetMessage>.schemafy(b)) return <LimitrValidation>.error_message;
+        const unknown = self.unidentified('consumer', msg.from);
+        if (unknown != null) return unknown;
+        out.budget = b.budget;
+        let rec: NetworkBudgetState = self.budgets.get(b.budget);
+        if (rec != null) {
+            if (rec.key != msg.from) return 'this budget belongs to another key';
+            if (b.seq <= rec.seq) return 'a newer budget was already taken';
+        } else {
+            if (b.expires <= now) return 'the budget has expired';
+            rec = new NetworkBudgetState { budget: b.budget, key: msg.from } on self.budgets;
+            self.budgets.insert(b.budget, rec);
+        }
+        rec.seq = b.seq;
+        rec.spend = b.spend;
+        rec.expires = b.expires;
+        rec.providers = b.providers;
+        out.seq = rec.seq;
+        out.spent = Num::round(rec.spent, 9);
+        out.remaining = Num::round(max(0, rec.spend - rec.spent), 9);
+        out.budget_remaining = out.remaining;
+        null
+    }
+
+
+    /// A provider's message about a voucher (register, find, claim, lease, settle, end). Returns null (and fills
+    /// `out`), or why it's refused.
+    fn voucher_message(type: str!, msg: NetworkMessage!, out: NetworkStateAnswer!, now: ms!) -> str {
+        const req: NetworkStateRequest = msg.body;
+        if (!<NetworkStateRequest>.schemafy(req) || !<Network>.valid_name(req.voucher)) return 'not a state request';
+        out.voucher = req.voucher;
+        if (type == 'register') return self.register(msg, req, out, now);
+
+        const rec: NetworkVoucherRecord = self.vouchers.get(req.voucher);
+        if (rec == null || rec.provider != msg.from) return 'unknown voucher';
+        rec.release_expired(self, now);
+        const budget: NetworkBudgetState = rec.budget != null ? self.budgets.get(rec.budget) : null;
+        if (req.adjust != 0) rec.charge(budget, req.adjust);
+
+        if (type == 'find') {
+            out.envelope = rec.envelope;
+            out.expires = rec.expires;
+            out.customer = rec.customer;
+        } else if (type == 'claim') {
+            if (req.n == null || req.runes == null || req.runes < 0) return 'a claim needs a request number and its runes';
+            if (rec.expires <= now) return 'the voucher has ended';
+            if (budget != null && budget.expires <= now) return 'the budget has ended';
+            if (!rec.fresh(req.n, self.window)) return 'this request was already used';
+            if (req.runes > rec.available(budget, now) + 0.000000001) return 'not enough spend left (the voucher\'s, or its budget\'s)';
+            rec.use(req.n, self.window);
+            rec.charge(budget, req.runes);
+            out.n = req.n;
+        } else if (type == 'lease') {
+            if (req.amount == null || req.amount <= 0) return 'a lease needs an amount';
+            if (rec.expires <= now) return 'the voucher has ended';
+            if (budget != null && budget.expires <= now) return 'the budget has ended';
+            const amount = min(req.amount, rec.available(budget, now));
+            if (amount <= 0) return 'not enough spend left (the voucher\'s, or its budget\'s)';
+            const asked: ms = req.expires ?? (now + self.max_lease);
+            const longest: ms = now + self.max_lease;
+            const until: ms = asked < longest ? asked : longest;
+            const lease = new NetworkLeaseRecord { lease: nanoid(), amount: Num::round(amount, 9), until } on rec.leases;
+            rec.leases.insert(lease.lease, lease);
+            rec.hold(budget, lease.amount);
+            out.lease = lease.lease;
+            out.amount = lease.amount;
+            out.until = until;
+        } else if (type == 'settle') {
+            const lease: NetworkLeaseRecord = req.lease != null ? rec.leases.get(req.lease) : null;
+            if (lease == null) return 'no such lease (it may have run out: unsettled spend on it isn\'t charged)';
+            let charged = 0.0;
+            const duplicates = [];
+            for (const call in req.calls ?? []) {
+                const n = call[0];
+                const runes: float = call[1];
+                if (typeof n != 'int' || runes < 0) continue;
+                if (!rec.fresh(n, self.window)) {
+                    duplicates.push_back(n);
+                    continue;
+                }
+                rec.use(n, self.window);
+                charged += runes;
+            }
+            charged = min(charged, lease.amount); // a lease never pays for more than it held
+            rec.hold(budget, -lease.amount);
+            rec.charge(budget, charged);
+            rec.leases.remove(lease.lease);
+            out.lease = req.lease;
+            out.charged = Num::round(charged, 9);
+            out.duplicates = duplicates;
+        } else if (type == 'end') {
+            if (rec.expires > now) rec.expires = now;
+        }
+        rec.answer(budget, out);
+        null
+    }
+
+
+    /// A voucher a provider accepted: check the consumer's signature on it (and its budget), and keep it.
+    fn register(msg: NetworkMessage!, req: NetworkStateRequest!, out: NetworkStateAnswer!, now: ms!) -> str {
+        if (req.envelope == null || req.expires == null) return 'register needs the consumer\'s voucher and its expiry';
+        using v = new {};
+        try self.network().open(req.envelope, 'voucher', v, null, msg.from, false); // made out to the provider
+        catch (e, why) return `the consumer's voucher: ${why}`;
+        const voucher: NetworkVoucher = v.body;
+        if (!<NetworkVoucher>.schemafy(voucher) || voucher.voucher != req.voucher) return 'the voucher is not valid';
+        if (voucher.expires <= now) return 'the voucher has expired';
+        const unknown = self.unidentified('provider', msg.from) ?? self.unidentified('consumer', v.from);
+        if (unknown != null) return unknown;
+
+        let rec: NetworkVoucherRecord = self.vouchers.get(req.voucher);
+        if (rec != null) {
+            if (rec.provider != msg.from || rec.consumer != v.from) return 'this voucher belongs to another key';
+            if (voucher.seq <= rec.seq) return 'a newer voucher was already accepted';
+            if (voucher.budget != rec.budget) return 'a voucher keeps its budget';
+        }
+
+        let budget: NetworkBudgetState = null;
+        if (voucher.budget != null) {
+            if (voucher.operator != self.network().key) return 'the voucher\'s budget is at another operator';
+            budget = self.budgets.get(voucher.budget);
+            if (budget == null) return 'unknown budget';
+            if (budget.key != v.from) return 'the budget belongs to another key';
+            if (budget.expires <= now) return 'the budget has ended';
+            if (budget.providers != null && !budget.providers.contains(msg.from)) return 'the budget is not for this provider';
+        }
+
+        if (rec == null) {
+            rec = new NetworkVoucherRecord { voucher: req.voucher, provider: msg.from, consumer: v.from, budget: voucher.budget } on self.vouchers;
+            rec.leases = new {} on rec;
+            self.vouchers.insert(req.voucher, rec);
+        }
+        const expires: ms = req.expires < voucher.expires ? req.expires : voucher.expires; // the provider may shorten it
+        rec.seq = voucher.seq;
+        rec.envelope = req.envelope;
+        rec.customer = req.customer ?? ('nv_' + req.voucher);
+        rec.spend = voucher.spend;
+        rec.expires = expires;
+        rec.answer(budget, out);
+        null
+    }
+
+
+    /// A signed refusal (with where the voucher stands, when `figures` is given).
+    fn refuse(to: str, voucher: str, reason: str!, figures: NetworkStateAnswer = null) -> str {
+        using body = new { voucher, reason };
+        if (figures != null) {
+            body.spent = figures.spent;
+            body.remaining = figures.remaining;
+            body.budget_remaining = figures.budget_remaining;
+        }
+        self.network().envelope('refused', to, body)
+    }
+}
+
+
+#[type]
+/**
+ * A budget an operator holds (service.budgets.<id>): its consumer's key, its spend and expiry, the providers it's for,
+ * and what it has spent and has out on leases.
+ */
+NetworkBudgetState: {
+    str! budget: '';
+    str! key: '';
+    int! seq: 0;
+    float! spend: 0;
+    ms! expires: 0;
+    list providers: null;
+    float! spent: 0;
+    float! held: 0;
+}
+
+
+#[type]
+/**
+ * A voucher an operator holds (service.vouchers.<id>): whose it is (provider and consumer keys), the consumer's
+ * signed voucher (so any provider instance can check it), its spend, expiry, and budget, what it has spent and has out
+ * on leases, its leases, and its replay window (across every provider instance).
+ */
+NetworkVoucherRecord: {
+    str! voucher: '';
+    str! provider: '';
+    str! consumer: '';
+    int! seq: 0;
+    str envelope: null;
+    str customer: null;
+    float! spend: 0;
+    ms! expires: 0;
+    str budget: null;
+    float! spent: 0;
+    float! held: 0;
+    obj leases: null;
+    int! n: 0;
+    list! seen: [];
+
+
+    /// Is a request number new (not seen, and not older than the window)?
+    fn fresh(n: int!, window: int!) -> bool {
+        n >= 1 && n > self.n - window && !self.seen.contains(n)
+    }
+
+
+    /// Use up a request number.
+    fn use(n: int!, window: int!) {
+        self.seen.push_back(n);
+        if (self.seen.len() > window) self.seen.pop_front();
+        if (n > self.n) self.n = n;
+    }
+
+
+    /// What it can still spend now: its own spend, and its budget's, less what's spent and out on leases.
+    fn available(budget: NetworkBudgetState, now: ms!) -> float {
+        if (self.expires <= now) return 0;
+        let left = self.spend - self.spent - self.held;
+        if (budget != null) {
+            if (budget.expires <= now) return 0;
+            left = min(left, budget.spend - budget.spent - budget.held);
+        }
+        max(0, left)
+    }
+
+
+    /// Charge runes (to it and its budget).
+    fn charge(budget: NetworkBudgetState, runes: float!) {
+        self.spent = Num::round(self.spent + runes, 9); // money at 1e-9
+        if (budget != null) budget.spent = Num::round(budget.spent + runes, 9);
+    }
+
+
+    /// Hold (or, negative, release) runes for a lease (on it and its budget).
+    fn hold(budget: NetworkBudgetState, runes: float!) {
+        self.held = Num::round(max(0, self.held + runes), 9);
+        if (budget != null) budget.held = Num::round(max(0, budget.held + runes), 9);
+    }
+
+
+    /// Release leases past their end (unsettled spend on them isn't charged).
+    fn release_expired(service: NetworkOperatorService!, now: ms!) {
+        if (self.leases == null) return;
+        const budget: NetworkBudgetState = self.budget != null ? service.budgets.get(self.budget) : null;
+        const ended = [];
+        for (const (id, lease) in self.leases.fields()) {
+            if (lease.until <= now) ended.push_back(id);
+        }
+        for (const id in ended) {
+            const amount: float = self.leases.get(id).amount;
+            self.hold(budget, -amount);
+            self.leases.remove(id);
+        }
+    }
+
+
+    /// Where it stands (into an answer).
+    fn answer(budget: NetworkBudgetState, out: NetworkStateAnswer!) {
+        out.spent = Num::round(self.spent, 9);
+        out.remaining = Num::round(max(0, self.spend - self.spent), 9);
+        if (budget != null) out.budget_remaining = Num::round(max(0, budget.spend - budget.spent), 9);
+    }
+}
+
+
+#[type]
+/**
+ * A lease an operator gave a provider instance (bounded): how much, and until when.
+ */
+NetworkLeaseRecord: {
+    str! lease: '';
+    float! amount: 0;
+    ms! until: 0;
+}

@@ -16,9 +16,9 @@
 
 
 //
-// Network protocol tests: a provider and a consumer policy in one document, messages passed as text. The consumer's
-// transport hands each request to its provider's handle() (what a host's HTTP server does), so a call runs the whole
-// way: signed request, verify, allow(), receipt.
+// Network protocol tests: a provider and a consumer policy in one document. The consumer's network.transport hands
+// each request to its provider's handle() (what the provider's HTTP server does), so everything runs the whole way:
+// manifest, voucher, grant, signed calls, receipts, cancels.
 //
 // Test keys (never use these anywhere else):
 //   provider  secret f0hrbcBxEsY/2hs5j3AGA4Pv6ETSnIZvjk9bBvimM/o=  public eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE=
@@ -28,6 +28,9 @@
 
 #[type_ignore]
 Limitr Provider: {
+    /// The work of a route the provider allowed (see <TestNetwork>.work).
+    fn work(route: str, customer: str, req: map) -> str { <TestNetwork>.work(self, route, customer, req) }
+
     credits: {
         forecast: {
             label: 'Forecast'
@@ -59,14 +62,12 @@ Limitr Provider: {
             label: 'Acme Weather'
             url: 'https://api.acme.example'
             offers: ['agent']
-            endpoints: {
+            routes: {
                 forecast: {
                     description: 'The forecast for a city'
-                    method: 'GET'
                     path: '/forecast'
                     parameters: [{ name: 'city', description: 'City name' }]
                     entitlement: 'forecasts'
-                    value: 1
                 }
                 alert: {
                     description: 'Set a weather alert for a city'
@@ -78,7 +79,6 @@ Limitr Provider: {
                 }
                 staff: {
                     description: 'Internal only'
-                    method: 'GET'
                     path: '/staff'
                     entitlement: 'forecasts'
                     plans: ['internal']
@@ -105,9 +105,9 @@ Limitr Consumer: {
         fn signer(context: str, message: str) -> str { Key::sign('a47o0A9U6j7LYo/7XUvHLr+wNc8lPWPi79Pn3FPCaxI=', context, message) }
 
         /// Instead of HTTP: what the provider's server does with the request.
-        fn transport(url: str, method: str, path: str, body: str, headers: map) -> map {
-            self.last = map(('method', method), ('path', path), ('body', body), ('headers', headers));
-            <TestNetwork>.serve(self.peer, method, path, body, headers)
+        fn transport(request: map) -> map {
+            self.last = request;
+            <TestNetwork>.serve(self.peer, request)
         }
     }
 }
@@ -119,29 +119,45 @@ Limitr Consumer: {
  */
 TestNetwork: {
     #[static]
-    /// What a provider's HTTP server does: handle() the request, do the work when it's allowed, send the receipt.
-    fn serve(provider: obj!, method: str!, path: str!, body: str!, headers: map!) -> map {
-        const out = <Network>.handle(provider, method, path, body, headers);
-        const reply_headers = map();
-        if (out.get('receipt') != null) reply_headers.insert('limitr-network-receipt', out.get('receipt'));
-        if (!out.get('allowed')) return map(('status', out.get('status')), ('headers', reply_headers), ('body', out.get('reason')));
-        const work = switch (out.get('endpoint')) {
-            case 'forecast': 'sunny in ' + path.split('city=')[1]
-            case 'alert': 'alert set'
-            default: 'ok'
-        };
-        map(('status', 200), ('headers', reply_headers), ('body', work))
+    /// What a provider's HTTP server does: serve() the request, doing a route's work when it's allowed. The work is
+    /// the provider's own function (not an arrow: an arrow's captured variables are shared by every evaluation of it,
+    /// so tests running at once would see each other's provider).
+    fn serve(provider: obj!, request: map!) -> map {
+        provider.network.provider.serve(request, provider.work)
     }
 
     #[static]
-    /// A provider and a consumer of its own, connected for `spend` runes for an hour. Drop both when done.
-    fn connected(context: obj!, spend: float = 1) -> (obj, obj) {
+    /// A route's work, for the test providers.
+    fn work(provider: obj!, route: str!, customer: str!, req: map!) -> str {
+        switch (route) {
+            case 'forecast': 'sunny in ' + req.get('url').split('city=')[1]
+            case 'alert': 'alert set'
+            case 'bulk': {
+                // a route with no declared metering: the work meters (Ex. tests add one)
+                const count = (req.get('url').split('count=')[1] ?? '1') as int;
+                provider.allow(customer, 'forecasts', count) ? `${count} forecasts` : 'more than this request may spend'
+            }
+            default: 'ok'
+        }
+    }
+
+    #[static]
+    /// A provider and a consumer of its own (both typed and checked). Drop both when done.
+    fn pair(context: obj!) -> (obj, obj) {
         const provider = copy(context.Provider);
         const consumer = copy(context.Consumer);
+        assert(<Network>.load(provider), <LimitrValidation>.error_message);
+        assert(<Network>.load(consumer), <LimitrValidation>.error_message);
         consumer.network.peer = provider;
-        const voucher = <Network>.voucher(consumer, <Network>.manifest(provider), 'agent', spend, Time::now() + 1hr);
-        <Network>.connect(consumer, <Network>.accept(provider, voucher));
         (provider, consumer)
+    }
+
+    #[static]
+    /// A provider and a consumer connected for `spend` runes for an hour. Drop both when done.
+    fn connected(context: obj!, spend: float = 1) -> (obj, obj) {
+        const pair = <TestNetwork>.pair(context);
+        pair[1].network.connect('https://api.acme.example', 'agent', spend, Time::now() + 1hr);
+        pair
     }
 
     #[static]
@@ -154,15 +170,52 @@ TestNetwork: {
     }
 
     #[static]
-    /// Sign a message as the stranger (a key nobody trusts).
-    fn forge(message: str!, type: str!) -> str {
-        using env = new {
-            message,
+    /// The same message, signed by the stranger (a key nobody trusts).
+    fn forge(envelope: str!, type: str!) -> str {
+        using env = new {};
+        parse(envelope, env, 'json');
+        using forged = new {
+            message: env.message,
             key: '4u1k0ceiPMzbEFPlt5Uj/gxaR93jpFeVuYh6tE0OFEE=',
-            signature: Key::sign('SErKz820ZSInmfSAxwBnnBzEV+YbwVqw3fr6MjY5g8Q=', 'limitr-network/v1/' + type, message),
+            signature: Key::sign('SErKz820ZSInmfSAxwBnnBzEV+YbwVqw3fr6MjY5g8Q=', <Network>.CONTEXT + type, env.message),
         };
-        stringify('json', env)
+        stringify('json', forged)
     }
+
+    #[static]
+    /// What a call to `fn` throws ('' when it doesn't).
+    fn refused(fn: fn) -> str {
+        let out = '';
+        try fn();
+        catch (e, message) out = message;
+        out
+    }
+}
+
+
+/*****************************************************************************
+ * Policies.
+ *****************************************************************************/
+
+#[test]
+fn a_policy_network_is_typed_and_checked() {
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
+    assert_eq(typename provider.network, 'Network');
+    assert_eq(typename provider.network.provider, 'NetworkProvider');
+    assert_eq(typename provider.network.provider.routes.forecast, 'NetworkRoute');
+    assert_eq(provider.network.provider.routes.forecast.method, 'GET', 'defaults filled in');
+    assert_eq(provider.network.provider.routes.forecast.value, 1);
+    assert_eq(provider.network.provider.max_voucher, 30days);
+
+    provider.network.provider.routes.forecast.path = 'forecast';
+    assert_not(<Network>.load(provider));
+    assert(<LimitrValidation>.error_message.contains('must start with /'), <LimitrValidation>.error_message);
+    provider.network.provider.routes.forecast.path = '/forecast';
+    provider.network.provider.name = 'acme weather';
+    assert_not(<Network>.load(provider));
+    assert(<LimitrValidation>.error_message.contains('letters, numbers'), <LimitrValidation>.error_message);
 }
 
 
@@ -172,42 +225,99 @@ TestNetwork: {
 
 #[test]
 fn manifest_offers_what_the_provider_offers() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
     using m = new {};
-    <Network>.open(consumer, <Network>.manifest(provider), 'manifest', m);
-
+    consumer.network.open(provider.network.provider.manifest(), 'manifest', m);
     assert_eq(m.from, provider.network.key);
-    assert_eq(m.body.name, 'acme_weather');
-    assert(m.body.plans.agent != null, 'the offered plan');
-    assert_null(m.body.plans.internal, 'not the others');
-    assert_eq(m.body.credits.forecast.price, 0.01, 'what it costs the consumer');
-    assert_null(m.body.credits.forecast.overhead_cost, 'never what it costs the provider');
-    assert(m.body.endpoints.forecast != null && m.body.endpoints.alert != null);
-    assert_null(m.body.endpoints.staff, 'endpoints for plans it does not offer stay out');
+    using t = new {};
+    parse(m.body.terms, t, 'json'); // the terms come as text
+
+    assert_eq(t.name, 'acme_weather');
+    assert(t.plans.agent != null, 'the offered plan');
+    assert_null(t.plans.internal, 'not the others');
+    assert_eq(t.credits.forecast.price, 0.01, 'what it costs the consumer');
+    assert_null(t.credits.forecast.overhead_cost, 'never what it costs the provider');
+    assert(t.routes.forecast != null && t.routes.alert != null);
+    assert_null(t.routes.staff, 'routes for plans it does not offer stay out');
+}
+
+#[test]
+fn terms_price_credits_through_the_exchange() {
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
+    // a credit priced in USD by an exchange pair (it takes precedence over its own price), a tiered credit, and a
+    // credit worth 10 of the tiered one; and a rune that's worth 0.9 EUR to this provider
+    parse(`
+        exchange: {
+            forecast: { value: 0.02, currency: 'usd' }
+            pack: { value: 10, currency: 'call' }
+            rune: { value: 0.9, currency: 'eur' }
+            eur: { value: 1.11, currency: 'rune' }
+        }
+        credits: {
+            call: { label: 'Call', unit: 'call', pricing_model: 'tiered', tiers: [{ up_to: 100, price: { amount: 0.001 } }, { price: { amount: 0.0005 } }] }
+            pack: { label: 'Pack', unit: 'pack' }
+        }
+        plans: { agent: { entitlements: {
+            calls: { limit: { credit: 'call', mode: 'soft', value: 0 } }
+            packs: { limit: { credit: 'pack', mode: 'soft', value: 0 } }
+        } } }
+    `, provider, 'stof');
+    using t = new {};
+    parse(provider.network.provider.terms_text(), t, 'json');
+
+    assert_eq(t.rune.value, 0.9, "the provider's rune, from its exchange");
+    assert_eq(t.rune.currency, 'eur');
+    assert_eq(t.credits.forecast.price, 0.02, 'through its exchange pair, in runes');
+    assert_eq(t.credits.forecast.pricing_model, 'flat');
+    assert_eq(t.credits.call.pricing_model, 'tiered');
+    assert_eq(t.credits.call.tiers[0].price, 0.001);
+    assert_eq(t.credits.call.tiers[0].up_to, 100.0);
+    assert_null(t.credits.call.tiers[1].up_to);
+    assert_eq(t.credits.pack.pricing_model, 'tiered', "the tiered credit's pricing");
+    assert_eq(t.credits.pack.tiers[0].price, 0.01, 'a pack is 10 calls');
+    assert_eq(t.credits.pack.tiers[0].up_to, 10.0, 'the first 100 calls are the first 10 packs');
+    assert_eq(t.credits.pack.tiers[1].price, 0.005);
+    // what the terms say a unit costs is what the policy charges for it
+    assert_eq(Num::round(provider.price_units('forecast', 1), 9), t.credits.forecast.price);
+    assert_eq(Num::round(provider.price_units('pack', 1), 9), t.credits.pack.tiers[0].price);
 }
 
 #[test]
 fn terms_digest_is_the_same_on_both_sides() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
     using m = new {};
-    <Network>.open(consumer, <Network>.manifest(provider), 'manifest', m);
-    assert_eq(<Network>.terms_digest_of(m.body), <Network>.terms_digest(provider));
+    consumer.network.open(provider.network.provider.manifest(), 'manifest', m);
+    // the SHA-256 of the terms text as sent: anyone can compute it, in any language
+    assert_eq(<Network>.text_digest(m.body.terms), provider.network.provider.terms_digest());
+    assert_eq(provider.network.provider.terms_digest(), sha256(provider.network.provider.terms_text()));
+    assert_eq(provider.network.provider.terms_digest().len(), 64);
+}
+
+#[test]
+fn a_failed_fetch_is_a_response() {
+    // too large, or timed out (Http::fetch's max and timeout: the network's max_response and request_timeout)
+    const out = <Network>.response(map(('error', 'the response is larger than 10485760 bytes')));
+    assert_eq(out.get('status'), 0);
+    assert(out.get('body').contains('larger than'));
 }
 
 #[test]
 fn a_changed_manifest_is_refused() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
-    const manifest = <Network>.manifest(provider);
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
     using env = new {};
-    parse(manifest, env, 'json');
-    const tampered = stringify('json', new { message: env.message.replace('0.01', '0.0001'), key: env.key, signature: env.signature } on env);
-    let failed = '';
-    try <Network>.open(consumer, tampered, 'manifest', using new {});
-    catch (e, message) failed = message;
-    assert(failed.contains('signature'), failed);
+    parse(provider.network.provider.manifest(), env, 'json');
+    env.message = env.message.replace('0.01', '0.0001');
+    const tampered = stringify('json', env);
+    using m = new {};
+    assert(<TestNetwork>.refused(() => consumer.network.open(tampered, 'manifest', m)).contains('signature'));
 }
 
 
@@ -221,8 +331,8 @@ fn connect_builds_capabilities() {
     using provider = pair[0];
     using consumer = pair[1];
 
-    const conn = consumer.network.connections.acme_weather;
-    assert(conn != null);
+    const conn = consumer.network.connection('acme_weather');
+    assert_eq(typename conn, 'NetworkConnection');
     assert_eq(conn.customer, 'nv_' + conn.voucher);
     assert(consumer.capability('acme_weather_forecast') != null);
     assert(consumer.capability('acme_weather_alert') != null);
@@ -237,8 +347,7 @@ fn connect_builds_capabilities() {
     assert(customer.expires != null && customer.expires <= latest);
 
     // the tools an agent sees
-    const tools = consumer.claude_tools();
-    assert(tools.contains('acme_weather_forecast'));
+    assert(consumer.claude_tools().contains('acme_weather_forecast'));
 }
 
 #[test]
@@ -251,7 +360,7 @@ fn a_call_runs_end_to_end() {
     assert_eq(consumer.run_capability('acme_weather_alert', {'city': 'Boston', 'when': 'rain'}), 'alert set');
 
     // both sides agree on what it cost: 1 + 2 forecasts at 0.01
-    const conn = consumer.network.connections.acme_weather;
+    const conn = consumer.network.connection('acme_weather');
     assert_eq(conn.spent, 0.03);
     assert_eq(conn.remaining, 0.97);
     assert_eq(provider.customer(conn.customer).caps.network.meter_value, 0.03);
@@ -265,67 +374,74 @@ fn the_spend_is_a_cap_and_an_update_raises_it() {
     using consumer = pair[1];
 
     assert_eq(consumer.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
-    let failed = '';
-    try consumer.run_capability('acme_weather_forecast', {'city': 'Denver'});
-    catch (e, message) failed = message;
-    assert(failed.contains('402'), failed);
+    // a refusal is the tool's result (so an agent can act on it), with what the voucher has spent and has left
+    using result = new {};
+    parse(consumer.run_capability('acme_weather_forecast', {'city': 'Denver'}), result, 'json');
+    assert_eq(result.refused.provider, 'acme_weather');
+    assert_eq(result.refused.status, 402);
+    assert(result.refused.reason.contains('not allowed'));
+    assert_eq(result.refused.spent, 0.01);
+    assert_eq(result.refused.remaining, 0.005);
 
     // more spend: a newer voucher, a new grant
-    <Network>.connect(consumer, <Network>.accept(provider, <Network>.update(consumer, 'acme_weather', 1)));
+    consumer.network.update('acme_weather', 1);
     assert_eq(consumer.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
-    assert_eq(provider.customer(consumer.network.connections.acme_weather.customer).caps.network.value, 1);
+    assert_eq(provider.customer(consumer.network.connection('acme_weather').customer).caps.network.value, 1);
 }
 
 #[test]
 fn refused_vouchers() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
-    const manifest = <Network>.manifest(provider);
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
 
     // a plan it doesn't offer
-    let failed = '';
-    try <Network>.voucher(consumer, manifest, 'internal', 1, Time::now() + 1hr);
-    catch (e, message) failed = message;
-    assert(failed.contains('internal'), failed);
+    assert(<TestNetwork>.refused(() => consumer.network.connect('https://api.acme.example', 'internal', 1, Time::now() + 1hr)).contains('internal'));
 
-    // terms that changed since the manifest
-    const voucher = <Network>.voucher(consumer, manifest, 'agent', 1, Time::now() + 1hr);
+    // terms that changed since the voucher
+    consumer.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
     provider.credits.forecast.price.amount = 0.02;
-    using refused = <TestNetwork>.message(<Network>.accept(provider, voucher), new {});
-    assert_eq(refused.type, 'refused');
-    assert(refused.body.reason.contains('terms'), refused.body.reason);
-    assert_null(provider.customer('nv_' + consumer.network.connections.acme_weather.voucher), 'no customer');
+    const failed = <TestNetwork>.refused(() => consumer.network.update('acme_weather', 2));
+    assert(failed.contains('terms have changed'), failed);
 
     // a voucher someone else signed
-    using v = <TestNetwork>.message(voucher, new {});
-    using forged = <TestNetwork>.message(<Network>.accept(provider, <TestNetwork>.forge(stringify('json', v), 'voucher')), new {});
+    const last: map = consumer.network.last;
+    using forged = <TestNetwork>.message(provider.network.provider.accept(<TestNetwork>.forge(last.get('body'), 'voucher')), new {});
     assert_eq(forged.type, 'refused', 'signed by a key that is not its sender');
 }
 
 #[test]
 fn a_provider_shortens_a_voucher() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
-    consumer.network.peer = provider;
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
     provider.network.provider.max_voucher = 1hr;
-    const voucher = <Network>.voucher(consumer, <Network>.manifest(provider), 'agent', 1, Time::now() + 30days);
-    using grant = <TestNetwork>.message(<Network>.accept(provider, voucher), new {});
+    consumer.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 30days);
     const latest: ms = Time::now() + 1hr;
-    const expires: ms = grant.body.expires;
-    assert(expires <= latest);
+    assert(consumer.network.connection('acme_weather').expires <= latest);
 }
 
 #[test]
 fn a_grant_from_someone_else_is_refused() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
-    const voucher = <Network>.voucher(consumer, <Network>.manifest(provider), 'agent', 1, Time::now() + 1hr);
-    using grant = <TestNetwork>.message(<Network>.accept(provider, voucher), new {});
-    let failed = '';
-    try <Network>.connect(consumer, <TestNetwork>.forge(stringify('json', grant), 'grant'));
-    catch (e, message) failed = message;
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
+    consumer.network.transport = (request: map): map => {
+        const out = <TestNetwork>.serve(provider, request);
+        if (request.get('url').ends_with('/limitr-network/voucher')) out.insert('body', <TestNetwork>.forge(out.get('body'), 'grant'));
+        out
+    };
+    const failed = <TestNetwork>.refused(() => consumer.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr));
     assert(failed.contains('unexpected key'), failed);
     assert_null(consumer.capability('acme_weather_forecast'));
+}
+
+#[test]
+fn a_voucher_without_an_end_is_refused() {
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
+    assert(<TestNetwork>.refused(() => consumer.network.connect('https://api.acme.example', 'agent', 1, Time::now() - 1s)).contains('expiry'));
 }
 
 
@@ -340,11 +456,10 @@ fn a_request_works_once() {
     using consumer = pair[1];
     consumer.run_capability('acme_weather_forecast', {'city': 'Boston'});
 
-    const last = consumer.network.last;
-    const again = <Network>.handle(provider, last.get('method'), last.get('path'), last.get('body'), last.get('headers'));
-    assert_not(again.get('allowed'));
+    const again = provider.network.provider.handle(consumer.network.last);
+    assert_eq(again.get('status'), 401);
     assert_eq(again.get('reason'), 'this request was already used');
-    assert_eq(provider.value(consumer.network.connections.acme_weather.customer, 'forecasts'), 1, 'and it was not metered again');
+    assert_eq(provider.value(consumer.network.connection('acme_weather').customer, 'forecasts'), 1, 'and it was not metered again');
 }
 
 #[test]
@@ -352,23 +467,27 @@ fn a_request_is_for_exactly_what_was_signed() {
     const pair = <TestNetwork>.connected(self);
     using provider = pair[0];
     using consumer = pair[1];
-    consumer.network.transport = (url: str, method: str, path: str, body: str, headers: map): map => {
-        consumer.network.last = map(('method', method), ('path', path), ('body', body), ('headers', headers));
+    consumer.network.transport = (request: map): map => {
+        consumer.network.last = request;
         map(('status', 200), ('headers', map()), ('body', ''))
     };
     consumer.run_capability('acme_weather_alert', {'city': 'Boston', 'when': 'rain'});
-    const last = consumer.network.last;
-    const headers = last.get('headers');
+    const sent = consumer.network.last;
+    const handle = (change: map): map => {
+        const request = copy(sent);
+        for (const (k, v) in change) request.insert(k, v);
+        provider.network.provider.handle(request)
+    };
 
-    assert_eq(<Network>.handle(provider, 'POST', '/alerts', last.get('body').replace('rain', 'snow'), headers).get('reason'), 'the signature is for another body');
-    assert_eq(<Network>.handle(provider, 'GET', '/forecast', last.get('body'), headers).get('reason'), 'the signature is for another request');
-    const forged = copy(headers);
-    forged.insert('limitr-network-signature', Key::sign('SErKz820ZSInmfSAxwBnnBzEV+YbwVqw3fr6MjY5g8Q=', 'limitr-network/v1/request', headers.get('limitr-network-request')));
-    assert_eq(<Network>.handle(provider, 'POST', '/alerts', last.get('body'), forged).get('reason'), 'the signature does not match');
-    assert_eq(<Network>.handle(provider, 'POST', '/alerts', last.get('body'), map()).get('status'), 401);
+    assert_eq(handle(map(('body', sent.get('body').replace('rain', 'snow')))).get('reason'), 'the signature is for another body');
+    assert_eq(handle(map(('url', 'https://api.acme.example/forecast'), ('method', 'GET'))).get('reason'), 'the signature is for another request');
+    const forged = copy(sent.get('headers'));
+    forged.insert('limitr-network-signature', Key::sign('SErKz820ZSInmfSAxwBnnBzEV+YbwVqw3fr6MjY5g8Q=', 'limitr-network/v1/request', forged.get('limitr-network-request')));
+    assert_eq(handle(map(('headers', forged))).get('reason'), 'the signature does not match');
+    assert_eq(handle(map(('headers', map()))).get('status'), 401);
 
     // the real one still works (none of the above used it up)
-    assert(<Network>.handle(provider, 'POST', '/alerts', last.get('body'), headers).get('allowed'));
+    assert_eq(provider.network.provider.handle(sent).get('customer'), consumer.network.connection('acme_weather').customer);
 }
 
 #[test]
@@ -377,16 +496,15 @@ fn requests_can_arrive_out_of_order() {
     using provider = pair[0];
     using consumer = pair[1];
     const sent = [];
-    consumer.network.transport = (url: str, method: str, path: str, body: str, headers: map): map => {
-        sent.push_back(map(('method', method), ('path', path), ('body', body), ('headers', headers)));
+    consumer.network.transport = (request: map): map => {
+        sent.push_back(request);
         map(('status', 200), ('headers', map()), ('body', ''))
     };
     for (const i in 3) consumer.run_capability('acme_weather_forecast', {'city': 'Boston'});
     for (const i in [2, 0, 1]) {
-        const r = sent[i];
-        assert(<Network>.handle(provider, r.get('method'), r.get('path'), r.get('body'), r.get('headers')).get('allowed'), `request ${i}`);
+        assert_eq(provider.network.provider.handle(sent[i]).get('status'), 200, `request ${i}`);
     }
-    assert_eq(provider.value(consumer.network.connections.acme_weather.customer, 'forecasts'), 3);
+    assert_eq(provider.value(consumer.network.connection('acme_weather').customer, 'forecasts'), 3);
 }
 
 
@@ -399,17 +517,15 @@ fn a_connection_is_sealed_and_confined() {
     const pair = <TestNetwork>.connected(self);
     using provider = pair[0];
     using consumer = pair[1];
-    const link = consumer.network.connections.acme_weather.link;
+    const link = consumer.network.connection('acme_weather').link;
+    assert_eq(typename link, 'NetworkLink');
     const info = sealed(link);
     assert(info.get('fields'));
     assert(info.get('removable'));
     assert_eq(info.get('confined')[0].get('hosts'), ['api.acme.example']);
     assert_eq(info.get('confined')[0].get('reads'), []);
 
-    let failed = '';
-    try link.url = 'https://elsewhere.example';
-    catch (e, message) failed = message;
-    assert(failed.contains('sealed'), failed);
+    assert(<TestNetwork>.refused(() => { link.url = 'https://elsewhere.example'; }).contains('sealed'));
     assert_eq(link.url, 'https://api.acme.example');
 }
 
@@ -423,10 +539,10 @@ fn cancel_ends_it_on_both_sides() {
     const pair = <TestNetwork>.connected(self);
     using provider = pair[0];
     using consumer = pair[1];
-    const id = consumer.network.connections.acme_weather.customer;
+    const id = consumer.network.connection('acme_weather').customer;
 
-    assert(<Network>.cancelled(provider, <Network>.cancel(consumer, 'acme_weather')));
-    assert_null(consumer.network.connections.acme_weather);
+    assert(consumer.network.cancel('acme_weather'));
+    assert_null(consumer.network.connection('acme_weather'));
     assert_null(consumer.capability('acme_weather_forecast'));
     assert_not(provider.allow(id, 'forecasts', 1), 'the voucher customer has ended');
     assert(provider.customer(id) != null, 'and is kept until the sweep');
@@ -437,11 +553,16 @@ fn revoke_ends_it_on_both_sides() {
     const pair = <TestNetwork>.connected(self);
     using provider = pair[0];
     using consumer = pair[1];
-    const conn = consumer.network.connections.acme_weather;
+    const conn = consumer.network.connection('acme_weather');
     const id = conn.customer;
 
-    assert(<Network>.revoked(consumer, <Network>.revoke(provider, conn.voucher, 'done')));
-    assert_null(consumer.network.connections.acme_weather);
+    // a revoke counts only when the provider signed it, whoever delivers it (Ex. an operator relaying it)
+    using body = new { voucher: conn.voucher, reason: 'not the provider' };
+    assert_not(consumer.network.revoked(consumer.network.envelope('revoke', consumer.network.key, body)), 'another key');
+    assert(consumer.network.connection('acme_weather') != null);
+
+    assert(consumer.network.revoked(provider.network.provider.revoke(conn.voucher, 'done')));
+    assert_null(consumer.network.connection('acme_weather'));
     assert_null(consumer.capability('acme_weather_forecast'));
     assert_not(provider.allow(id, 'forecasts', 1));
 }
@@ -451,22 +572,45 @@ fn the_sweep_removes_ended_vouchers() {
     const pair = <TestNetwork>.connected(self);
     using provider = pair[0];
     using consumer = pair[1];
-    const id = consumer.network.connections.acme_weather.customer;
+    const id = consumer.network.connection('acme_weather').customer;
     consumer.run_capability('acme_weather_forecast', {'city': 'Boston'});
 
-    assert_eq(<Network>.sweep(provider), 0, 'not ended');
-    <Network>.cancelled(provider, <Network>.cancel(consumer, 'acme_weather'));
-    assert_eq(<Network>.sweep(provider), 0, 'ended, but kept for a week');
-    assert_eq(<Network>.sweep(provider, Time::now() + 8days), 1);
+    const sweeper = provider.network.provider;
+    assert_eq(sweeper.sweep(), 0, 'not ended');
+    consumer.network.cancel('acme_weather');
+    assert_eq(sweeper.sweep(), 0, 'ended, but kept for a week');
+    assert_eq(sweeper.sweep(Time::now() + 8days), 1);
     assert_null(provider.customer(id));
 }
 
 #[test]
-fn a_voucher_without_an_end_is_refused() {
-    using provider = copy(self.Provider);
-    using consumer = copy(self.Consumer);
-    let failed = '';
-    try <Network>.voucher(consumer, <Network>.manifest(provider), 'agent', 1, Time::now() - 1s);
-    catch (e, message) failed = message;
-    assert(failed.contains('expiry'), failed);
+fn a_provider_must_fit_its_policy() {
+    const pair = <TestNetwork>.pair(self);
+    using provider = pair[0];
+    using consumer = pair[1];
+    assert(provider.valid(), <LimitrValidation>.error_message); // the policy's valid() checks its network
+
+    provider.network.provider.offers.push_back('enterprise');
+    assert_not(provider.valid());
+    assert(<LimitrValidation>.error_message.contains('enterprise'));
+    provider.network.provider.offers.pop_back();
+
+    provider.network.provider.routes.forecast.entitlement = 'maps';
+    assert_not(provider.valid());
+    assert(<LimitrValidation>.error_message.contains("doesn't have"));
+    provider.network.provider.routes.forecast.entitlement = 'forecasts';
+
+    provider.network.provider.routes.alert.method = 'GET';
+    provider.network.provider.routes.alert.path = '/forecast';
+    assert_not(provider.valid());
+    assert(<LimitrValidation>.error_message.contains('both GET /forecast'));
+    provider.network.provider.routes.alert.method = 'POST';
+    provider.network.provider.routes.alert.path = '/alerts';
+    assert(provider.valid(), <LimitrValidation>.error_message);
+
+    // a policy without a network gets none from valid()
+    assert(consumer.valid());
+    using plain = new Limitr {};
+    assert(plain.valid());
+    assert_null(plain.network);
 }

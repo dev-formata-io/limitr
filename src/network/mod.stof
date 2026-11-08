@@ -17,7 +17,7 @@
 
 // Limitr Network: an optional module on top of the engine (src/spec), compiled next to it and loaded on demand
 // (limitr.network() in the SDKs). See SPEC.md.
-import './network' as self.LimitrNetwork;
+import './spec/mod' as self.LimitrNetwork;
 
 #[test]
 import './tests/mod';

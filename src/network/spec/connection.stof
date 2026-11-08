@@ -1,0 +1,554 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#[type]
+/**
+ * A consumer's connection to a provider (policy.network.connections.<provider name>): its voucher, what the provider
+ * offers (from the terms the voucher agreed to) and granted, what it has spent, and the parts that reach the provider:
+ * its link (the sealed fetch), and, when this policy trusts the provider's logic, its toolbox (the provider's tools,
+ * sealed and confined, with a gate as their one way out). Made by Network.connect().
+ */
+NetworkConnection: {
+    #[type_ignore]
+    /// Prototype-only constant - reference as <NetworkConnection>.GATE. The toolbox's gate, parsed into each
+    /// connection's gate object (outside the toolbox): call() makes a request to one of the provider's routes for this
+    /// voucher (or, with may_call, another connection's), and json() reads JSON text as a value. Both run as
+    /// themselves (unconfined), and hand back only values.
+    str GATE: "fn call(route: str, args: map = map(), provider?: str) -> str { const conn: NetworkConnection = self.parent(); conn.tool_request(route, args, provider) } fn json(text: str) -> unknown { <Network>.json_value(text) }";
+
+    /// The provider's public key: its grants and receipts must be signed by it.
+    str! provider: '';
+
+    /// The provider's name (its tools here are '<name>_<route or tool>').
+    str! name: '';
+
+    /// How people see the provider.
+    str! label: '';
+
+    /// The provider's URL.
+    str! url: '';
+
+    /// Who the provider is (its manifest's identity statement, checked with this policy's identity operator) and who
+    /// said so (that operator's key), or null.
+    str subject: null;
+    str issuer: null;
+
+    /// The digest of the terms the voucher agrees to.
+    str! terms: '';
+
+    /// The voucher's ID.
+    str! voucher: '';
+
+    /// The voucher's seq (it goes up with each update).
+    int! seq: 1;
+
+    /// The voucher's plan.
+    str! plan: '';
+
+    /// The most the voucher spends (runes), until `expires`.
+    float! spend: 0;
+    ms! expires: 0;
+
+    /// The last request number used.
+    int! n: 0;
+
+    /// What the voucher has spent and has left, from the provider's latest receipt.
+    float! spent: 0;
+    float! remaining: 0;
+
+    /// The voucher's customer on the provider's side (from its grant).
+    str customer: null;
+
+    /// The budget it spends from (policy.network.budgets.<id>), and its operator's public key, or null.
+    str budget: null;
+    str operator: null;
+
+    /// What the budget has left (runes), from the provider's latest receipt.
+    float budget_remaining: null;
+
+    #[schema((target_val: float): bool => target_val == null || target_val > 0 ? true : <LimitrValidation>.error('A network connection\'s max must be more than 0'))]
+    /// The most one request may spend (runes), or null (only the voucher's spend). Signed into each request, so the
+    /// provider caps it there.
+    float max: null;
+
+    #[schema((target_val: str!): bool => <Network>.TRUST.contains(target_val) ? true : <LimitrValidation>.error(`A network connection's trust is 'declarations' or 'logic', not "${target_val}"`))]
+    /**
+     * How far this policy trusts the provider: 'declarations' (the default: its routes are tools as-is, and none of
+     * its code runs here) or 'logic' (its own tools run here too, sealed and confined).
+     */
+    str! trust: 'declarations';
+
+    /// With 'logic': the other connections (by provider name) this provider's tools may call too, spending their
+    /// vouchers (Ex. your own providers working together). Only this policy grants it.
+    list! may_call: [];
+
+    /// What the provider offers, from the terms the voucher agreed to: its routes and tools (their terms, by name), and
+    /// the tools' logic (Stof source, or null).
+    obj offer: null;
+
+    /// The routes and tools the grant reaches, by name.
+    list! routes: [];
+    list! tools: [];
+
+    /// The sealed part that makes the calls (from the grant), or null before the grant.
+    NetworkLink link: null;
+
+    /// The provider's tools (with trust 'logic'): its logic, sealed and confined. Null otherwise.
+    obj toolbox: null;
+
+    /// The toolbox's gate (see GATE): outside the toolbox, so its functions run as themselves.
+    obj gate: null;
+
+    /// The refusal the toolbox's last refused request threw (so a tool's result is a refusal only when it really was
+    /// one: a tool can't pass off text of its own as one).
+    str refused: null;
+
+
+    /// The policy this connection belongs to.
+    fn policy() -> Limitr {
+        <LimitrValidation>.get_policy(self)
+    }
+
+
+    /// The network this connection belongs to.
+    fn network() -> Network {
+        self.policy().network
+    }
+
+
+    /**
+     * Keep what the provider offers (its routes, tools, and logic) from the terms the voucher agrees to, checked once
+     * (a terms object, from the provider's signed manifest).
+     */
+    fn take_offer(terms: obj!) {
+        if (self.offer != null) drop(self.offer);
+        self.offer = new {} on self;
+        self.offer.routes = new {} on self.offer;
+        self.offer.tools = new {} on self.offer;
+        if (typeof terms.routes == 'obj') parse(stringify('json', terms.routes), self.offer.routes, 'json');
+        if (typeof terms.tools == 'obj') parse(stringify('json', terms.tools), self.offer.tools, 'json');
+        self.offer.logic = typeof terms.logic == 'str' ? terms.logic : null;
+    }
+
+
+    /**
+     * Send this connection's voucher (POST <url>/limitr-network/voucher), check the grant that comes back, and build
+     * the link and this policy's tools for the provider. Returns the tools' names. Throws with the reason when the
+     * provider refuses (or the grant doesn't match the voucher).
+     */
+    fn send_voucher() -> list {
+        const network = self.network();
+        using body = new NetworkVoucher {
+            voucher: self.voucher,
+            seq: self.seq,
+            plan: self.plan,
+            terms: self.terms,
+            spend: self.spend,
+            expires: self.expires,
+            name: network.name,
+            budget: self.budget,
+            operator: self.operator,
+            identity: network.identity,
+        };
+        const voucher = network.envelope('voucher', self.provider, body);
+        const response = network.send(map(
+            ('method', 'POST'),
+            ('url', self.url + <Network>.VOUCHER_PATH),
+            ('headers', map(('content-type', 'application/json'))),
+            ('body', voucher),
+        ));
+        self.take_grant(<Network>.expect(response, 'grant'))
+    }
+
+
+    /**
+     * Take the provider's grant: check it, then make the link (sealed, confined to the provider's host) and this
+     * policy's tools for the provider, replacing any from an earlier grant. Returns the tools' names.
+     */
+    fn take_grant(envelope: str!) -> list {
+        using msg = new {}; // made first, so it's dropped even when open() throws
+        self.network().open(envelope, 'grant', msg, self.provider);
+        const grant: NetworkGrant = msg.body;
+        if (grant.voucher != self.voucher || grant.seq != self.seq) throw('the grant is for another voucher');
+        if (grant.spend > self.spend || grant.expires > self.expires) throw('the grant is for more than the voucher');
+        if (grant.url != self.url) throw("the grant's URL isn't the manifest's");
+        for (const route in grant.routes) {
+            if (self.offer.routes.get(route) == null) throw(`the grant reaches route '${route}', which the terms don't have`);
+        }
+        for (const tool in grant.tools) {
+            if (self.offer.tools.get(tool) == null) throw(`the grant reaches tool '${tool}', which the terms don't have`);
+        }
+        self.customer = grant.customer;
+        self.spend = grant.spend;
+        self.expires = grant.expires;
+        self.remaining = grant.spend - self.spent;
+        self.routes = grant.routes;
+        self.tools = grant.tools;
+
+        if (self.link != null) drop(self.link);
+        self.link = <NetworkLink>.make(self);
+        self.build()
+    }
+
+
+    /**
+     * Make this policy's tools for the provider (replacing any): each route the grant reaches is one as-is (unless
+     * the provider marks it `tool: false`), and with trust 'logic', each of the provider's tools it reaches, run in its
+     * toolbox. Returns their names.
+     */
+    fn build() -> list {
+        self.remove_capabilities();
+        self.remove_toolbox();
+        const policy = self.policy();
+        const names = [];
+        for (const route in self.routes) {
+            const decl = self.offer.routes.get(route);
+            if (decl == null || decl.tool == false) continue;
+            const cap = new NetworkCapability { name: self.name + '_' + route, description: decl.description ?? '', connection: self.name, route };
+            <NetworkConnection>.add_parameters(cap, decl.parameters);
+            policy.set_capability(cap);
+            names.push_back(cap.name);
+        }
+        if (self.trust != 'logic' || self.tools.len() < 1 || self.offer.logic == null) return names;
+
+        self.make_toolbox();
+        for (const tool in self.tools) {
+            const decl = self.offer.tools.get(tool);
+            const cap = new NetworkToolCapability { name: self.name + '_' + tool, description: decl.description ?? '', connection: self.name, tool };
+            <NetworkConnection>.add_parameters(cap, decl.parameters);
+            policy.set_capability(cap);
+            names.push_back(cap.name);
+        }
+        names
+    }
+
+
+    /**
+     * Make the toolbox: the provider's logic, parsed as untrusted source (declarations only), given its gate (api.call,
+     * api.json), and sealed once with everything: fields frozen (it makes no objects and keeps no state), removable
+     * (dropped whole with the connection), confined (it reads nothing outside itself and reaches no host), only
+     * <Network>.TOOL_LIBS, the network's tool_time per call, and the gate's two functions as its only way out.
+     */
+    fn make_toolbox() {
+        const network = self.network();
+        self.gate = new {} on self;
+        parse(<NetworkConnection>.GATE, self.gate);
+        const box = new {} on self;
+        try parse(self.offer.logic, box, 'stof', 'untrusted');
+        catch (e, why) {
+            drop(box);
+            throw(`${self.label}'s logic doesn't parse as untrusted source: ${why}`);
+        }
+        box.api = new { call: self.gate.call, json: self.gate.json } on box;
+        seal(box, true, removable = true, reads = [], hosts = [], libs = <Network>.TOOL_LIBS, time = network.tool_time, calls = [self.gate.call, self.gate.json]);
+        self.toolbox = box;
+    }
+
+
+    /// Remove the toolbox and its gate.
+    fn remove_toolbox() {
+        if (self.toolbox != null) drop(self.toolbox); // sealed removable: dropped whole
+        if (self.gate != null) drop(self.gate);
+    }
+
+
+    #[static]
+    /// Give a capability its parameters (from a route's or tool's terms).
+    fn add_parameters(cap: Capability!, parameters: list) {
+        for (const p in parameters ?? []) {
+            cap.parameters.push_back(new CapabilityParam {
+                name: p.name ?? '',
+                description: p.description ?? '',
+                schema_type: p.schema_type ?? 'string',
+                required: p.required ?? true,
+            } on cap);
+        }
+    }
+
+
+    /**
+     * Make a request to one of the provider's routes with arguments: signed for this voucher, sent through the link (or
+     * the network's transport when it has one). Checks the receipt that comes back, and returns the response (a
+     * NetworkResponse map). Throws for a route the grant doesn't reach, and when the provider can't be reached at all.
+     */
+    fn request(route: str!, args: map = map()) -> map {
+        if (self.link == null) throw(`'${self.name}' has no grant yet`);
+        const decl = self.routes.contains(route) ? self.offer.routes.get(route) : null;
+        if (decl == null) throw(`'${self.name}' has no route '${route}'`);
+        const network = self.network();
+
+        const method = (decl.method ?? 'GET').upper();
+        let path = decl.path ?? '/';
+        let body = '';
+        if (method == 'GET' || method == 'DELETE') {
+            const query = [];
+            for (const (k, v) in args) query.push_back(<Network>.encode(str(k)) + '=' + <Network>.encode(str(v)));
+            if (query.len() > 0) path = path + '?' + query.join('&');
+        } else {
+            using json = Obj::from_map(args);
+            body = stringify('json', json);
+        }
+
+        self.n += 1;
+        using signed = new NetworkSignedRequest {
+            protocol: <Network>.PROTOCOL,
+            voucher: self.voucher,
+            n: self.n,
+            method,
+            path,
+            body: <Network>.text_digest(body),
+            issued: Time::now(),
+            max: self.max,
+        };
+        const request_text = stringify('json', signed);
+        const headers = map(
+            ('content-type', 'application/json'),
+            (<Network>.REQUEST_HEADER, request_text),
+            (<Network>.SIGNATURE_HEADER, network.sign('request', request_text)),
+        );
+
+        const response: map = network.transport != null
+            ? network.send(map(('method', method), ('url', self.url + path), ('headers', headers), ('body', body)))
+            : self.link.fetch(method, path, body, headers);
+        const problem = self.take_receipt(response, self.n);
+        if (problem != null) return map(('status', 0), ('headers', map()), ('body', problem));
+        response
+    }
+
+
+    /**
+     * Run a route as a tool: request() it, and return the response body (text).
+     *
+     * A refusal is a result, not an error, so an agent can act on it: the JSON text
+     * { "refused": { provider, status, reason, spent, remaining, budget_remaining, expires } }, and a
+     * 'network-refused' event with the same fields (see refusal()). (Raising a voucher's spend is the host's decision:
+     * update().) Only a provider that can't be reached at all throws.
+     */
+    fn call(route: str!, args: map = map()) -> str {
+        const response = self.request(route, args);
+        const status = response.get('status') ?? 0;
+        if (status >= 200 && status <= 299) return response.get('body') ?? '';
+        self.refusal(response)
+    }
+
+
+    /// A refused response as the JSON text { "refused": { ... } }, after a 'network-refused' event with its fields.
+    fn refusal(response: map!) -> str {
+        using refused = new {
+            provider: self.name,
+            status: response.get('status') ?? 0,
+            reason: response.get('body') ?? '',
+            spent: self.spent,
+            remaining: self.remaining,
+            budget_remaining: self.budget_remaining,
+            expires: self.expires,
+        };
+        await <Event>.send('network-refused', refused);
+        using out = new {};
+        out.refused = refused;
+        stringify('json', out)
+    }
+
+
+    /**
+     * A request from the toolbox (its gate's call()): to one of this provider's routes, or with `provider`, to one of
+     * another connection's (only one this connection's may_call lists). Returns the response body. A refusal throws
+     * its JSON text, so it ends the tool (whose result it then is) unless the tool catches it.
+     */
+    fn tool_request(route: str!, args: map!, provider?: str) -> str {
+        let target: NetworkConnection = self;
+        if (provider != null && provider != self.name) {
+            if (!self.may_call.contains(provider)) throw(`${self.label}'s tools may not call '${provider}' (this connection's may_call)`);
+            target = self.network().connection(provider);
+            if (target == null) throw(`no connection '${provider}'`);
+        }
+        const response = target.request(route, args);
+        const status = response.get('status') ?? 0;
+        if (status >= 200 && status <= 299) return response.get('body') ?? '';
+        self.refused = target.refusal(response);
+        throw(self.refused);
+    }
+
+
+    /**
+     * Run one of the provider's tools (trust 'logic') with its input: the toolbox's function of that name, sealed and
+     * confined. Returns its result as text (a string as is, anything else as JSON). A refused request in it makes the
+     * result the refusal ({ "refused": ... }); a tool that fails (an error, or running past tool_time) makes it
+     * { "failed": { provider, tool, reason } }, after a 'network-tool-failed' event with those fields.
+     */
+    fn run_tool(tool: str!, args: map = map()) -> str {
+        if (self.toolbox == null || !self.tools.contains(tool)) throw(`'${self.name}' has no tool '${tool}'`);
+        let text = null;
+        self.refused = null;
+        try {
+            const result = self.toolbox.get(tool).call(args);
+            text = typeof result == 'str' ? result : <Network>.json_text(result);
+        } catch (e, why) {
+            const refused = self.refused;
+            self.refused = null;
+            if (refused != null && why == refused) return refused; // a real refusal (not text the tool threw)
+            using failed = new { provider: self.name, tool, reason: why };
+            await <Event>.send('network-tool-failed', failed);
+            using out = new {};
+            out.failed = failed;
+            return stringify('json', out);
+        }
+        text
+    }
+
+
+    /**
+     * The receipt in a response (signed by the provider): what the request cost, and what this voucher has spent and
+     * has left. Sends a 'network-receipt' event with it. Returns null, or what's wrong with an answer that can't be
+     * trusted: a response the provider allowed (2xx) needs its receipt, for this request, with the SHA-256 of the body
+     * that came (so a changed response is refused).
+     */
+    fn take_receipt(response: map!, n: int!) -> str {
+        const status = response.get('status') ?? 0;
+        const ok = status >= 200 && status <= 299;
+        const receipt = (response.get('headers') ?? map()).get(<Network>.RECEIPT_HEADER);
+        if (typeof receipt != 'str') return ok ? 'the response has no receipt' : null;
+        try {
+            using msg = new {};
+            self.network().open(receipt, 'receipt', msg, self.provider);
+            const r: NetworkReceipt = msg.body;
+            if (r.voucher != self.voucher || r.n != n) return ok ? 'the receipt is for another request' : null;
+            if (ok && r.body != <Network>.text_digest(response.get('body') ?? '')) return "the response doesn't match its receipt";
+            self.spent = r.spent;
+            self.remaining = r.remaining;
+            if (r.budget_remaining != null) {
+                self.budget_remaining = r.budget_remaining;
+                const b: NetworkBudget = self.budget != null ? self.network().budget_named(self.budget) : null;
+                if (b != null) {
+                    b.remaining = r.budget_remaining;
+                    b.spent = Num::round(max(0, b.spend - r.budget_remaining), 9);
+                }
+            }
+            using event = new {
+                name: self.name,
+                label: self.label,
+                voucher: self.voucher,
+                n: r.n,
+                cost: r.cost,
+                allowed: r.allowed,
+                spent: self.spent,
+                remaining: self.remaining,
+                budget_remaining: self.budget_remaining,
+            };
+            await <Event>.send('network-receipt', event);
+        } catch (e, why) {
+            return ok ? `the receipt doesn't check out: ${why}` : null;
+        }
+        null
+    }
+
+
+    /// Remove this connection's tools (its capabilities in the policy).
+    fn remove_capabilities() {
+        const policy = self.policy();
+        const names = [];
+        for (const (cap_name, cap) in policy.capabilities.fields()) {
+            if (cap.connection == self.name) names.push_back(cap_name);
+        }
+        for (const cap_name in names) drop(policy.capabilities.get(cap_name));
+    }
+
+
+    /// This connection as JSON (without its link, toolbox, or the provider's logic).
+    fn json() -> str {
+        using out = new {
+            provider: self.provider, name: self.name, label: self.label, url: self.url, voucher: self.voucher,
+            seq: self.seq, plan: self.plan, spend: self.spend, expires: self.expires, spent: self.spent,
+            remaining: self.remaining, customer: self.customer, budget: self.budget,
+            budget_remaining: self.budget_remaining, max: self.max, trust: self.trust, may_call: self.may_call, routes: self.routes,
+            tools: self.tools, subject: self.subject, issuer: self.issuer,
+        };
+        stringify('json', out)
+    }
+}
+
+
+#[type]
+/**
+ * The part of a connection that makes its requests: the provider's URL, and one function, fetch(). Sealed when it's
+ * made: fields frozen (nothing can change where requests go), removable (dropped whole when the voucher ends), and
+ * confined (it sees nothing else in the policy, and its Http::fetch reaches only the provider's host).
+ */
+NetworkLink: {
+    #[type_ignore]
+    /// Prototype-only constant - reference as <NetworkLink>.FETCH. The link's one function, parsed into each link
+    /// (a function has to be inside the sealed part to run confined).
+    str FETCH: "fn fetch(method: str, path: str, body: str, headers: map) -> map { const resp = await Http::fetch(self.url + path, method.lower(), body.len() > 0 ? body : null, headers, timeout = self.timeout, max = self.max); if (resp.get('error') != null) return map(('status', 0), ('headers', map()), ('body', str(resp.get('error')))); map(('status', resp.get('status')), ('headers', resp.get('headers') ?? map()), ('body', Http::text(resp))) }";
+
+    /// The provider's URL.
+    str! url: '';
+
+    /// How long it waits for a response, and the largest body it reads (the network's request_timeout and max_response).
+    ms! timeout: 30s;
+    bytes! max: 10MB;
+
+
+    #[static]
+    /// Make a connection's link, and seal it.
+    fn make(conn: NetworkConnection!) -> NetworkLink {
+        const network = conn.network();
+        const link = new NetworkLink { url: conn.url, timeout: network.request_timeout, max: network.max_response } on conn;
+        parse(<NetworkLink>.FETCH, link);
+        seal(link, true, removable = true, reads = [], hosts = [<Network>.host(conn.url)], libs = ['Http', 'Str', 'Std', 'Map']);
+        link
+    }
+}
+
+
+#[type]
+#[extends('Capability')]
+/**
+ * A tool made from a provider's route (NetworkConnection.build()): running it makes a request to the route.
+ */
+NetworkCapability: {
+    /// The connection it calls (policy.network.connections.<name>).
+    str! connection: '';
+
+    /// The route it requests.
+    str! route: '';
+
+    #[run]
+    fn network_call() {
+        const policy = self.parent().parent();
+        self.set_result(policy.network.connection(self.connection).call(self.route, <Network>.plain(self.input)));
+    }
+}
+
+
+#[type]
+#[extends('Capability')]
+/**
+ * A tool made from one of a provider's own tools (NetworkConnection.build(), trust 'logic'): running it runs the tool
+ * in the connection's toolbox.
+ */
+NetworkToolCapability: {
+    /// The connection it calls (policy.network.connections.<name>).
+    str! connection: '';
+
+    /// The tool it runs.
+    str! tool: '';
+
+    #[run]
+    fn network_tool() {
+        const policy = self.parent().parent();
+        self.set_result(policy.network.connection(self.connection).run_tool(self.tool, <Network>.plain(self.input)));
+    }
+}

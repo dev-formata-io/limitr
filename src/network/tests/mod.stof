@@ -15,6 +15,9 @@
 //
 
 
-// Limitr Network tests. Each test makes its own provider and consumer (copies of the templates in protocol.stof),
+// Limitr Network tests. Each test makes its own policies (copies of the templates in protocol.stof and operator.stof),
 // so tests running together never share a voucher.
 import './protocol' as TestNetworkProtocol;
+import './operator' as TestNetworkOperator;
+import './tools' as TestNetworkTools;
+import './metering' as TestNetworkMetering;

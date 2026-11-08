@@ -1,0 +1,926 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// State operator tests: a "world" of policies in one document (a reference operator, provider instances behind one
+// URL, a consumer), with every request routed by host the way HTTP would (provider instances round robin, like a load
+// balancer). Each test makes its own world, so tests running together never share state.
+//
+// Test keys (never use these anywhere else):
+//   weather   secret f0hrbcBxEsY/2hs5j3AGA4Pv6ETSnIZvjk9bBvimM/o=  public eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE=
+//   maps      secret Qiuk1mpmvmU3MA127hRSBICHqjCCnXfwNxHA/J5r95Y=  public TIKQxM7BumgtFpwDZZ4ERoXYn7iPPjjNqen6IPz1CX8=
+//   consumer  secret a47o0A9U6j7LYo/7XUvHLr+wNc8lPWPi79Pn3FPCaxI=  public quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig=
+//   operator  secret EoxwPMRVz0zi04cklY7Y24JJsSqe8hmmjGJvIi1t8J4=  public 3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U=
+//
+
+#[type_ignore]
+Limitr Operator: {
+    network: {
+        key: '3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U='
+        service: { label: 'Test Operator' }
+        fn signer(context: str, message: str) -> str { Key::sign('EoxwPMRVz0zi04cklY7Y24JJsSqe8hmmjGJvIi1t8J4=', context, message) }
+    }
+}
+
+#[type_ignore]
+Limitr Weather: {
+    /// The work of a route the provider allowed (see <TestNetwork>.work).
+    fn work(route: str, customer: str, req: map) -> str { <TestNetwork>.work(self, route, customer, req) }
+
+    credits: {
+        forecast: { label: 'Forecast', unit: 'forecast', price: { amount: 0.01 } }
+    }
+    plans: {
+        agent: { label: 'Agent', entitlements: { forecasts: { limit: { credit: 'forecast', mode: 'soft', value: 0 } } } }
+    }
+    network: {
+        key: 'eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE='
+        provider: {
+            name: 'acme_weather'
+            url: 'https://api.acme.example'
+            offers: ['agent']
+            routes: {
+                forecast: { description: 'The forecast for a city', path: '/forecast', parameters: [{ name: 'city' }], entitlement: 'forecasts' }
+            }
+        }
+        operators: {
+            op: { url: 'https://operator.example', key: '3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U=', roles: ['state'] }
+        }
+        world: null
+        fn signer(context: str, message: str) -> str { Key::sign('f0hrbcBxEsY/2hs5j3AGA4Pv6ETSnIZvjk9bBvimM/o=', context, message) }
+        fn transport(request: map) -> map { <TestOperated>.route(self.world, request) }
+    }
+}
+
+#[type_ignore]
+Limitr Maps: {
+    /// The work of a route the provider allowed (see <TestNetwork>.work).
+    fn work(route: str, customer: str, req: map) -> str { <TestNetwork>.work(self, route, customer, req) }
+
+    credits: {
+        route: { label: 'Route', unit: 'route', price: { amount: 0.02 } }
+    }
+    plans: {
+        agent: { label: 'Agent', entitlements: { routes: { limit: { credit: 'route', mode: 'soft', value: 0 } } } }
+    }
+    network: {
+        key: 'TIKQxM7BumgtFpwDZZ4ERoXYn7iPPjjNqen6IPz1CX8='
+        provider: {
+            name: 'acme_maps'
+            url: 'https://maps.acme.example'
+            offers: ['agent']
+            routes: {
+                route: { description: 'A route between two places', path: '/route', parameters: [{ name: 'from' }, { name: 'to' }], entitlement: 'routes' }
+            }
+        }
+        operators: {
+            op: { url: 'https://operator.example', key: '3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U=', roles: ['state'] }
+        }
+        world: null
+        fn signer(context: str, message: str) -> str { Key::sign('Qiuk1mpmvmU3MA127hRSBICHqjCCnXfwNxHA/J5r95Y=', context, message) }
+        fn transport(request: map) -> map { <TestOperated>.route(self.world, request) }
+    }
+}
+
+#[type_ignore]
+Limitr Agent: {
+    network: {
+        key: 'quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig='
+        name: 'test_agent'
+        operators: {
+            op: { url: 'https://operator.example', key: '3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U=', roles: ['state'] }
+        }
+        world: null
+        last: null
+        fn signer(context: str, message: str) -> str { Key::sign('a47o0A9U6j7LYo/7XUvHLr+wNc8lPWPi79Pn3FPCaxI=', context, message) }
+        fn transport(request: map) -> map {
+            self.last = request;
+            <TestOperated>.route(self.world, request)
+        }
+    }
+}
+
+
+#[type]
+/**
+ * Test helpers: worlds, and routing.
+ */
+TestOperated: {
+    #[static]
+    /**
+     * A world: the operator, `instances` copies of the weather provider (one provider, several servers), the maps
+     * provider when `maps`, and the agent; all typed and checked. Everything is inside it, so dropping it drops all.
+     * `mode` sets the providers' state mode (and `offline`, its offline behavior).
+     */
+    fn world(context: obj!, mode: str = 'strict', instances: int = 2, maps: bool = false, offline: str = 'refuse', lease: float = 0.1) -> obj {
+        const world = new { calls: 0, down: false };
+        world.hosts = map();
+        world.operator = <TestOperated>.member(world, context.Operator);
+        const weather = [];
+        for (let i = 0; i < instances; i += 1) {
+            const p = <TestOperated>.member(world, context.Weather);
+            p.network.operators.op.state = new NetworkStateConfig { mode, offline, lease } on p.network.operators.op;
+            weather.push_back(p);
+        }
+        world.weather = weather;
+        world.hosts.insert('api.acme.example', weather);
+        if (maps) {
+            const m = <TestOperated>.member(world, context.Maps);
+            m.network.operators.op.state = new NetworkStateConfig { mode, offline, lease } on m.network.operators.op;
+            world.maps = m;
+            world.hosts.insert('maps.acme.example', [m]);
+        }
+        world.agent = <TestOperated>.member(world, context.Agent);
+        for (const p in weather) assert(<Network>.load(p), <LimitrValidation>.error_message);
+        world
+    }
+
+    #[static]
+    /// A copy of a policy template, in the world, typed and checked.
+    fn member(world: obj!, template: obj!) -> obj {
+        const policy = copy(template);
+        policy.move(world);
+        assert(<Network>.load(policy), <LimitrValidation>.error_message);
+        policy.network.world = world;
+        policy
+    }
+
+    #[static]
+    /// What HTTP does: the operator's host goes to the operator (unless it's down), a provider's to one of its
+    /// instances, in turn (a load balancer).
+    fn route(world: obj!, request: map!) -> map {
+        const host = <Network>.host(request.get('url'));
+        if (host == 'operator.example') {
+            if (world.down) throw('connection refused');
+            return world.operator.network.service.handle(request);
+        }
+        const targets: list = world.hosts.get(host);
+        if (targets == null) throw(`no such host: ${host}`);
+        world.calls += 1;
+        <TestNetwork>.serve(targets[world.calls % targets.len()], request)
+    }
+
+    #[static]
+    /// The voucher an operator holds for a connection.
+    fn record(world: obj!, conn: obj!) -> obj {
+        world.operator.network.service.vouchers.get(conn.voucher)
+    }
+
+    #[static]
+    /// A request signed again by the agent with another request number (a fresh call to the same route).
+    fn resign(agent: obj!, request: map!, n: int!) -> map {
+        using signed = new {};
+        parse(request.get('headers').get(<Network>.REQUEST_HEADER), signed, 'json');
+        signed.n = n;
+        signed.issued = Time::now();
+        const text = stringify('json', signed);
+        const headers = map(('content-type', 'application/json'), (<Network>.REQUEST_HEADER, text), (<Network>.SIGNATURE_HEADER, agent.network.sign('request', text)));
+        map(('method', request.get('method')), ('url', request.get('url')), ('headers', headers), ('body', request.get('body') ?? ''))
+    }
+
+    #[static]
+    /// A tool result's refusal (null when it wasn't refused).
+    fn refusal(result: str!) -> map {
+        if (!result.starts_with('{"refused"')) return null;
+        using out = new {};
+        parse(result, out, 'json');
+        out.refused.to_map()
+    }
+}
+
+
+/*****************************************************************************
+ * The protocol's names and versions.
+ *****************************************************************************/
+
+#[test]
+fn wire_names_all_start_with_the_protocols_name() {
+    const name = <Network>.NAME;
+    assert(<Network>.PROTOCOL.starts_with(name + '/'));
+    assert(<Network>.CONTEXT.starts_with(name + '/'));
+    for (const header in [<Network>.REQUEST_HEADER, <Network>.SIGNATURE_HEADER, <Network>.RECEIPT_HEADER]) assert(header.starts_with(name + '-'));
+    for (const path in [<Network>.MANIFEST_PATH, <Network>.OPERATOR_MANIFEST_PATH]) assert(path.starts_with('/.well-known/' + name));
+    for (const path in [<Network>.VOUCHER_PATH, <Network>.CANCEL_PATH, <Network>.OPERATOR_PATH]) assert(path.starts_with('/' + name + '/'));
+}
+
+#[test]
+fn versions_we_speak() {
+    assert(<Network>.compatible(<Network>.PROTOCOL));
+    assert_not(<Network>.compatible('limitr-network/0.2')); // before 1.0, a minor version can change anything
+    assert_not(<Network>.compatible('limitr-network/1.1'));
+    assert_not(<Network>.compatible('another-network/0.1'));
+    assert_not(<Network>.compatible('limitr-network'));
+    assert_not(<Network>.compatible(null));
+}
+
+#[test]
+fn urls_must_be_https_except_on_this_machine() {
+    assert(<Network>.secure('https://api.acme.example'));
+    assert(<Network>.secure('http://localhost:8787'));
+    assert(<Network>.secure('http://127.0.0.1:8787/x'));
+    assert_not(<Network>.secure('http://api.acme.example'));
+    assert_not(<Network>.secure('http://localhost.evil.example'));
+    assert_not(<Network>.secure('ftp://api.acme.example'));
+
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const weather = world.weather[0];
+    weather.network.provider.url = 'http://api.acme.example';
+    assert_not(<Network>.load(weather));
+    assert(<LimitrValidation>.error_message.contains('https'));
+}
+
+
+/*****************************************************************************
+ * Operators as config.
+ *****************************************************************************/
+
+#[test]
+fn one_operator_per_role_and_known_roles() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    agent.network.operators.other = new NetworkOperator { url: 'https://other.example', key: 'NRfTF03GnsPUowmyO2x1QqcwtnvPgfhM1Lb8INTq/9g=', roles: ['state'] } on agent.network.operators;
+    assert_not(<Network>.load(agent));
+    assert(<LimitrValidation>.error_message.contains('one operator per role'));
+
+    // another role at another operator is fine (Ex. identity elsewhere), and so is a namespaced one
+    agent.network.operators.other.roles = ['identity', 'acme.com/audit'];
+    assert(<Network>.load(agent), <LimitrValidation>.error_message);
+    assert_eq(agent.network.operator('state').url, 'https://operator.example');
+    assert_eq(agent.network.operator('identity').url, 'https://other.example');
+    assert_eq(agent.network.operator('payment'), null);
+
+    agent.network.operators.other.roles = ['billing'];
+    assert_not(<Network>.load(agent));
+    agent.network.operators.other.roles = ['identity'];
+    agent.network.operators.other.url = 'http://other.example';
+    assert_not(<Network>.load(agent));
+}
+
+#[test]
+fn state_config_defaults_and_checks() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const op = world.agent.network.operators.op;
+    const config = op.state_config();
+    assert_eq(config.mode, 'strict');
+    assert_eq(config.offline, 'refuse');
+    assert_eq(config.lease, 0.1);
+    assert_eq(config.settle_every, 30s);
+
+    config.offline = 'local'; // only bounded can keep spending a lease
+    assert_not(<Network>.load(world.agent));
+    config.mode = 'bounded';
+    assert(<Network>.load(world.agent), <LimitrValidation>.error_message);
+    config.mode = 'eventual';
+    assert_not(<Network>.load(world.agent));
+}
+
+#[test]
+fn operator_manifest_is_signed_and_checked() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const op = world.agent.network.operators.op;
+    assert(op.check());
+
+    // a provider's terms say which operators it accepts (a voucher agrees to them)
+    using terms = new {};
+    world.weather[0].network.provider.terms(terms);
+    assert_eq(terms.operators.state, op.key);
+
+    // the wrong key for the operator: its manifest doesn't check out
+    op.key = 'NRfTF03GnsPUowmyO2x1QqcwtnvPgfhM1Lb8INTq/9g=';
+    assert(<TestNetwork>.refused(() => op.check()).contains('unexpected key'));
+}
+
+
+/*****************************************************************************
+ * Strict: every call claimed from the operator.
+ *****************************************************************************/
+
+#[test]
+fn strict_two_instances_share_one_voucher() {
+    using world = <TestOperated>.world(self, 'strict', 2);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.03, Time::now() + 1hr);
+
+    // calls alternate between the instances; the operator holds the one spend
+    for (const city in ['Boston', 'Denver', 'Austin']) {
+        assert_eq(agent.run_capability('acme_weather_forecast', {'city': city}), 'sunny in ' + city);
+    }
+    const conn = agent.network.connection('acme_weather');
+    const refusal = <TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Seattle'}));
+    assert_eq(refusal.get('status'), 402);
+    assert(refusal.get('reason').contains('spend'));
+
+    // both instances know the voucher (the second adopted it from the operator), and together metered 3 calls
+    const id = conn.customer;
+    let metered = 0;
+    for (const p in world.weather) {
+        assert_neq(p.customer(id), null);
+        metered += p.value(id, 'forecasts');
+        assert_eq(p.customer(id).metadata.network.adjust, 0); // every quote matched what was metered
+    }
+    assert_eq(metered, 3);
+    const rec = <TestOperated>.record(world, conn);
+    assert_eq(rec.spent, 0.03);
+    assert_eq(conn.spent, 0.03);
+    assert_eq(conn.remaining, 0);
+}
+
+#[test]
+fn strict_a_replay_to_another_instance_is_refused() {
+    using world = <TestOperated>.world(self, 'strict', 2);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+
+    // the same signed request again: the round robin sends it to the other instance, which hasn't seen it
+    const last: map = agent.network.last;
+    const again = <TestOperated>.route(world, last);
+    assert_eq(again.get('status'), 402);
+    assert(again.get('body').contains('already used'));
+    assert_eq(<TestOperated>.record(world, agent.network.connection('acme_weather')).spent, 0.01);
+}
+
+#[test]
+fn strict_an_ended_voucher_ends_on_every_instance() {
+    using world = <TestOperated>.world(self, 'strict', 2);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+    const conn = agent.network.connection('acme_weather');
+    const voucher = conn.voucher;
+    const last: map = agent.network.last;
+
+    // one instance revokes it; the operator ends it for all
+    world.weather[0].network.provider.revoke(voucher, 'done');
+    assert(<TestOperated>.record(world, conn).expires <= Time::now());
+
+    // a fresh call to the other instance: its own customer hasn't ended, but the operator refuses the claim
+    const fresh: map = <TestOperated>.resign(agent, last, 99);
+    const answer = <TestNetwork>.serve(world.weather[1], fresh);
+    assert_eq(answer.get('status'), 402);
+    assert(answer.get('body').contains('ended'));
+}
+
+#[test]
+fn strict_fails_closed_when_the_operator_is_down() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    world.down = true;
+    const refusal = <TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}));
+    assert_eq(refusal.get('status'), 503);
+    assert(refusal.get('reason').contains("can't be reached"));
+    assert_eq(world.weather[0].value(agent.network.connection('acme_weather').customer, 'forecasts'), 0); // nothing metered
+    world.down = false;
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+}
+
+#[test]
+fn an_operator_can_have_its_own_transport() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    world.down = true; // over HTTP, the operator can't be reached
+
+    // the provider reaches it its own way (Ex. a socket its host already has); answers are still checked with its key
+    const op = world.weather[0].network.operators.op;
+    parse('fn transport(request: map) -> map { const world = self.parent().parent().world; world.operator.network.service.handle(request) }', op);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    assert(op.check());
+
+    // a channel the host doesn't have is an error, not HTTP
+    Obj::remove(op, 'transport');
+    op.channel = true;
+    assert(<TestNetwork>.refused(() => op.check()).contains("through the host's channel"));
+    world.down = false;
+    const refusal = <TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}));
+    assert_eq(refusal.get('status'), 503, 'still not reached over HTTP');
+}
+
+
+/*****************************************************************************
+ * Budgets: one spend across providers.
+ *****************************************************************************/
+
+#[test]
+fn a_budget_spans_two_providers() {
+    using world = <TestOperated>.world(self, 'strict', 2, true);
+    const agent = world.agent;
+    const budget = agent.network.budget('op', 0.05, Time::now() + 1hr);
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr, budget);
+    agent.network.connect('https://maps.acme.example', 'agent', 1, Time::now() + 1hr, budget);
+
+    // 0.01 + 0.02 + 0.01 + 0.01 = 0.05: the budget, not either voucher, is what runs out
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    assert_eq(agent.run_capability('acme_maps_route', {'from': 'Boston', 'to': 'Denver'}), 'ok');
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Austin'}), 'sunny in Austin');
+    assert_eq(agent.network.connection('acme_weather').budget_remaining, 0);
+    assert_eq(agent.network.budget_named(budget).spent, 0.05); // the agent's own view, from the receipts
+
+    const refused = <TestOperated>.refusal(agent.run_capability('acme_maps_route', {'from': 'Austin', 'to': 'Boston'}));
+    assert_eq(refused.get('status'), 402);
+    assert(refused.get('reason').contains('budget'));
+    assert_eq(world.operator.network.service.budgets.get(budget).spent, 0.05);
+
+    // more budget: every voucher on it can spend again
+    agent.network.budget('op', 0.10, Time::now() + 1hr, null, budget);
+    assert_eq(agent.run_capability('acme_maps_route', {'from': 'Austin', 'to': 'Boston'}), 'ok');
+}
+
+#[test]
+fn a_budget_only_goes_where_it_says() {
+    using world = <TestOperated>.world(self, 'strict', 1, true);
+    const agent = world.agent;
+    const weather_key = world.weather[0].network.key;
+    const budget = agent.network.budget('op', 1, Time::now() + 1hr, [weather_key]);
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr, budget);
+    assert(<TestNetwork>.refused(() => agent.network.connect('https://maps.acme.example', 'agent', 1, Time::now() + 1hr, budget)).contains('not for this provider'));
+
+    // a provider without the budget's operator doesn't take it (the consumer checks its terms first)
+    world.maps.network.operators = null;
+    assert(<Network>.load(world.maps), <LimitrValidation>.error_message);
+    assert(<TestNetwork>.refused(() => agent.network.connect('https://maps.acme.example', 'agent', 1, Time::now() + 1hr, budget)).contains("doesn't accept"));
+
+    // only its consumer can change a budget
+    using msg = new NetworkBudgetMessage { budget, seq: 9, spend: 100, expires: Time::now() + 1hr };
+    const forged = world.maps.network.envelope('budget', world.operator.network.key, msg);
+    const answer = world.operator.network.service.handle(map(('method', 'POST'), ('url', 'https://operator.example' + <Network>.OPERATOR_PATH + 'budget'), ('body', forged)));
+    assert_eq(answer.get('status'), 400);
+    assert_eq(world.operator.network.service.budgets.get(budget).spend, 1);
+}
+
+
+/*****************************************************************************
+ * Bounded: leases, settled on an interval.
+ *****************************************************************************/
+
+#[test]
+fn bounded_leases_settle_and_add_up() {
+    using world = <TestOperated>.world(self, 'bounded', 2, false, 'refuse', 0.25);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.04, Time::now() + 1hr);
+    const conn = agent.network.connection('acme_weather');
+
+    // each instance leases a quarter of the spend (0.01 = one forecast) at a time
+    for (const city in ['Boston', 'Denver', 'Austin', 'Miami']) {
+        assert_eq(agent.run_capability('acme_weather_forecast', {'city': city}), 'sunny in ' + city);
+    }
+    const refusal = <TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Seattle'}));
+    assert_eq(refusal.get('status'), 402);
+
+    for (const p in world.weather) p.network.provider.settle(p.customer(conn.customer));
+    const rec = <TestOperated>.record(world, conn);
+    assert_eq(rec.spent, 0.04);
+    assert_eq(rec.held, 0);
+}
+
+#[test]
+fn bounded_a_replay_across_instances_is_caught_at_settle() {
+    using world = <TestOperated>.world(self, 'bounded', 2, false, 'refuse', 0.5);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    const conn = agent.network.connection('acme_weather');
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+
+    // the same request at the other instance: bounded can't stop it there (it's never seen it)...
+    const again = <TestOperated>.route(world, agent.network.last);
+    assert_eq(again.get('status'), 200);
+
+    // ...but the operator charges each request number once
+    for (const p in world.weather) p.network.provider.settle(p.customer(conn.customer));
+    assert_eq(<TestOperated>.record(world, conn).spent, 0.01);
+}
+
+#[test]
+fn bounded_offline_local_spends_what_is_left_of_a_lease() {
+    using world = <TestOperated>.world(self, 'bounded', 1, false, 'local', 0.5);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.04, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+
+    // the operator goes down: the lease (0.02) has one more forecast in it, then the instance fails closed
+    world.down = true;
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+    assert_eq(<TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Austin'})).get('status'), 503);
+
+    // back up: the lease settles, a new one is taken
+    world.down = false;
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Austin'}), 'sunny in Austin');
+    const p = world.weather[0];
+    p.network.provider.settle(p.customer(agent.network.connection('acme_weather').customer));
+    assert_eq(<TestOperated>.record(world, agent.network.connection('acme_weather')).spent, 0.03);
+}
+
+#[test]
+fn bounded_offline_refuse_stops_on_a_stale_lease() {
+    using world = <TestOperated>.world(self, 'bounded', 1, false, 'refuse', 0.5);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.04, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    const p = world.weather[0];
+    const customer = p.customer(agent.network.connection('acme_weather').customer);
+
+    // a settle that can't reach the operator leaves the lease stale: with 'refuse', it isn't spent
+    world.down = true;
+    assert_not(p.network.provider.settle(customer));
+    assert(customer.metadata.network.lease_stale);
+    assert_eq(<TestOperated>.refusal(agent.run_capability('acme_weather_forecast', {'city': 'Denver'})).get('status'), 503);
+    world.down = false;
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+}
+
+#[test]
+fn strict_holds_what_a_request_may_spend_and_settles_what_it_did() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const p = world.weather[0];
+    parse("bulk: { description: 'Many forecasts', path: '/bulk', parameters: [{ name: 'count' }] }", p.network.provider.routes);
+    assert(p.valid(), <LimitrValidation>.error_message);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.5, Time::now() + 1hr);
+    const conn = agent.network.connection('acme_weather');
+    const state = p.customer(conn.customer).metadata.network;
+
+    // no declared metering: it holds the config's share of the spend (10%: 0.05), and the work spends 0.02 of it
+    assert_eq(conn.call('bulk', map(('count', 2))), '2 forecasts');
+    assert_eq(<TestOperated>.record(world, conn).spent, 0.05, 'held at the operator');
+    assert_eq(state.adjust, -0.03, 'what it held beyond what it spent, to settle');
+    assert_eq(conn.spent, 0.02, 'the receipt says what it really spent');
+
+    // the next request carries the difference
+    assert_eq(conn.call('bulk', map(('count', 1))), '1 forecasts');
+    assert_eq(<TestOperated>.record(world, conn).spent, 0.07);
+    assert_eq(state.adjust, -0.04);
+
+    // and with no next request, settle_every settles it
+    state.adjusted = 0;
+    p.network.provider.settle_due();
+    assert_eq(<TestOperated>.record(world, conn).spent, 0.03);
+    assert_eq(state.adjust, 0);
+
+    // what the hold allows is the request's most
+    assert_eq(conn.call('bulk', map(('count', 9))), 'more than this request may spend');
+    assert_eq(conn.spent, 0.03, 'refused inside the work: nothing spent');
+
+    // a route's own hold
+    p.network.provider.routes.bulk.hold = 0.1;
+    agent.network.connect('https://api.acme.example', 'agent', 0.5, Time::now() + 1hr);
+    assert_eq(agent.network.connection('acme_weather').call('bulk', map(('count', 9))), '9 forecasts');
+}
+
+#[test]
+fn bounded_requests_spend_what_the_work_meters_from_the_lease() {
+    using world = <TestOperated>.world(self, 'bounded', 1, false, 'refuse', 0.25);
+    const p = world.weather[0];
+    parse("bulk: { description: 'Many forecasts', path: '/bulk', parameters: [{ name: 'count' }] }", p.network.provider.routes);
+    assert(p.valid(), <LimitrValidation>.error_message);
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 0.4, Time::now() + 1hr);
+    const conn = agent.network.connection('acme_weather');
+
+    assert_eq(conn.call('bulk', map(('count', 3))), '3 forecasts');
+    const state = p.customer(conn.customer).metadata.network;
+    assert_eq(state.lease_used, 0.03);
+    assert_eq(conn.spent, 0.03);
+    assert_eq(conn.call('bulk', map(('count', 9))), 'more than this request may spend', 'past what the lease has left (0.07)');
+    p.network.provider.settle(p.customer(conn.customer));
+    assert_eq(<TestOperated>.record(world, conn).spent, 0.03);
+}
+
+#[test]
+fn strict_quotes_match_what_is_metered() {
+    // tiers, overhead, and an included allowance: each call's quote (claimed first) is what allow() then meters
+    using world = <TestOperated>.world(self, 'strict', 2);
+    for (const p in world.weather) {
+        const credit = p.credits.forecast;
+        credit.pricing_model = 'tiered';
+        credit.price = null;
+        parse("tiers: [{ up_to: 2, price: { amount: 0.01 } }, { price: { amount: 0.005 } }]", credit);
+        credit.overhead_cost = 0.002;
+        p.plans.agent.entitlements.forecasts.limit.value = 1; // the first forecast is included
+        assert(p.valid(), <LimitrValidation>.error_message);
+    }
+    const agent = world.agent;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    for (const city in ['Boston', 'Denver', 'Austin', 'Miami', 'Tulsa']) {
+        assert_eq(agent.run_capability('acme_weather_forecast', {'city': city}), 'sunny in ' + city);
+    }
+    const conn = agent.network.connection('acme_weather');
+    let metered = 0.0;
+    for (const p in world.weather) {
+        const customer = p.customer(conn.customer);
+        assert_eq(customer.metadata.network.adjust, 0);
+        metered += customer.caps.network.meter_value;
+    }
+    assert_eq(Num::round(metered, 9), <TestOperated>.record(world, conn).spent);
+    assert(metered > 0);
+}
+
+
+/*****************************************************************************
+ * Identity: statements from an identity operator, on vouchers.
+ *****************************************************************************/
+
+#[static]
+/// A world whose operator serves identity too (and knows the agent as 'Acme Corp'), and whose first weather
+/// instance and agent use it for identity.
+fn identity_world(context: obj!) -> obj {
+    const world = <TestOperated>.world(context, 'strict', 1);
+    const service = world.operator.network.service;
+    service.roles = ['state', 'identity'];
+    service.identities = new {} on service;
+    service.identities.insert(world.agent.network.key, 'Acme Corp');
+    world.weather[0].network.operators.op.roles = ['state', 'identity'];
+    world.agent.network.operators.op.roles = ['state', 'identity'];
+    world
+}
+
+#[test]
+fn with_an_identity_operator_a_voucher_needs_an_identity() {
+    using world = self.identity_world(self);
+    const agent = world.agent;
+    const provider = world.weather[0];
+    assert(provider.network.provider.needs_identity('agent'), "'auto': required with an identity operator");
+    using terms = new {};
+    provider.network.provider.terms(terms);
+    assert_eq(terms.plans.agent.identity, true, 'the terms say so');
+    assert_eq(terms.operators.identity, world.operator.network.key);
+
+    assert(<TestNetwork>.refused(() => agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr)).contains('needs an identity'));
+
+    // the operator vouches for the agent's key; every voucher carries the statement from now on
+    assert_eq(agent.network.identify(), 'Acme Corp');
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 60days);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    const customer = provider.customer(agent.network.connection('acme_weather').customer);
+    assert_eq(customer.metadata.network.subject, 'Acme Corp', 'the work sees who it is');
+    assert_eq(customer.metadata.network.issuer, world.operator.network.key);
+    assert(customer.expires <= Time::now() + 30days + 1min, 'never past the statement (or max_voucher)');
+}
+
+#[test]
+fn an_identity_statement_must_be_the_operators_for_the_consumers_key() {
+    using world = self.identity_world(self);
+    const agent = world.agent;
+    const connect = (): void => { agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr); };
+
+    // one the agent signed itself
+    using who = new NetworkIdentity { key: agent.network.key, subject: 'Acme Corp', expires: Time::now() + 1day };
+    agent.network.identity = agent.network.envelope('identity', '', who, 1day);
+    assert(<TestNetwork>.refused(connect).contains('unexpected key'));
+
+    // the operator's, for another key
+    using other = new NetworkIdentity { key: world.weather[0].network.key, subject: 'Acme Weather', expires: Time::now() + 1day };
+    agent.network.identity = world.operator.network.envelope('identity', '', other, 1day);
+    assert(<TestNetwork>.refused(connect).contains('another key'));
+
+    // the operator's, expired
+    using old = new NetworkIdentity { key: agent.network.key, subject: 'Acme Corp', expires: Time::now() - 1s };
+    agent.network.identity = world.operator.network.envelope('identity', '', old, 0ms);
+    assert(<TestNetwork>.refused(connect).contains('expired'));
+
+    // a key the operator doesn't know gets nothing
+    world.operator.network.service.identities.remove(agent.network.key);
+    agent.network.identity = null;
+    assert(<TestNetwork>.refused(() => agent.network.identify()).contains("doesn't know your key"));
+}
+
+#[test]
+fn identity_can_be_optional_per_plan() {
+    using world = self.identity_world(self);
+    const agent = world.agent;
+    const provider = world.weather[0];
+    provider.network.provider.identity_plans = new { agent: 'optional' } on provider.network.provider;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    assert_null(provider.customer(agent.network.connection('acme_weather').customer).metadata.network.subject);
+
+    // required with no one to identify: the policy doesn't check out
+    const lone = copy(self.Weather);
+    lone.network.operators = null;
+    lone.network.provider.identity = 'required';
+    assert(!<Network>.load(lone));
+    assert(<LimitrValidation>.error_message.contains('no operator serves identity'));
+    drop(lone);
+}
+
+
+/*****************************************************************************
+ * Operator keys: an operator rotates, and is followed from its first key.
+ *****************************************************************************/
+
+#[static]
+/// Rotate the world's operator to a new key (a statement signed by its key now, published in its manifest), and
+/// return the rotation and a second one its old key also signed (to another key).
+fn rotate(world: obj!) -> (str, str) {
+    const network = world.operator.network;
+    const secret = Key::generate();
+    const fork = network.rotation(Key::public(Key::generate()));
+    const rotation = network.rotation(Key::public(secret));
+    network.key = Key::public(secret);
+    Obj::remove(network, 'signer');
+    parse(`fn signer(context: str, message: str) -> str { Key::sign('${secret}', context, message) }`, network);
+    network.service.rotations = [rotation];
+    (rotation, fork)
+}
+
+#[test]
+fn a_rotated_operator_is_followed_from_its_first_key() {
+    using world = self.identity_world(self);
+    const agent = world.agent;
+    const provider = world.weather[0];
+    const first = world.operator.network.key;
+    agent.network.identify();
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    const digest = provider.network.provider.terms_digest();
+
+    self.rotate(world);
+    // the provider's next claim is answered under the new key: it reads the manifest, follows the rotation, goes on
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+    const op = provider.network.operators.op;
+    assert_eq(op.key, first, 'its identity is still its first key');
+    assert_eq(op.current, world.operator.network.key);
+    assert_eq(provider.network.provider.terms_digest(), digest, 'the terms are the same, so vouchers go on');
+    assert(op.check());
+
+    // statements under the new key check out too (the agent and the provider both follow it)
+    agent.network.identify();
+    agent.network.update('acme_weather', 2);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Austin'}), 'sunny in Austin');
+    const customer = provider.customer(agent.network.connection('acme_weather').customer);
+    assert_eq(customer.metadata.network.issuer, first, 'the issuer is the operator, by its first key');
+}
+
+#[test]
+fn a_retired_key_cant_start_another_chain() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const op = world.agent.network.operators.op;
+    const old_signer = world.operator.network.key;
+    const pair = self.rotate(world);
+    assert(op.check());
+    assert_eq(op.current, world.operator.network.key);
+
+    // the old key signed another rotation (Ex. it was stolen): a chain that leaves out the one followed is refused
+    assert(<TestNetwork>.refused(() => op.follow([pair[1]])).contains("doesn't pass through"));
+    assert(<TestNetwork>.refused(() => op.follow([])).contains("doesn't pass through"), 'nor back to the first key');
+    assert_eq(op.follow([pair[0]]), world.operator.network.key);
+
+    // a rotation must be signed by the key before it
+    const stray = world.operator.network.rotation(Key::public(Key::generate()));
+    assert(<TestNetwork>.refused(() => op.follow([stray])).contains('broken key rotation'));
+    assert_neq(old_signer, world.operator.network.key);
+}
+
+
+/*****************************************************************************
+ * Discovery: listings, public and private, and signed searches.
+ *****************************************************************************/
+
+#[static]
+/// A world whose operator serves identity and discovery too (knowing the agent as 'Acme Corp'), with both providers.
+fn discovery_world(context: obj!) -> obj {
+    const world = <TestOperated>.world(context, 'strict', 1, true);
+    const service = world.operator.network.service;
+    service.roles = ['state', 'identity', 'discovery'];
+    service.identities = new {} on service;
+    service.identities.insert(world.agent.network.key, 'Acme Corp');
+    world.weather[0].network.operators.op.roles = ['state', 'discovery'];
+    world.maps.network.operators.op.roles = ['state', 'discovery'];
+    world.agent.network.operators.op.roles = ['state', 'identity', 'discovery'];
+    world
+}
+
+#[static]
+/// The names a search finds.
+fn found(agent: obj!, query: str = '') -> list {
+    const names = [];
+    for (const result in agent.network.discover(query)) names.push_back(result.get('name'));
+    names
+}
+
+#[test]
+fn providers_list_themselves_and_anyone_finds_the_public_ones() {
+    using world = self.discovery_world(self);
+    const agent = world.agent;
+    assert(world.weather[0].network.provider.list());
+    assert(world.maps.network.provider.list());
+    assert_eq(self.found(agent).len(), 2);
+    assert_eq(self.found(agent, 'ROUTE between'), ['acme_maps'], 'every word, any case');
+    assert_eq(self.found(agent, 'nothing like this').len(), 0);
+
+    // a result is the provider's own signed manifest; connect to its url as usual
+    const result = agent.network.discover('route')[0];
+    assert_eq(result.get('key'), world.maps.network.key);
+    assert_eq(result.get('url'), 'https://maps.acme.example');
+    agent.network.connect(result.get('url'), 'agent', 1, Time::now() + 1hr);
+    assert(agent.network.connection('acme_maps') != null);
+
+    assert(world.maps.network.provider.unlist());
+    assert_eq(self.found(agent, 'route').len(), 0, 'unlisted');
+}
+
+#[test]
+fn private_listings_show_only_to_their_members() {
+    using world = self.discovery_world(self);
+    const agent = world.agent;
+    const maps = world.maps.network.provider;
+    maps.list('private', [world.weather[0].network.key]);
+    assert_eq(self.found(agent, 'route').len(), 0, 'not a member');
+    maps.list('private', [agent.network.key]);
+    assert_eq(self.found(agent, 'route'), ['acme_maps'], 'a member, by key');
+
+    // private to an organization the operator identified
+    maps.list('private', [], ['Acme Corp']);
+    assert_eq(self.found(agent, 'route').len(), 0, 'not identified');
+    agent.network.identify();
+    assert_eq(self.found(agent, 'route'), ['acme_maps'], 'a member, by who it is');
+}
+
+#[test]
+fn an_index_cant_forge_or_change_a_manifest() {
+    using world = self.discovery_world(self);
+    const agent = world.agent;
+    const maps = world.maps;
+
+    // a provider can only list a manifest it signed
+    using body = new NetworkListing { manifest: world.weather[0].network.provider.manifest() };
+    using answer = new {};
+    assert(<TestNetwork>.refused(() => maps.network.operators.op.ask('list', body, 'listed', answer)).contains('not your manifest'));
+
+    // a manifest changed in the index (or one it made up) doesn't check out on the searcher's side: left out
+    world.weather[0].network.provider.list();
+    maps.network.provider.list();
+    const record = world.operator.network.service.listings.get(maps.network.key);
+    record.manifest = record.manifest.replace('acme_maps', 'acme_mapz');
+    assert_eq(self.found(agent), ['acme_weather']);
+}
+
+
+/*****************************************************************************
+ * Identity on both sides: providers identified in their manifests, and operators that require it.
+ *****************************************************************************/
+
+#[test]
+fn a_consumer_can_require_an_identified_provider() {
+    using world = self.identity_world(self);
+    const agent = world.agent;
+    const weather = world.weather[0];
+    world.operator.network.service.identities.insert(weather.network.key, 'Acme Weather');
+    agent.network.identify();
+    agent.network.require_identity = true;
+    const connect = (): void => { agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr); };
+
+    assert(<TestNetwork>.refused(connect).contains("isn't identified"));
+    weather.network.identity = agent.network.identity; // someone else's statement in its manifest
+    assert(<TestNetwork>.refused(connect).contains('another key'));
+
+    assert_eq(weather.network.identify(), 'Acme Weather'); // in its manifest from now on (not in its terms)
+    connect();
+    const conn = agent.network.connection('acme_weather');
+    assert_eq(conn.subject, 'Acme Weather');
+    assert_eq(conn.issuer, world.operator.network.key);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+}
+
+#[test]
+fn an_operator_can_require_both_sides_identified() {
+    using world = self.discovery_world(self);
+    const agent = world.agent;
+    const service = world.operator.network.service;
+    service.requires = ['provider', 'consumer'];
+    const connect = (): void => { agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr); };
+
+    // the weather provider isn't known to the operator: it won't register the voucher (nor list it)
+    assert(<TestNetwork>.refused(connect).contains('requires the provider to be identified'));
+    assert(<TestNetwork>.refused(() => world.weather[0].network.provider.list()).contains('requires the provider'));
+    service.identities.insert(world.weather[0].network.key, 'Acme Weather');
+    connect();
+    assert(world.weather[0].network.provider.list());
+
+    // a consumer it doesn't know: no vouchers registered for it, no budgets, no searches
+    service.identities.remove(agent.network.key);
+    agent.network.disconnect('acme_weather');
+    assert(<TestNetwork>.refused(connect).contains('requires the consumer to be identified'));
+    assert(<TestNetwork>.refused(() => agent.network.budget('op', 1, Time::now() + 1hr)).contains('requires the consumer'));
+    assert(<TestNetwork>.refused(() => agent.network.discover()).contains('requires the consumer'));
+
+    // the requirement is in its manifest; and it must serve identity to require it
+    assert(agent.network.operators.op.check());
+    service.roles = ['state'];
+    assert_not(<NetworkOperatorService>.schemafy(service));
+    assert(<LimitrValidation>.error_message.contains('serves identity too'));
+}

@@ -1,0 +1,829 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#[type]
+/**
+ * A policy's Limitr Network (policy.network): who it is, what it offers (provider), and the providers it uses
+ * (connections). Typed and checked when the module loads (Network.load()).
+ *
+ *   network: {
+ *       key: '<public key>'              // set by the host (it keeps the secret key)
+ *       name: 'support_agent'            // how this policy calls itself to providers
+ *       provider: { ... }                // optional: a NetworkProvider (what this policy offers)
+ *       operators: { ... }               // optional: a NetworkOperator each, by name (at most one per role)
+ *       service: { ... }                 // optional: a NetworkOperatorService (this policy is an operator)
+ *   }
+ *
+ * A host (or a test) can also give it two functions:
+ *   fn signer(context: str, message: str) -> str   signs instead of the host's NetworkKey::sign
+ *   fn transport(request: map) -> map              sends requests instead of Http::fetch (a NetworkRequest map in,
+ *                                                  a NetworkResponse map out)
+ */
+Network: {
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.VERSION. The module's version.
+    ver VERSION: 0.1.0;
+
+    // The protocol's wire names. Every one starts with NAME, so renaming the protocol is this block (and the test
+    // that checks it, network.stof's wire names test).
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.NAME. The protocol's name.
+    str NAME: 'limitr-network';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.PROTOCOL. The protocol and its version ('<name>/<major>.<minor>').
+    str PROTOCOL: 'limitr-network/0.1';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.CONTEXT. Every signature's context starts with this (then the
+    /// message's type), so a key used here signs nothing else.
+    str CONTEXT: 'limitr-network/v1/';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.REQUEST_HEADER. A call's signed request.
+    str REQUEST_HEADER: 'limitr-network-request';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.SIGNATURE_HEADER. Its signature.
+    str SIGNATURE_HEADER: 'limitr-network-signature';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.RECEIPT_HEADER. The provider's signed receipt.
+    str RECEIPT_HEADER: 'limitr-network-receipt';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.SKEW. How far a request's time may be from ours.
+    ms SKEW: 60s;
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.WINDOW. How many recent request numbers a voucher keeps (calls
+    /// can arrive out of order; anything older than the window is refused).
+    int WINDOW: 64;
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.MANIFEST_PATH. Where a provider publishes its manifest.
+    str MANIFEST_PATH: '/.well-known/limitr-network';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.VOUCHER_PATH. Where a provider takes vouchers.
+    str VOUCHER_PATH: '/limitr-network/voucher';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.CANCEL_PATH. Where a provider takes cancels.
+    str CANCEL_PATH: '/limitr-network/cancel';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.OPERATOR_MANIFEST_PATH. Where an operator publishes what it serves.
+    str OPERATOR_MANIFEST_PATH: '/.well-known/limitr-network-operator';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.OPERATOR_PATH. Where an operator takes messages (then their type).
+    str OPERATOR_PATH: '/limitr-network/operator/';
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.ROLES. The core operator roles (others are namespaced).
+    list ROLES: ['state', 'revoke', 'identity', 'payment', 'discovery'];
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.TRUST. How far a consumer trusts a provider: 'declarations' (its
+    /// routes are tools as-is; none of its code runs) or 'logic' (its own tools run too, sealed and confined).
+    list TRUST: ['declarations', 'logic'];
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <Network>.TOOL_LIBS. The libraries a provider's tools may call on the
+    /// consumer's side (and nothing else: no Http, no host libraries; they reach the provider only through its routes).
+    list TOOL_LIBS: ['Std', 'Str', 'Num', 'List', 'Map', 'Set', 'Tup', 'Time', 'Ver'];
+
+
+    /// This policy's identity: its public key. The host keeps the secret key and signs for it.
+    str! key: '';
+
+    /// How this policy calls itself to providers (Ex. 'support_agent').
+    str! name: '';
+
+    /// An identity statement for this policy's key (from an identity operator: identify()): sent with every voucher,
+    /// and in this policy's manifest when it's a provider.
+    str identity: null;
+
+    /// Connect only to providers identified by this policy's identity operator (their manifest's identity statement).
+    bool! require_identity: false;
+
+    #[schema((target_val: obj): bool => target_val == null ? true : <NetworkProvider>.schemafy(target_val))]
+    /// What this policy offers on the network (null when it only uses others').
+    NetworkProvider provider: null;
+
+    /// The providers this policy uses: a NetworkConnection each, by the provider's name. Made by connect().
+    obj connections: null;
+
+    #[schema((target_val: ms!): bool => target_val > 0 ? true : <LimitrValidation>.error('A network\'s tool_time must be more than 0'))]
+    /// The longest a provider's tool may run here, each time it runs (its requests' waits included).
+    ms! tool_time: 30s;
+
+    #[schema((target_val: ms!): bool => target_val > 0 ? true : <LimitrValidation>.error('A network\'s request_timeout must be more than 0'))]
+    /// The longest this policy waits for an HTTP response (from a provider or an operator).
+    ms! request_timeout: 30s;
+
+    #[schema((target_val: bytes!): bool => target_val > 0 ? true : <LimitrValidation>.error('A network\'s max_response must be more than 0'))]
+    /// The largest HTTP response body this policy reads (from a provider or an operator); a larger one isn't read, and
+    /// the response has status 0 with the reason as its body.
+    bytes! max_response: 10MB;
+
+    #[schema((target_val: obj): bool => {
+        if (target_val == null) return true;
+        const served = map();
+        for (const (name, op) in target_val.fields()) {
+            if (!<Network>.valid_name(name)) return <LimitrValidation>.error(`Network operator name "${name}" can only have letters, numbers, _ and -`);
+            if (typeof op != 'obj') return <LimitrValidation>.error(`Network operator "${name}" must be an object`);
+            const typed: NetworkOperator = op;
+            if (!<NetworkOperator>.schemafy(typed)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Network operator "${name}" is not valid`);
+            for (const role in typed.roles) {
+                if (served.get(role) != null) return <LimitrValidation>.error(`Network operators "${served.get(role)}" and "${name}" both serve '${role}' (one operator per role)`);
+                served.insert(role, name);
+            }
+        }
+        true
+    })]
+    /// The operators this policy uses: a NetworkOperator each, by name, at most one per role. None: peer to peer.
+    obj operators: null;
+
+    /// This policy's budgets at state operators: a NetworkBudget each, by ID. Made by budget().
+    obj budgets: null;
+
+    #[schema((target_val: obj): bool => target_val == null ? true : <NetworkOperatorService>.schemafy(target_val))]
+    /// What this policy serves as an operator (null when it isn't one).
+    NetworkOperatorService service: null;
+
+
+    #[static]
+    /**
+     * Type a policy's network (and everything in it) and check it. Makes an empty one when the policy has none. False,
+     * with <LimitrValidation>.error_message, when something is off.
+     */
+    fn load(policy: obj!) -> bool {
+        if (policy.network == null) policy.network = new Network {} on policy;
+        if (!<Network>.check(policy)) return false;
+        const network: Network = policy.network;
+        if (network.connections == null) network.connections = new {} on network;
+        for (const (_, conn) in network.connections.fields()) {
+            const typed: NetworkConnection = conn;
+        }
+        if (network.budgets == null) network.budgets = new {} on network;
+        for (const (_, budget) in network.budgets.fields()) {
+            const typed: NetworkBudget = budget;
+        }
+        if (network.service != null) network.service.load();
+        true
+    }
+
+
+    #[static]
+    /**
+     * Check a policy's network, if it has one (typed, with its schemas), and how it fits the rest of the policy (the
+     * provider's plans and entitlements). Adds nothing to a policy without one. False, with
+     * <LimitrValidation>.error_message, when something is off. The policy's valid() runs this.
+     */
+    fn check(policy: obj!) -> bool {
+        <LimitrValidation>.error('');
+        if (policy.network == null) return true;
+        if (typeof policy.network != 'obj') return <LimitrValidation>.error('The policy\'s network must be an object');
+        const network: Network = policy.network;
+        if (!<Network>.schemafy(network)) {
+            return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error('The policy\'s network is not valid');
+        }
+        if (network.provider != null && !network.provider.fits(policy)) return false;
+        true
+    }
+
+
+    /// The policy this network belongs to.
+    fn policy() -> Limitr {
+        <LimitrValidation>.get_policy(self)
+    }
+
+
+    /// The operator serving a role here, or null (peer to peer for that role).
+    fn operator(role: str!) -> NetworkOperator {
+        for (const (_, op) in (self.operators ?? new {}).fields()) {
+            if (op.serves(role)) return op;
+        }
+        null
+    }
+
+
+    /// The operator with a name here, or null.
+    fn operator_named(name: str!) -> NetworkOperator {
+        self.operators?.get(name)
+    }
+
+
+    /// The URLs of this policy's operators (a host lets Http::fetch reach them).
+    fn operator_urls() -> list {
+        const out = [];
+        for (const (_, op) in (self.operators ?? new {}).fields()) out.push_back(op.url);
+        out
+    }
+
+
+    /*****************************************************************************
+     * Consumer.
+     *****************************************************************************/
+
+    /**
+     * Start using a provider: read its manifest (GET <url>/.well-known/limitr-network), sign a voucher for one of its
+     * plans (up to `spend` runes, until `expires`), send it (POST <url>/limitr-network/voucher), and take its grant. Its
+     * routes become tools here ('<provider>_<route>', capabilities in this policy). Returns their names. A new voucher
+     * for a provider replaces the old one. Throws with the reason when anything is refused.
+     *
+     * With `budget` (one of this policy's budgets, see budget()), the voucher spends from it: the provider must accept
+     * the budget's operator for its state. `spend` is still this voucher's own most (its share of the budget).
+     *
+     * `trust` is 'declarations' by default: none of the provider's code runs here. With 'logic', the provider's own
+     * tools ('<provider>_<tool>') run here too, sealed and confined, calling its routes (and, with `may_call`, the
+     * routes of those other connections, spending their vouchers). See NetworkConnection.trust.
+     *
+     * `max` caps each request (runes): the provider caps the request there too, on top of the voucher's spend.
+     */
+    fn connect(url: str!, plan: str!, spend: float!, expires: ms!, budget?: str, trust?: str, may_call?: list, max?: float) -> list {
+        if (!<Network>.secure(url)) throw(`a provider's URL must be https:// (http:// only for localhost): ${url}`);
+        <Network>.check_trust(trust ?? 'declarations', may_call ?? []);
+        const base = <Network>.base(url);
+        let operator_key = null;
+        if (budget != null) {
+            const b: NetworkBudget = self.budgets?.get(budget);
+            if (b == null) throw(`no budget '${budget}'`);
+            const op = self.operator_named(b.operator);
+            if (op == null) throw(`no operator '${b.operator}' for budget '${budget}'`);
+            operator_key = op.key;
+        }
+        const manifest = <Network>.expect(self.send(map(('method', 'GET'), ('url', base + <Network>.MANIFEST_PATH))), 'manifest');
+
+        using msg = new {}; // made first, so it's dropped even when open() throws
+        self.open(manifest, 'manifest', msg);
+        // the terms come as text: the voucher agrees to its digest, the same in any language (nothing to re-serialize)
+        const terms_text = msg.body?.terms;
+        if (typeof terms_text != 'str') throw("the manifest has no terms");
+        using terms = new {};
+        parse(terms_text, terms, 'json');
+        if (!<Network>.valid_name(terms.name)) throw('the provider needs a name (letters, numbers, _ and -)');
+        if (terms.plans?.get(plan) == null) throw(`the provider doesn't offer plan '${plan}'`);
+        if (spend <= 0) throw('a voucher needs a spend');
+        const now: ms = Time::now();
+        if (expires <= now) throw('a voucher needs an expiry in the future');
+        if (operator_key != null && terms.operators?.get('state') != operator_key) throw(`${terms.label ?? terms.name} doesn't accept this budget's operator`);
+        const who = self.provider_identity(msg.body?.identity, msg.from, terms.label ?? terms.name);
+        if (trust == 'logic' && typeof terms.logic == 'str') {
+            // before a voucher is signed: logic that won't parse as untrusted source costs nothing
+            using scratch = new {};
+            try parse(terms.logic, scratch, 'stof', 'untrusted');
+            catch (e, why) throw(`${terms.label ?? terms.name}'s logic doesn't parse as untrusted source: ${why}`);
+        }
+
+        self.disconnect(terms.name);
+        const conn = new NetworkConnection {
+            provider: msg.from,
+            name: terms.name,
+            label: terms.label ?? terms.name,
+            url: base,
+            terms: <Network>.text_digest(terms_text),
+            voucher: nanoid(),
+            plan,
+            spend,
+            expires,
+            remaining: spend,
+            budget,
+            operator: operator_key,
+            trust: trust ?? 'declarations',
+            may_call: may_call ?? [],
+            max,
+            subject: who[0],
+            issuer: who[1],
+        } on self.connections;
+        self.connections.insert(terms.name, conn);
+        conn.take_offer(terms);
+        conn.send_voucher()
+    }
+
+
+    /**
+     * Who a provider is, from its manifest's identity statement, checked with this policy's identity operator: for its
+     * key, and current. Returns [subject, issuer] ([null, null] without one, or when nothing here can check it), or
+     * throws when this policy requires identified providers (require_identity) and it isn't one.
+     */
+    fn provider_identity(statement: unknown, key: str!, label: str!) -> list {
+        const op = self.operator('identity');
+        if (typeof statement != 'str' || statement.len() < 1 || op == null) {
+            if (!self.require_identity) return [null, null];
+            if (op == null) throw('require_identity needs an operator that serves identity here');
+            throw(`${label} isn't identified`);
+        }
+        using who = new {};
+        let why = null;
+        try op.verify_identity(statement, who);
+        catch (e, reason) why = reason;
+        if (why == null && who.key != key) why = 'the statement is for another key';
+        if (why != null) {
+            if (self.require_identity) throw(`${label}'s identity statement doesn't check out: ${why}`);
+            return [null, null];
+        }
+        [who.subject, op.key]
+    }
+
+
+    /**
+     * Change how far this policy trusts a connection's provider ('declarations' or 'logic'), and which other
+     * connections its tools may call (`may_call`, 'logic' only; unchanged when null). Its tools here are made again.
+     * Returns their names.
+     */
+    fn trust(name: str!, trust: str!, may_call?: list) -> list {
+        const conn: NetworkConnection = self.connection(name);
+        if (conn == null) throw(`no connection '${name}'`);
+        <Network>.check_trust(trust, may_call ?? conn.may_call);
+        conn.trust = trust;
+        if (may_call != null) conn.may_call = may_call;
+        conn.build()
+    }
+
+
+    #[static]
+    /// Throw when a trust level (or a may_call list) isn't valid.
+    fn check_trust(trust: str!, may_call: list!) {
+        if (!<Network>.TRUST.contains(trust)) throw(`trust is 'declarations' or 'logic', not '${trust}'`);
+        for (const name in may_call) {
+            if (!<Network>.valid_name(name)) throw(`may_call names connections (letters, numbers, _ and -), not '${name}'`);
+        }
+        if (may_call.len() > 0 && trust != 'logic') throw("may_call is for a provider's tools: trust 'logic'");
+    }
+
+
+    /**
+     * Change a connection's voucher (more or less spend, a later or earlier expiry), send it, and take the new grant.
+     * Returns the capability names.
+     */
+    fn update(name: str!, spend?: float, expires?: ms) -> list {
+        const conn: NetworkConnection = self.connection(name);
+        if (conn == null) throw(`no connection '${name}'`);
+        conn.seq += 1;
+        if (spend != null) conn.spend = spend;
+        if (expires != null) conn.expires = expires;
+        conn.send_voucher()
+    }
+
+
+    /**
+     * Stop using a provider: tell it (its voucher ends now), and remove the connection and its capabilities here. The
+     * connection is removed even when the provider can't be reached (its voucher still ends at its expiry). False when
+     * there's no such connection.
+     */
+    fn cancel(name: str!) -> bool {
+        const conn: NetworkConnection = self.connection(name);
+        if (conn == null) return false;
+        using body = new { voucher: conn.voucher };
+        const message = self.envelope('cancel', conn.provider, body);
+        const url = conn.url + <Network>.CANCEL_PATH;
+        try self.send(map(('method', 'POST'), ('url', url), ('body', message), ('headers', map(('content-type', 'application/json')))));
+        catch {}
+        self.disconnect(name);
+        true
+    }
+
+
+    /**
+     * A provider's revoke: remove that connection and its capabilities. True when it was valid.
+     */
+    fn revoked(envelope: str!) -> bool {
+        const conn: NetworkConnection = self.connection_for(<Network>.peek(envelope)?.get('voucher'));
+        if (conn == null) return false;
+        using msg = new {};
+        try self.open(envelope, 'revoke', msg, conn.provider);
+        catch return false;
+        self.disconnect(conn.name);
+        true
+    }
+
+
+    /**
+     * Search a discovery operator (the one serving 'discovery' here, or by name) for providers: every word of `query`
+     * in a provider's name, label, or its routes' and tools' descriptions (empty: all it may see), up to `limit`. The
+     * search is signed, so private listings it's a member of come back too (with this policy's identity statement,
+     * when it has one from that operator, listings private to its subject as well). Each result is a provider's own
+     * signed manifest, checked here: a list of maps (key, name, label, url, terms: its terms' JSON text). connect()
+     * to a result's url reads its manifest from the provider itself.
+     */
+    fn discover(query: str = '', limit: int = 20, operator?: str) -> list {
+        const op = operator != null ? self.operator_named(operator) : self.operator('discovery');
+        if (op == null) throw(operator != null ? `no operator '${operator}'` : 'no operator serves discovery here');
+        if (!op.serves('discovery')) throw(`operator '${Obj::name(op)}' doesn't serve 'discovery' here`);
+        using body = new NetworkSearch { query, limit, identity: self.identity };
+        using answer = new {};
+        const results = op.ask('search', body, 'results', answer);
+        const out = [];
+        for (const text in results?.manifests ?? []) {
+            if (typeof text != 'str') continue;
+            using m = new {};
+            using terms = new {};
+            try {
+                self.open(text, 'manifest', m, null, null, false);
+                parse(m.body?.terms ?? '', terms, 'json');
+            } catch continue; // not a manifest its key signed: left out
+            out.push_back(map(('key', m.from), ('name', terms.name), ('label', terms.label), ('url', terms.url), ('terms', m.body.terms)));
+        }
+        out
+    }
+
+
+    /**
+     * A key rotation statement, signed by this policy's key: "my key is now `key`" (a 'rotate' message, to anyone,
+     * whose body is `{ key, previous }`). An operator that rotates keys publishes these in order, from its first key,
+     * in its manifest (service.rotations), then signs with the new key; the policies that name it by its first key
+     * follow the chain. Sign it before switching keys.
+     */
+    fn rotation(key: str!) -> str {
+        if (key.len() < 1 || key == self.key) throw('a rotation is to a new key');
+        using body = new NetworkRotation { key, previous: self.key };
+        self.envelope('rotate', '', body, 36500days)
+    }
+
+
+    /**
+     * Get an identity statement for this policy's key from an identity operator (by name; the one serving 'identity'
+     * here when null), and send it with every voucher from now on (an update sends it to providers already
+     * connected). Returns who the operator says this policy is (its subject). Throws when the operator refuses.
+     */
+    fn identify(operator?: str) -> str {
+        const op = operator != null ? self.operator_named(operator) : self.operator('identity');
+        if (op == null) throw(operator != null ? `no operator '${operator}'` : 'no operator serves identity here');
+        if (!op.serves('identity')) throw(`operator '${Obj::name(op)}' doesn't serve 'identity' here`);
+        using body = new {};
+        using answer = new {};
+        const identified = op.ask('identify', body, 'identified', answer);
+        const statement = identified?.statement;
+        if (typeof statement != 'str') throw(`operator '${Obj::name(op)}' answered with no identity statement`);
+        using s = new {};
+        const who = self.identity_of(statement, op.signing_key(), s);
+        if (who.key != self.key) throw(`operator '${Obj::name(op)}' identified another key`);
+        self.identity = statement;
+        who.subject
+    }
+
+
+    /**
+     * Open an identity statement signed by `issuer` (Ex. the identity operator's key) into `into` (its key, subject,
+     * and expires), and return `into`. Throws with the reason when it isn't one, isn't signed by the issuer, or has
+     * expired.
+     */
+    fn identity_of(statement: str!, issuer: str!, into: obj!) -> obj {
+        using msg = new {};
+        self.open(statement, 'identity', msg, issuer);
+        const body: NetworkIdentity = msg.body;
+        if (!<NetworkIdentity>.schemafy(body) || body.key.len() < 1 || body.subject.len() < 1) throw('not an identity statement');
+        const now: ms = Time::now();
+        if (body.expires <= now) throw('the identity statement has expired');
+        into.key = body.key;
+        into.subject = body.subject;
+        into.expires = body.expires;
+        into
+    }
+
+
+    /**
+     * Open (or change) a budget at a state operator: one spend, until an expiry, across the providers you connect to
+     * with it (only `providers`, their public keys, when given). Returns its ID; connect(..., budget) spends from it.
+     * Pass an existing `id` to change it (a newer seq); an expiry of now ends it. Throws when the operator refuses.
+     */
+    fn budget(operator: str!, spend: float!, expires: ms!, providers?: list, id?: str) -> str {
+        const op = self.operator_named(operator);
+        if (op == null) throw(`no operator '${operator}'`);
+        if (!op.serves('state')) throw(`operator '${operator}' doesn't serve 'state' here`);
+        let b: NetworkBudget = id != null ? self.budgets.get(id) : null;
+        if (id != null && b == null) throw(`no budget '${id}'`);
+        if (b == null) {
+            b = new NetworkBudget { budget: nanoid(), operator, seq: 0 } on self.budgets;
+            self.budgets.insert(b.budget, b);
+        }
+        b.seq += 1;
+        b.spend = spend;
+        b.expires = expires;
+        b.providers = providers;
+        using body = new NetworkBudgetMessage { budget: b.budget, seq: b.seq, spend, expires, providers };
+        using msg = new {};
+        let answer = null;
+        try answer = op.ask('budget', body, 'budgeted', msg);
+        catch (e, why) {
+            if (b.seq == 1) drop(b); // a new budget the operator never took
+            throw(why);
+        }
+        const state: NetworkStateAnswer = answer;
+        b.spent = state.spent;
+        b.remaining = state.remaining;
+        b.budget
+    }
+
+
+    /// A budget by ID.
+    fn budget_named(id: str!) -> NetworkBudget {
+        self.budgets?.get(id)
+    }
+
+
+    /// A connection by its provider's name.
+    fn connection(name: str!) -> NetworkConnection {
+        self.connections?.get(name)
+    }
+
+
+    /// The connection holding a voucher.
+    fn connection_for(voucher: unknown) -> NetworkConnection {
+        if (typeof voucher != 'str') return null;
+        for (const (_, conn) in (self.connections ?? new {}).fields()) {
+            if (conn.voucher == voucher) return conn;
+        }
+        null
+    }
+
+
+    /// Remove a connection and its capabilities.
+    fn disconnect(name: str!) {
+        const conn: NetworkConnection = self.connection(name);
+        if (conn == null) return;
+        conn.remove_capabilities();
+        conn.remove_toolbox();                  // the sealed (removable) parts first
+        if (conn.link != null) drop(conn.link);
+        drop(conn);
+    }
+
+
+    /*****************************************************************************
+     * Messages.
+     *****************************************************************************/
+
+    /**
+     * A signed message, as JSON text: { message, key, signature }. `message` is the JSON text of a NetworkMessage
+     * ({ protocol, type, from, to, id, issued, expires, body }), and the signature is over exactly that text, under the
+     * context 'limitr-network/v1/<type>'.
+     */
+    fn envelope(type: str!, to: str, body: obj!, ttl: ms = 5min) -> str {
+        const now: ms = Time::now();
+        const expires: ms = now + ttl;
+        using msg = new NetworkMessage {
+            protocol: <Network>.PROTOCOL,
+            type,
+            from: self.key,
+            to: to ?? '',
+            id: nanoid(),
+            issued: now,
+            expires,
+        };
+        msg.body = new {} on msg;
+        parse(stringify('json', body), msg.body, 'json');
+        const message = stringify('json', msg);
+        using env = new { message, key: self.key, signature: self.sign(type, message) };
+        stringify('json', env)
+    }
+
+
+    /**
+     * Open a signed message: check its signature (under the context for `type`), that it's a protocol version we
+     * speak, from `from` (when given), for `to` (this policy by default; or anyone), and current. Parses the message
+     * into `into` (typed as a NetworkMessage) and returns it; throws with the reason when anything is off. Make `into`
+     * first (`using msg = new {};`), so it's dropped even when this throws.
+     *
+     * `current: false` skips the message's own expiry, for a message kept and checked again later (Ex. a consumer's
+     * voucher, from the state operator): its signature is what matters, and the voucher has its own expiry.
+     */
+    fn open(envelope: str!, type: str!, into: obj!, from?: str, to?: str, current: bool = true) -> NetworkMessage {
+        using env = new {};
+        try parse(envelope, env, 'json');
+        catch throw('not a Limitr Network message');
+        if (typeof env.message != 'str' || typeof env.key != 'str' || typeof env.signature != 'str') throw('not a Limitr Network message');
+        if (from != null && env.key != from) throw('signed by an unexpected key');
+        if (!<Network>.verify(env.key, type, env.message, env.signature)) throw('the signature does not match');
+
+        parse(env.message, into, 'json');
+        const msg: NetworkMessage = into;
+        const now: ms = Time::now();
+        const newest: ms = now + <Network>.SKEW;
+        const expires: ms = msg.expires ?? 0;
+        const issued: ms = msg.issued ?? 0;
+        if (!<Network>.compatible(msg.protocol)) throw(`not a version of ${<Network>.PROTOCOL} we speak`);
+        if (msg.type != type) throw(`not a ${type}`);
+        if (msg.from != env.key) throw('signed by a key other than its sender');
+        const for_key = to ?? self.key;
+        if (msg.to != null && msg.to != '' && msg.to != for_key) throw('not for this policy');
+        if (current && (msg.expires == null || now > expires)) throw('the message has expired');
+        if (msg.issued == null || issued > newest) throw('the message is from the future');
+        msg
+    }
+
+
+    /**
+     * Sign a message under '<CONTEXT><type>' with this policy's key: its signer function when it has one (Ex. tests),
+     * otherwise the host's NetworkKey::sign. The policy never holds the secret key.
+     */
+    fn sign(type: str!, message: str!) -> str {
+        const context = <Network>.CONTEXT + type;
+        const signer = self.signer;
+        if (signer != null) return signer(context, message);
+        NetworkKey::sign(context, message)
+    }
+
+
+    /**
+     * Send a request (a NetworkRequest map: method, url, headers, body) and return the response (a NetworkResponse
+     * map: status, headers, body): through this network's transport function when it has one (Ex. tests), otherwise
+     * Http::fetch.
+     */
+    fn send(request: map!) -> map {
+        const transport = self.transport;
+        if (transport != null) return transport(request);
+        const body = request.get('body') ?? '';
+        const resp = await Http::fetch(request.get('url'), (request.get('method') ?? 'GET').lower(), body.len() > 0 ? body : null, request.get('headers') ?? map(), timeout = self.request_timeout, max = self.max_response);
+        <Network>.response(resp)
+    }
+
+
+    #[static]
+    /// An Http::fetch response as a NetworkResponse map. One that failed (Ex. too large, or timed out) is status 0,
+    /// with the reason as its body.
+    fn response(resp: map!) -> map {
+        if (resp.get('error') != null) return map(('status', 0), ('headers', map()), ('body', str(resp.get('error'))));
+        map(('status', resp.get('status')), ('headers', resp.get('headers') ?? map()), ('body', Http::text(resp)))
+    }
+
+
+    /*****************************************************************************
+     * Helpers.
+     *****************************************************************************/
+
+    #[static]
+    /// Does a signature check out (false for anything malformed)?
+    fn verify(key: str, type: str!, message: str!, signature: str) -> bool {
+        let valid = false;
+        try valid = Key::verify(key, <Network>.CONTEXT + type, message, signature);
+        catch valid = false;
+        valid
+    }
+
+
+    #[static]
+    /// What an envelope says it is, unchecked (only to route it, or to read a refusal): a map of its type, and its
+    /// body's voucher and reason. Null when it isn't an envelope.
+    fn peek(envelope: str!) -> map {
+        using env = new {};
+        using msg = new {};
+        try {
+            parse(envelope, env, 'json');
+            parse(env.message ?? '{}', msg, 'json');
+        } catch return null;
+        map(('type', msg.type), ('to', msg.to), ('voucher', msg.body?.voucher), ('reason', msg.body?.reason), ('key', msg.body?.key), ('previous', msg.body?.previous))
+    }
+
+
+    #[static]
+    /// A response's body when its status is 2xx and its message is of `type`; otherwise throws with what came back.
+    fn expect(response: map!, type: str!) -> str {
+        const status = response.get('status') ?? 0;
+        const body = response.get('body') ?? '';
+        if (status >= 200 && status < 300) return body;
+        const refused = <Network>.peek(body);
+        if (refused?.get('type') == 'refused') throw(`refused: ${refused.get('reason') ?? 'no reason given'}`);
+        throw(`expected a ${type}, got ${status}: ${body}`);
+    }
+
+
+    #[static]
+    /**
+     * Do we speak this protocol version? Same name and major version (and, before 1.0, the same minor). Peers ignore
+     * fields they don't know, so a later minor version (after 1.0) only adds.
+     */
+    fn compatible(protocol: unknown) -> bool {
+        if (typeof protocol != 'str') return false;
+        const ours = <Network>.PROTOCOL.split('/');
+        const theirs = protocol.split('/');
+        if (theirs.len() != 2 || theirs[0] != ours[0]) return false;
+        const a = ours[1].split('.');
+        const b = theirs[1].split('.');
+        if (b.len() != 2 || a[0] != b[0]) return false;
+        a[0] != '0' || a[1] == b[1]
+    }
+
+
+    #[static]
+    /// Is a URL safe to send the protocol over: https://, or http:// to this machine (localhost, 127.0.0.1)?
+    fn secure(url: str!) -> bool {
+        if (url.starts_with('https://')) return url.len() > 8;
+        if (!url.starts_with('http://')) return false;
+        const host = <Network>.host(url);
+        host == 'localhost' || host == '127.0.0.1'
+    }
+
+
+    #[static]
+    /// The digest of a text: the SHA-256 (lowercase hex) of its UTF-8 bytes, which any language can compute.
+    fn text_digest(text: str!) -> str {
+        sha256(text)
+    }
+
+
+    #[static]
+    /// A URL without a trailing slash.
+    fn base(url: str!) -> str {
+        let out = url;
+        loop {
+            if (!out.ends_with('/')) break;
+            out = out.substring(0, out.len() - 1);
+        }
+        out
+    }
+
+
+    #[static]
+    /// A URL's host (no scheme, port, or path).
+    fn host(url: str!) -> str {
+        const rest = url.contains('://') ? url.split('://')[1] : url;
+        rest.split('/')[0].split('?')[0].split(':')[0].lower()
+    }
+
+
+    #[static]
+    /// A URL's path and query string ('/' when it has none).
+    fn path(url: str!) -> str {
+        if (url.starts_with('/')) return url;
+        const rest = url.contains('://') ? url.split('://')[1] : url;
+        const at = rest.index_of('/');
+        at < 0 ? '/' : rest.substring(at)
+    }
+
+
+    #[static]
+    /// Letters, numbers, _ and - (a name, or an ID).
+    fn valid_name(name: unknown) -> bool {
+        typeof name == 'str' && name.matches(r#"^[A-Za-z0-9_-]{1,64}$"#)
+    }
+
+
+    #[static]
+    /// Percent-encode a query string part (the characters that would change its meaning).
+    fn encode(text: str!) -> str {
+        let out = text.replace('%', '%25').replace(' ', '%20').replace('&', '%26').replace('=', '%3D');
+        out.replace('?', '%3F').replace('#', '%23').replace('+', '%2B').replace('/', '%2F')
+    }
+
+
+    #[static]
+    /// A value as plain data: an object (Ex. parsed JSON) as a map, a list's items the same way, anything else as is.
+    /// For handing data to confined code, which can't look inside objects it isn't given.
+    fn plain(value: unknown) -> unknown {
+        if (typeof value == 'obj') {
+            const out = map();
+            for (const (key, item) in value.fields()) out.insert(key, <Network>.plain(item));
+            return out;
+        }
+        if (typeof value == 'list') {
+            const out = [];
+            for (const item in value) out.push_back(<Network>.plain(item));
+            return out;
+        }
+        value
+    }
+
+
+    #[static]
+    /// JSON text as plain data (see plain()). Throws when it isn't JSON.
+    fn json_value(text: str!) -> unknown {
+        using scratch = new {};
+        parse(`{"value":${text}}`, scratch, 'json');
+        <Network>.plain(scratch.value)
+    }
+
+
+    #[static]
+    /// A value (a map, a list, a number, ...) as JSON text.
+    fn json_text(value: unknown) -> str {
+        using out = new {};
+        out.value = value;
+        const text = stringify('json', out);
+        text.substring(9, text.len() - 1)
+    }
+
+
+    #[static]
+    /// A number for the terms: always a float (an int and a float of the same value are different JSON text), a
+    /// string with units as written (Ex. '10GB'), null as null.
+    fn number(value: unknown) -> unknown {
+        typeof value == 'int' ? (value as float) : value
+    }
+}

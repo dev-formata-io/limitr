@@ -15,10 +15,12 @@
 //
 
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
-import { limitrEngine } from "./limitr.js";
+import { limitrEngine, limitrNetwork } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
+import { LimitrNetwork, LimitrNetworkInit } from "./network.js";
 import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEntitlementSource, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
+export * from './network.js';
 
 
 /**
@@ -149,6 +151,13 @@ export class Limitr {
     /** Optional named event handlers for all Limitr events. */
     protected eventHandlers: Map<string, LimitrEventHandler> = new Map();
 
+    /** Whether the policy's Http::fetch may reach any public host (allowHttp() without hosts: Cloud's default). */
+    protected httpAnyHost: boolean = false;
+
+    /** Modules loaded into this policy's document (see module()), by name, to load again into a new document. */
+    protected modules: Map<string, { bytes: Uint8Array, setup?: (doc: StofDoc) => void }> = new Map();
+    private _network?: LimitrNetwork;
+
 
     /**
      * Constructor.
@@ -174,6 +183,69 @@ export class Limitr {
      */
     protected static sealEngine(doc: StofDoc) {
         if (doc.get('LimitrTypes') != null) doc.seal('LimitrTypes');
+    }
+
+
+    /**
+     * Load a module into this policy's document: Stof compiled to bstf (blobify('bstf', ..)) whose root object is
+     * `name` (Ex. 'LimitrNetwork'). It's sealed like the engine, so nothing parsed later can change it, and loaded
+     * once: calling again only runs `setup`. A document from Limitr Cloud gets the same modules. This is how Limitr
+     * is extended (limitr.network() loads the Network module this way), and how you can add your own.
+     */
+    async module(name: string, bytes: Uint8Array, setup?: (doc: StofDoc) => void): Promise<void> {
+        this.modules.set(name, { bytes, setup });
+        await this.gate.run(() => this.loadModule(this.doc, name));
+    }
+
+
+    /** Load a module into a document (once), seal it, and run its setup. */
+    protected loadModule(doc: StofDoc, name: string) {
+        const module = this.modules.get(name);
+        if (!module) return;
+        if (doc.get(name) == null) {
+            doc.parse(module.bytes, 'bstf');
+            if (doc.get(name) == null) throw new Error(`Limitr: module '${name}' has no root object named '${name}'`);
+            doc.seal(name);
+        }
+        module.setup?.(doc);
+    }
+
+
+    /**
+     * Limitr Network: use other policies' services and pay for them, or offer yours, peer to peer (see
+     * src/network/SPEC.md). Loads the Network module the first time (later calls return the same handle).
+     *
+     * The policy's identity is `secretKey`; without one a new key is made and handed to `keyStore`. The secret key
+     * stays in this process: the policy signs through it and never sees it.
+     */
+    async network(init: LimitrNetworkInit = {}): Promise<LimitrNetwork> {
+        if (this._network) return this._network;
+        let secretKey = init.secretKey;
+        if (!secretKey) {
+            secretKey = StofDoc.generateKey();
+            if (init.keyStore) await init.keyStore(secretKey);
+        }
+        const network = new LimitrNetwork(this, secretKey, init.channels ?? {});
+        await this.module('LimitrNetwork', limitrNetwork, (doc) => {
+            network.setup(doc);
+            doc.sync_call('LimitrNetwork.identity', network.publicKey, init.name ?? null);
+            doc.sync_call('LimitrNetwork.load'); // types and checks policy.network (throws with the reason)
+            // the policy's operators: its Http::fetch may reach them
+            for (const url of doc.sync_call('LimitrNetwork.operator_urls') as string[]) this.allowNetworkHost(url, doc);
+        });
+        this._network = network;
+        return network;
+    }
+
+
+    /**
+     * Let the policy's Http::fetch reach a URL's host (Ex. a Network provider's), on top of what's allowed. Nothing
+     * changes on a Limitr Cloud instance that allows any public host. (If you called limitr.doc.allowHttp() without
+     * hosts yourself, this narrows it to the hosts listed from then on: list yours with allowHttp([...]) instead.)
+     */
+    allowNetworkHost(url: string, doc: StofDoc = this.doc) {
+        if (this.httpAnyHost) return;
+        doc.allowHttp([new URL(url).host]);
     }
 
 
@@ -1730,12 +1802,14 @@ export class Limitr {
         // Http::fetch (Stof's built-in, on the JS fetch API), limited to the allowed hosts
         if (this.cloudHttpHosts === true) this.doc.allowHttp();
         else if (this.cloudHttpHosts !== false) this.doc.allowHttp(this.cloudHttpHosts);
+        this.httpAnyHost = this.cloudHttpHosts === true;
         this.doc.lib('CloudWS', 'send', (data: string) => {
             this.wsSend(data);
         });
         this.doc.lib('CloudWS', 'send_debounced', (id: string, data: string, debounceMs: number) => {
             this.wsSendDebounced(id, data, debounceMs);
         });
+        for (const name of this.modules.keys()) this.loadModule(this.doc, name);
         if (this.eventHandlers.size > 0) {
             this.doc.lib('App', 'event_handler', (key: string, value: unknown) => this.emit(key, value));
         }

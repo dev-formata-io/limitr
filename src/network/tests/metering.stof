@@ -1,0 +1,202 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// Metering: a request's work meters however the provider's policy says (a route's declared entitlement is only
+// sugar), a cap on the voucher's customer for the request measures what it spent (and enforces the consumer's max),
+// and the receipt, made after the work, says what it cost and binds the response body.
+//
+// Test keys: the same as protocol.stof.
+//
+
+#[type_ignore]
+Limitr Metered: {
+    /// The work of a route the provider allowed: it meters with the voucher's customer.
+    fn work(route: str, customer: str, req: map) -> str {
+        switch (route) {
+            case 'forecast': 'sunny'
+            case 'bulk': {
+                const count = (req.get('url').split('count=')[1] ?? '1') as int;
+                self.allow(customer, 'forecasts', count) ? `${count} forecasts` : 'more than this request may spend'
+            }
+            default: 'up'
+        }
+    }
+
+    credits: {
+        forecast: { label: 'Forecast', unit: 'forecast', price: { amount: 0.01 } }
+    }
+    plans: {
+        agent: { label: 'Agent', entitlements: { forecasts: { limit: { credit: 'forecast', mode: 'soft', value: 0 } } } }
+    }
+    network: {
+        key: 'eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE='
+        provider: {
+            name: 'acme_weather'
+            url: 'https://api.acme.example'
+            offers: ['agent']
+            routes: {
+                forecast: { description: 'A forecast (metered as declared)', path: '/forecast', parameters: [{ name: 'city' }], entitlement: 'forecasts' }
+                bulk: { description: 'Many forecasts (the work meters them)', path: '/bulk', parameters: [{ name: 'count' }] }
+                ping: { description: 'Is it up (nothing meters it)', path: '/ping' }
+            }
+        }
+        fn signer(context: str, message: str) -> str { Key::sign('f0hrbcBxEsY/2hs5j3AGA4Pv6ETSnIZvjk9bBvimM/o=', context, message) }
+    }
+}
+
+#[type_ignore]
+Limitr Buyer: {
+    network: {
+        key: 'quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig='
+        name: 'test_agent'
+
+        /// Set by each test: the provider, and how the response is changed on the way (null, 'body', or 'receipt').
+        peer: null
+        tamper: null
+
+        fn signer(context: str, message: str) -> str { Key::sign('a47o0A9U6j7LYo/7XUvHLr+wNc8lPWPi79Pn3FPCaxI=', context, message) }
+
+        /// Instead of HTTP: the provider serves the request with its work (a function, not an arrow: see
+        /// <TestNetwork>.serve).
+        fn transport(request: map) -> map {
+            const provider = self.peer;
+            const out = provider.network.provider.serve(request, provider.work);
+            if (self.tamper == 'body') out.insert('body', 'changed on the way');
+            if (self.tamper == 'receipt') out.get('headers').remove(<Network>.RECEIPT_HEADER);
+            out
+        }
+    }
+}
+
+
+#[type]
+/**
+ * Test helpers.
+ */
+TestMetering: {
+    #[static]
+    /// The provider and a buyer connected for `spend` runes (each request capped at `max` when given). Drop both.
+    fn connected(context: obj!, spend: float = 1, max?: float) -> (obj, obj) {
+        const provider = copy(context.Metered);
+        const buyer = copy(context.Buyer);
+        assert(<Network>.load(provider), <LimitrValidation>.error_message);
+        assert(<Network>.load(buyer), <LimitrValidation>.error_message);
+        buyer.network.peer = provider;
+        buyer.network.connect('https://api.acme.example', 'agent', spend, Time::now() + 1hr, max = max);
+        (provider, buyer)
+    }
+
+    #[static]
+    /// The receipt event values the buyer got, by listening for one request (the last receipt's cost).
+    fn cost(buyer: obj!, route: str!, args: map!) -> (str, float, float) {
+        const conn = buyer.network.connection('acme_weather');
+        const before: float = conn.spent;
+        const out = conn.call(route, args);
+        (out, Num::round(conn.spent - before, 9), conn.spent)
+    }
+}
+
+
+#[test]
+fn a_declared_entitlement_meters_before_the_work() {
+    const pair = <TestMetering>.connected(self);
+    using provider = pair[0];
+    using buyer = pair[1];
+    const res = <TestMetering>.cost(buyer, 'forecast', map(('city', 'Boston')));
+    assert_eq(res[0], 'sunny');
+    assert_eq(res[1], 0.01, 'what the request cost, from its receipt');
+}
+
+#[test]
+fn the_work_meters_whatever_the_policy_says() {
+    const pair = <TestMetering>.connected(self);
+    using provider = pair[0];
+    using buyer = pair[1];
+    const res = <TestMetering>.cost(buyer, 'bulk', map(('count', 3)));
+    assert_eq(res[0], '3 forecasts');
+    assert_eq(res[1], 0.03, 'three forecasts, metered by the work');
+    const customer = provider.customer(buyer.network.connection('acme_weather').customer);
+    assert_eq(customer.caps.network.meter_value, 0.03, "on the voucher's own cap too");
+    assert_null(customer.caps.get(<NetworkProvider>.REQUEST_CAP), "the request's cap is gone once it's done");
+
+    const free = <TestMetering>.cost(buyer, 'ping', map());
+    assert_eq(free[0], 'up');
+    assert_eq(free[1], 0, 'a request nothing meters is free');
+}
+
+#[test]
+fn the_consumer_can_cap_a_request() {
+    const pair = <TestMetering>.connected(self, 1, 0.025);
+    using provider = pair[0];
+    using buyer = pair[1];
+    const over = <TestMetering>.cost(buyer, 'bulk', map(('count', 3)));
+    assert_eq(over[0], 'more than this request may spend', "the work's allow() is refused past the request's max");
+    assert_eq(over[1], 0);
+    const under = <TestMetering>.cost(buyer, 'bulk', map(('count', 2)));
+    assert_eq(under[0], '2 forecasts');
+    assert_eq(under[1], 0.02);
+
+    // the max is signed into the request: a provider sees exactly what the consumer allowed
+    using signed = new {};
+    parse(buyer.network.connection('acme_weather').json(), signed, 'json');
+    assert_eq(signed.max, 0.025);
+}
+
+#[test]
+fn the_voucher_caps_what_the_work_meters() {
+    const pair = <TestMetering>.connected(self, 0.02);
+    using provider = pair[0];
+    using buyer = pair[1];
+    const over = <TestMetering>.cost(buyer, 'bulk', map(('count', 3)));
+    assert_eq(over[0], 'more than this request may spend');
+    assert_eq(over[2], 0, 'nothing spent');
+}
+
+#[test]
+fn a_receipt_binds_the_response() {
+    const pair = <TestMetering>.connected(self);
+    using provider = pair[0];
+    using buyer = pair[1];
+    const conn = buyer.network.connection('acme_weather');
+
+    buyer.network.tamper = 'body';
+    using changed = new {};
+    parse(conn.call('forecast', map(('city', 'Boston'))), changed, 'json');
+    assert_eq(changed.refused.status, 0);
+    assert(changed.refused.reason.contains("doesn't match its receipt"), changed.refused.reason);
+
+    buyer.network.tamper = 'receipt';
+    using bare = new {};
+    parse(conn.call('forecast', map(('city', 'Boston'))), bare, 'json');
+    assert(bare.refused.reason.contains('no receipt'), bare.refused.reason);
+
+    buyer.network.tamper = null;
+    assert_eq(conn.call('forecast', map(('city', 'Boston'))), 'sunny');
+}
+
+#[test]
+fn a_request_without_entitlements_fits_its_policy() {
+    const pair = <TestMetering>.connected(self);
+    using provider = pair[0];
+    using buyer = pair[1];
+    using terms = new {};
+    provider.network.provider.terms(terms);
+    assert_null(terms.routes.bulk.entitlement, 'the terms say the work meters it');
+    assert_eq(terms.routes.forecast.entitlement, 'forecasts');
+    assert(provider.valid(), <LimitrValidation>.error_message);
+}

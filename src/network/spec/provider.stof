@@ -1,0 +1,1261 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#[type]
+/**
+ * What a policy offers on the network (policy.network.provider): the plans other policies can sign vouchers for, the
+ * routes those plans reach (what a request may do, and how it's metered), and optionally tools (the provider's own
+ * Stof, run on the consumer's side, calling its routes).
+ *
+ *   provider: {
+ *       name: 'acme_weather'                 // letters, numbers, _ and -: names its tools on the other side
+ *       label: 'Acme Weather'
+ *       url: 'https://api.acme.example'      // where it's reached (its manifest, vouchers, and routes)
+ *       offers: ['agent']                    // plans offered on the network
+ *       routes: { forecast: { ... } }        // NetworkRoute, by name: each is a tool as-is, unless `tool: false`
+ *       tools: { compare: { ... } }          // optional: NetworkTool, by name, each a function in `logic`
+ *       logic: r#"fn compare(input: map) -> unknown { ... self.api.call('forecast', ...) ... }"#
+ *   }
+ */
+NetworkProvider: {
+    #[schema((target_val: str!): bool => <Network>.valid_name(target_val) ? true : <LimitrValidation>.error(`Network provider name "${target_val}" can only have letters, numbers, _ and -`))]
+    /// The provider's name: letters, numbers, _ and - (its tools on a consumer are '<name>_<route or tool>').
+    str! name: '';
+
+    /// How people see it (Ex. 'Acme Weather'). The name when empty.
+    str! label: '';
+
+    #[schema((target_val: str!): bool => <Network>.secure(target_val) ? true : <LimitrValidation>.error(`Network provider url "${target_val}" must start with https:// (http:// only for localhost)`))]
+    /// Where it's reached: its manifest, vouchers, and routes are under this URL.
+    str! url: '';
+
+    /// The plans offered on the network (others stay private).
+    list! offers: [];
+
+    #[schema((target_val: obj): bool => {
+        if (target_val == null) return true;
+        for (const (name, route) in target_val.fields()) {
+            if (!<Network>.valid_name(name)) return <LimitrValidation>.error(`Network route name "${name}" can only have letters, numbers, _ and -`);
+            if (typeof route != 'obj') return <LimitrValidation>.error(`Network route "${name}" must be an object`);
+            const typed: NetworkRoute = route;
+            if (!<NetworkRoute>.schemafy(typed)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Network route "${name}" is not valid`);
+        }
+        true
+    })]
+    /// What the offered plans reach: a NetworkRoute each, by name. Every request to one is signed, checked, and
+    /// metered here, whoever's code made it.
+    obj routes: null;
+
+    #[schema((target_val: obj): bool => {
+        if (target_val == null) return true;
+        for (const (name, tool) in target_val.fields()) {
+            if (!<Network>.valid_name(name)) return <LimitrValidation>.error(`Network tool name "${name}" can only have letters, numbers, _ and -`);
+            if (typeof tool != 'obj') return <LimitrValidation>.error(`Network tool "${name}" must be an object`);
+            const typed: NetworkTool = tool;
+            if (!<NetworkTool>.schemafy(typed)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error(`Network tool "${name}" is not valid`);
+        }
+        true
+    })]
+    /// Tools in this provider's own Stof (optional): a NetworkTool each, by name, each a function of the same name in
+    /// `logic`. They run on the consumer's side, only when it trusts this provider's logic.
+    obj tools: null;
+
+    /**
+     * The tools' Stof (with `tools`): a function per tool, named after it, taking the tool's input as a map, plus any
+     * helpers. It goes to consumers as text, in the terms, and is parsed there as untrusted source (declarations only:
+     * literal values, no imports, no types) and sealed: it sees nothing of the consumer's policy, makes no objects,
+     * calls only <Network>.TOOL_LIBS, runs for a limited time, and reaches this provider only through its routes:
+     * `self.api.call(route, args)` (the response body, signed and metered like any request), and
+     * `self.api.json(text)` (JSON text as a value). A refused request ends the tool, and its result is the refusal.
+     */
+    str logic: null;
+
+    #[schema((target_val: str!): bool => ['auto', 'required', 'optional'].contains(target_val) ? true : <LimitrValidation>.error(`Network provider identity "${target_val}" must be 'auto', 'required', or 'optional'`))]
+    /// Whether a voucher needs an identity statement for its consumer's key (from this provider's identity operator):
+    /// 'required', 'optional', or 'auto' (required when it has an identity operator, optional when it doesn't).
+    str! identity: 'auto';
+
+    #[schema((target_val: obj): bool => {
+        if (target_val == null) return true;
+        for (const (plan, need) in target_val.fields()) {
+            if (!['required', 'optional'].contains(need)) return <LimitrValidation>.error(`Network provider identity for plan "${plan}" must be 'required' or 'optional'`);
+        }
+        true
+    })]
+    /// Per plan, instead of `identity` (Ex. { free: 'optional' }).
+    obj identity_plans: null;
+
+    /// The longest a voucher may run (a voucher asking for longer is shortened to this).
+    ms! max_voucher: 30days;
+
+    /// How long an ended voucher's customer is kept (so its usage can be read and billed) before sweep() removes it.
+    ms! keep_ended: 7days;
+
+    /// When sweep() last ran (handle() sweeps at most once an hour).
+    ms last_sweep: null;
+
+    /// With a bounded state operator: the vouchers holding an open lease (settled on an interval).
+    list leased: null;
+
+    /// With a strict state operator: the vouchers with spend still to settle there (what their requests cost beyond, or
+    /// short of, what was held): sent with the voucher's next message, or on settle_every.
+    list adjusting: null;
+
+    #[type_ignore]
+    /// Prototype-only constant - reference as <NetworkProvider>.REQUEST_CAP. The ID of the cap a request puts on its
+    /// voucher's customer while its work runs (see begin()).
+    str REQUEST_CAP: 'network_request';
+
+
+    /// The policy this provider belongs to.
+    fn policy() -> Limitr {
+        <LimitrValidation>.get_policy(self)
+    }
+
+
+    /**
+     * Does this provider fit its policy? Every offered plan exists; every plan a route or tool lists exists (one that
+     * isn't offered keeps it private); every offered plan a route reaches has the entitlement it meters under; no two
+     * routes share a method and path; no tool shares a route's name; and with tools, `logic` parses as untrusted
+     * source with a function for each one.
+     * False, with <LimitrValidation>.error_message, when something is off.
+     */
+    fn fits(policy: obj!) -> bool {
+        for (const plan in self.offers) {
+            if (policy.plans?.get(plan) == null) return <LimitrValidation>.error(`Network provider offers plan "${plan}", which the policy doesn't have`);
+        }
+        const paths = map();
+        for (const (name, route) in (self.routes ?? new {}).fields()) {
+            for (const plan in route.plans ?? self.offers) {
+                if (policy.plans?.get(plan) == null) return <LimitrValidation>.error(`Network route "${name}" lists plan "${plan}", which the policy doesn't have`);
+                if (!self.offers.contains(plan) || route.entitlement == null || route.entitlement.len() < 1) continue;
+                if (policy.plans.get(plan).entitlements?.get(route.entitlement) == null) return <LimitrValidation>.error(`Network route "${name}" meters "${route.entitlement}", which plan "${plan}" doesn't have`);
+            }
+            const at = route.method.upper() + ' ' + route.path;
+            if (paths.get(at) != null) return <LimitrValidation>.error(`Network routes "${paths.get(at)}" and "${name}" are both ${at}`);
+            paths.insert(at, name);
+        }
+
+        const identifies = self.network()?.operator('identity') != null;
+        for (const (plan, _) in (self.identity_plans ?? new {}).fields()) {
+            if (!self.offers.contains(plan)) return <LimitrValidation>.error(`Network provider identity lists plan "${plan}", which it doesn't offer`);
+        }
+        if (!identifies) {
+            for (const plan in self.offers) {
+                if (self.needs_identity(plan)) return <LimitrValidation>.error(`Network provider plan "${plan}" requires an identity, but no operator serves identity here`);
+            }
+        }
+
+        const tools = self.tools ?? new {};
+        if (tools.fields().len() < 1) return true;
+        if (self.logic == null) return <LimitrValidation>.error('Network tools need the provider\'s logic (network.provider.logic)');
+        for (const (name, tool) in tools.fields()) {
+            if (self.routes?.get(name) != null) return <LimitrValidation>.error(`Network tool "${name}" has a route's name`);
+            for (const plan in tool.plans ?? []) {
+                if (policy.plans?.get(plan) == null) return <LimitrValidation>.error(`Network tool "${name}" lists plan "${plan}", which the policy doesn't have`);
+            }
+        }
+        using scratch = new {};
+        try parse(self.logic, scratch, 'stof', 'untrusted');
+        catch (e, why) return <LimitrValidation>.error(`Network provider logic doesn't parse as untrusted source: ${why}`);
+        for (const (name, _) in tools.fields()) {
+            if (typeof scratch.get(name) != 'fn') return <LimitrValidation>.error(`Network tool "${name}" has no function "${name}" in the provider's logic`);
+        }
+        true
+    }
+
+
+    /// The network this provider belongs to.
+    fn network() -> Network {
+        self.policy().network
+    }
+
+
+    /// Does a voucher for `plan` need an identity statement (identity_plans, then identity; 'auto' when it has an
+    /// identity operator)?
+    fn needs_identity(plan: str!) -> bool {
+        const need = self.identity_plans?.get(plan) ?? self.identity;
+        if (need == 'auto') return self.network()?.operator('identity') != null;
+        need == 'required'
+    }
+
+
+    /**
+     * Check a voucher's identity: its statement (when it has one) must be from this provider's identity operator, for
+     * the key that signed the voucher, and current (with `current: false`, only signed: Ex. a voucher accepted
+     * earlier, whose expiry is already the statement's). Returns its subject, its issuer, and when it expires
+     * ([subject, issuer, expires], or nulls without a statement), or throws why it's refused (a plan that needs one
+     * and has none, too).
+     */
+    fn identified(voucher: NetworkVoucher!, key: str!, current: bool = true) -> list {
+        const statement = voucher.identity;
+        if (statement == null || statement.len() < 1) {
+            if (self.needs_identity(voucher.plan)) throw(`plan '${voucher.plan}' needs an identity statement for your key (from this provider's identity operator)`);
+            return [null, null, null];
+        }
+        const op = self.network().operator('identity');
+        if (op == null) return [null, null, null]; // nothing here can check it: ignored
+        using who = new {};
+        try op.verify_identity(statement, who, current);
+        catch (e, why) throw(`the identity statement doesn't check out: ${why}`);
+        if (who.key != key) throw('the identity statement is for another key');
+        [who.subject, op.key, who.expires]
+    }
+
+
+    /**
+     * This policy's manifest: its terms (plans, the credits they use, routes, and tools), signed. Published at
+     * GET /.well-known/limitr-network.
+     */
+    fn manifest() -> str {
+        using body = new {};
+        body.terms = self.terms_text();
+        // who this provider is, when an identity operator vouched for its key (not part of the terms: it's renewed)
+        const identity = self.network().identity;
+        if (identity != null) body.identity = identity;
+        self.network().envelope('manifest', '', body, 1day)
+    }
+
+
+    /**
+     * List this provider at its discovery operator: its signed manifest, public, or private to `members` (public keys)
+     * and `subjects` (who the operator identified). Listing again replaces the listing (Ex. after the terms change).
+     * Throws when the operator refuses.
+     */
+    fn list(visibility: str = 'public', members?: list, subjects?: list) -> bool {
+        const op = self.network().operator('discovery');
+        if (op == null) throw('no operator serves discovery here');
+        using body = new NetworkListing { manifest: self.manifest(), visibility, members: members ?? [], subjects: subjects ?? [] };
+        if (!<NetworkListing>.schemafy(body)) throw(<LimitrValidation>.error_message);
+        using answer = new {};
+        op.ask('list', body, 'listed', answer);
+        true
+    }
+
+
+    /// Remove this provider's listing at its discovery operator. Throws when the operator refuses.
+    fn unlist() -> bool {
+        const op = self.network().operator('discovery');
+        if (op == null) throw('no operator serves discovery here');
+        using body = new {};
+        using answer = new {};
+        op.ask('unlist', body, 'unlisted', answer);
+        true
+    }
+
+
+    /**
+     * Answer a request (a NetworkRequest map: method, url, headers, body). The protocol's own routes (the manifest,
+     * vouchers, cancels) are answered in full. A request to a route is checked (signature, voucher, replay) and begun
+     * (begin(): its cap, its hold, its declared metering); when it's allowed, the response has `route`, `customer`,
+     * and `request`, and the host does the route's work (metering as its policy says), puts the result in the body,
+     * and calls done() for the receipt (or uses serve(), which does all of it). A refusal comes back finished, with
+     * its receipt when it was metered. Returns a NetworkResponse map. Run one request per voucher at a time on an
+     * instance (different vouchers in parallel), so a request's cap counts only its own spend.
+     */
+    fn handle(request: map!) -> map {
+        using req = new NetworkRequest {
+            method: (request.get('method') ?? 'GET').upper(),
+            url: request.get('url') ?? '/',
+            headers: <NetworkRequest>.lower_headers(request.get('headers') ?? map()),
+            body: request.get('body') ?? '',
+        };
+        const path = req.path();
+        const route = path.split('?')[0];
+        const json = map(('content-type', 'application/json'));
+        self.sweep_hourly();
+        self.settle_due();
+
+        if (req.method == 'GET' && route == <Network>.MANIFEST_PATH) return <NetworkResponse>.of(200, json, self.manifest());
+        if (req.method == 'POST' && route == <Network>.VOUCHER_PATH) {
+            const answer = self.accept(req.body);
+            return <NetworkResponse>.of(<Network>.peek(answer)?.get('type') == 'grant' ? 200 : 400, json, answer);
+        }
+        if (req.method == 'POST' && route == <Network>.CANCEL_PATH) {
+            const ok = self.cancelled(req.body);
+            return <NetworkResponse>.of(ok ? 200 : 400, json, ok ? '{"cancelled":true}' : '{"cancelled":false}');
+        }
+        self.call(req)
+    }
+
+
+    /**
+     * Accept (or refuse) a consumer's voucher. Creates or updates the voucher's customer (type 'voucher', ID
+     * 'nv_<voucher>') on its plan, with a cap from its spend and an expiry, and returns the signed grant: the
+     * routes and tools its plan reaches. Refusals come back signed too (type 'refused', with a reason). With a state operator,
+     * the voucher is registered there first (the operator checks it, and its budget, again).
+     */
+    fn accept(envelope: str!) -> str {
+        const network = self.network();
+        const policy = self.policy();
+        const op = network.operator('state');
+        using msg = new {};
+        try network.open(envelope, 'voucher', msg);
+        catch (e, message) return self.refuse(null, null, message);
+
+        const voucher: NetworkVoucher = msg.body;
+        if (!<NetworkVoucher>.schemafy(voucher)) return self.refuse(msg.from, voucher.voucher, <LimitrValidation>.error_message);
+
+        const now: ms = Time::now();
+        const longest: ms = now + self.max_voucher;
+        let reason = null;
+        if (!self.offers.contains(voucher.plan) || policy.plans.get(voucher.plan) == null) reason = `plan '${voucher.plan}' isn't offered`;
+        else if (voucher.expires <= now) reason = 'the voucher has expired';
+        else if (voucher.terms != self.terms_digest()) reason = 'these terms have changed: read the manifest again';
+        else if (voucher.budget != null && (op == null || voucher.operator != op.key)) reason = 'this provider doesn\'t accept that budget\'s operator';
+        if (reason != null) return self.refuse(msg.from, voucher.voucher, reason);
+        let who = null;
+        try who = self.identified(voucher, msg.from);
+        catch (e, why) return self.refuse(msg.from, voucher.voucher, why);
+
+        // a provider may shorten a voucher, never lengthen it (and never past its identity statement)
+        let expires: ms = voucher.expires < longest ? voucher.expires : longest;
+        if (who[2] != null && (who[2] as ms) < expires) expires = who[2] as ms;
+        const id = 'nv_' + voucher.voucher;
+
+        const existing: Customer = policy.customer(id);
+        if (existing != null) {
+            const state = existing.metadata?.network;
+            if (state == null || state.key != msg.from) return self.refuse(msg.from, voucher.voucher, 'this voucher belongs to another key');
+            if (voucher.seq <= state.seq) return self.refuse(msg.from, voucher.voucher, 'a newer voucher was already accepted');
+            if (voucher.plan != existing.plan) return self.refuse(msg.from, voucher.voucher, 'a voucher keeps its plan: send a new voucher for another plan');
+        }
+
+        let registered: NetworkStateAnswer = null;
+        using answer = new {};
+        if (op != null) {
+            using body = new NetworkStateRequest { voucher: voucher.voucher, envelope, expires, customer: id };
+            try registered = op.ask('register', body, 'registered', answer);
+            catch (e, why) return self.refuse(msg.from, voucher.voucher, why);
+        }
+
+        const customer = self.admit(msg.from, voucher, expires, who[0], who[1]);
+        if (customer == null) return self.refuse(msg.from, voucher.voucher, 'the voucher could not be accepted');
+        if (registered != null) customer.metadata.network.take(registered);
+
+        using grant = new NetworkGrant {
+            voucher: voucher.voucher,
+            seq: voucher.seq,
+            customer: id,
+            plan: voucher.plan,
+            spend: voucher.spend,
+            expires,
+            url: self.url,
+        };
+        for (const (name, route) in (self.routes ?? new {}).fields()) {
+            if (route.reaches(voucher.plan)) grant.routes.push_back(name);
+        }
+        for (const (name, tool) in (self.tools ?? new {}).fields()) {
+            if (tool.reaches(voucher.plan)) grant.tools.push_back(name);
+        }
+        network.envelope('grant', msg.from, grant)
+    }
+
+
+    /**
+     * Make (or update) a voucher's customer: on its plan, with its spend as a cap (in runes, on everything it uses),
+     * its expiry, and its state (customer.metadata.network). Null when the customer can't be made.
+     */
+    fn admit(key: str!, voucher: NetworkVoucher!, expires: ms!, subject?: str, issuer?: str) -> Customer {
+        const policy = self.policy();
+        const id = 'nv_' + voucher.voucher;
+        let customer: Customer = policy.customer(id);
+        if (customer == null) {
+            customer = policy.create_customer(id, voucher.plan, 'voucher', voucher.name.len() > 0 ? voucher.name : 'Voucher');
+            if (customer == null) return null;
+            customer.metadata = new {} on customer;
+            customer.metadata.network = new NetworkVoucherState { key, voucher: voucher.voucher } on customer.metadata;
+        }
+        const state: NetworkVoucherState = customer.metadata.network;
+        state.seq = voucher.seq;
+        state.terms = voucher.terms;
+        state.budget = voucher.budget;
+        state.subject = subject;
+        state.issuer = issuer;
+        state.remaining = voucher.spend - state.spent;
+
+        const cap = customer.caps.get('network');
+        if (cap != null) cap.value = voucher.spend;
+        else policy.add_customer_cap(id, voucher.spend, 'network');
+        policy.set_customer_expires(id, expires);
+        customer
+    }
+
+
+    /**
+     * A voucher this instance hasn't seen, that another instance accepted: ask the state operator for it, check the
+     * consumer's signature on it ourselves (the operator can't forge one), and admit it. Null when there's no such
+     * voucher (or no operator).
+     */
+    fn adopt(voucher_id: unknown) -> NetworkVoucherState {
+        const op = self.network().operator('state');
+        if (op == null || !<Network>.valid_name(voucher_id)) return null;
+        using body = new NetworkStateRequest { voucher: voucher_id };
+        using answer = new {};
+        let found: NetworkStateAnswer = null;
+        try found = op.ask('find', body, 'found', answer);
+        catch return null;
+        if (found.envelope == null || found.expires == null) return null;
+
+        using msg = new {};
+        try self.network().open(found.envelope, 'voucher', msg, null, null, false);
+        catch return null;
+        const voucher: NetworkVoucher = msg.body;
+        if (!<NetworkVoucher>.schemafy(voucher) || voucher.voucher != voucher_id) return null;
+        const existing: Customer = self.policy().customer('nv_' + voucher_id);
+        if (existing != null) return existing.metadata?.network;
+        let who = null;
+        try who = self.identified(voucher, msg.from, false); // the operator's expiry is already the statement's
+        catch return null;
+
+        const customer = self.admit(msg.from, voucher, found.expires, who[0], who[1]);
+        if (customer == null) return null;
+        customer.metadata.network.take(found);
+        customer.metadata.network
+    }
+
+
+    /**
+     * A request to one of this provider's routes: checks the signature, the voucher, and replay, then meters it with
+     * allow(). Returns a NetworkResponse map (see handle()).
+     */
+    fn call(req: NetworkRequest!) -> map {
+        const policy = self.policy();
+        const request_text = req.headers.get(<Network>.REQUEST_HEADER);
+        const signature = req.headers.get(<Network>.SIGNATURE_HEADER);
+        if (typeof request_text != 'str' || typeof signature != 'str') return <NetworkResponse>.refused(401, null, 'not a Limitr Network request', null);
+
+        using signed = new {};
+        try parse(request_text, signed, 'json');
+        catch return <NetworkResponse>.refused(401, null, 'not a Limitr Network request', null);
+
+        const id = 'nv_' + (signed.voucher ?? '');
+        let customer: Customer = <Network>.valid_name(signed.voucher) ? policy.customer(id) : null;
+        let state: NetworkVoucherState = customer?.metadata?.network;
+        if (state == null) {
+            state = self.adopt(signed.voucher); // accepted by another instance (with a state operator)
+            customer = state != null ? policy.customer(id) : null;
+        }
+        if (state == null) return <NetworkResponse>.refused(401, null, 'unknown voucher', null);
+
+        const now: ms = Time::now();
+        const oldest: ms = now - <Network>.SKEW;
+        const newest: ms = now + <Network>.SKEW;
+        const issued: ms = signed.issued ?? 0;
+        const path = req.path();
+        const route_name = self.route_for(req.method, path);
+        let reason = null;
+        if (!<Network>.verify(state.key, 'request', request_text, signature)) reason = 'the signature does not match';
+        else if (!<Network>.compatible(signed.protocol) || signed.type != 'request') reason = 'not a Limitr Network request';
+        else if (signed.method != req.method || signed.path != path) reason = 'the signature is for another request';
+        else if (signed.body != <Network>.text_digest(req.body)) reason = 'the signature is for another body';
+        else if (signed.issued == null || issued < oldest || issued > newest) reason = 'the request is too old (or from the future)';
+        else if (typeof signed.n != 'int' || !state.fresh(signed.n)) reason = 'this request was already used';
+        else if (route_name == null) reason = 'no such route';
+        if (reason != null) return <NetworkResponse>.refused(401, route_name, reason, null);
+
+        // a valid request is used up whether or not it's allowed
+        state.use(signed.n);
+        const max = signed.max;
+        if (max != null && (typeof max == 'str' || (max as float) < 0)) return <NetworkResponse>.refused(401, route_name, 'a request\'s max is a number of runes', null);
+        self.begin(customer, signed.n, route_name, self.routes.get(route_name), max != null ? max as float : null)
+    }
+
+
+    /**
+     * Start a checked request's work: put a cap on the voucher's customer for this request (REQUEST_CAP: what the
+     * request spends, whatever the work meters), and meter the route's declared entitlement when it has one. With a
+     * state operator, first hold what the request may spend there (strict: claimed; bounded: from this instance's
+     * lease), and the request cap enforces it; without one, the voucher's own cap enforces and the request cap only
+     * measures. The consumer's `max` (runes) caps the request too. Returns the allowed response (the route, the
+     * customer, and the request number, for done()), or a refusal with its receipt.
+     */
+    fn begin(customer: Customer!, n: int!, route_name: str!, route: NetworkRoute!, max: float) -> map {
+        const policy = self.policy();
+        const state: NetworkVoucherState = customer.metadata.network;
+        const op = self.network().operator('state');
+        const metered = route.entitlement != null && route.entitlement.len() > 0;
+        const not_allowed = 'not allowed: a limit, the voucher\'s spend, or its expiry';
+        let ceiling = null;
+
+        if (op != null) {
+            // the provider's own limits first (nothing metered), so a request they'd refuse holds nothing
+            if (metered && !policy.check(customer.id, route.entitlement, route.value)) {
+                return <NetworkResponse>.refused(402, route_name, not_allowed, self.receipt(customer, n, 0, false, null));
+            }
+            const config = op.state_config();
+            const need = self.hold_for(customer, route, config);
+            if (config.mode == 'strict') {
+                using body = new NetworkStateRequest { voucher: state.voucher, n, runes: need, adjust: state.adjust };
+                using answer = new {};
+                let claimed: NetworkStateAnswer = null;
+                try claimed = op.ask('claim', body, 'claimed', answer);
+                catch (e, why) {
+                    if (answer.body?.spent != null) state.take(answer.body); // the operator's figures, with its refusal
+                    return self.operator_refused(customer, n, route_name, why);
+                }
+                state.adjust = 0;
+                if (self.adjusting != null) self.adjusting.remove_first(state.voucher);
+                state.take(claimed);
+                state.held = need;
+                ceiling = need + 0.000000001; // what was held (and a rounding's worth)
+            } else {
+                // bounded: spend from this instance's lease of the voucher's spend
+                const now: ms = Time::now();
+                let usable = state.lease != null && state.lease_until > now && state.lease_amount - state.lease_used >= need;
+                if (usable && config.offline == 'refuse' && state.lease_stale) usable = false;
+                if (!usable) {
+                    if (state.lease != null && !self.settle(customer)) {
+                        // the operator can't be reached to settle: 'local' keeps spending what's left of the lease
+                        const left = config.offline == 'local' && state.lease_until > now && state.lease_amount - state.lease_used >= need;
+                        if (!left) return self.operator_refused(customer, n, route_name, 'unreachable');
+                    } else {
+                        const err = self.lease(customer, op, config, need);
+                        if (err != null) return self.operator_refused(customer, n, route_name, err);
+                        if (state.lease_amount - state.lease_used < need) return <NetworkResponse>.refused(402, route_name, not_allowed, self.receipt(customer, n, 0, false, null));
+                    }
+                }
+                ceiling = Num::round(state.lease_amount - state.lease_used, 9);
+            }
+        }
+        if (max != null) ceiling = ceiling == null ? max : min(ceiling, max);
+
+        policy.remove_customer_cap(customer.id, <NetworkProvider>.REQUEST_CAP, false); // one left by a request that never finished
+        policy.add_customer_cap(customer.id, ceiling ?? 0, <NetworkProvider>.REQUEST_CAP, observe_only = ceiling == null, events = false);
+        state.open = n;
+
+        if (metered && !policy.allow(customer.id, route.entitlement, route.value)) {
+            return <NetworkResponse>.refused(402, route_name, not_allowed, self.done(customer.id, n, null, false));
+        }
+        const out = <NetworkResponse>.of(200, map(), '');
+        out.insert('route', route_name);
+        out.insert('customer', customer.id);
+        out.insert('request', n);
+        if (state.subject != null) out.insert('subject', state.subject);
+        out
+    }
+
+
+    /**
+     * Finish a request (after its work): what it spent is its request cap's meter (in runes), which is removed. With a
+     * strict operator, the difference from what was held there goes with the next message (or the next settle); with
+     * a bounded one, it's spent from the lease. Returns the signed receipt (the Limitr-Network-Receipt header): what
+     * the request cost, the response body's SHA-256 (`body`, the response as sent), and what the voucher has spent
+     * and has left.
+     */
+    fn done(customer_id: str!, n: int!, body?: str, allowed: bool = true) -> str {
+        const policy = self.policy();
+        const customer: Customer = policy.customer(customer_id);
+        const state: NetworkVoucherState = customer?.metadata?.network;
+        if (state == null || state.open != n) throw(`no request ${n} under way for ${customer_id}`);
+        const cap: Cap = customer.caps.get(<NetworkProvider>.REQUEST_CAP);
+        const cost: float = Num::round(cap?.meter_value ?? 0, 9);
+        policy.remove_customer_cap(customer_id, <NetworkProvider>.REQUEST_CAP, false);
+        state.open = null;
+
+        const op = self.network().operator('state');
+        if (op != null) {
+            if (op.state_config().mode == 'strict') {
+                state.adjust = Num::round(state.adjust + cost - state.held, 9);
+                state.held = 0;
+                if (state.adjust != 0) {
+                    state.adjusted = Time::now();
+                    if (self.adjusting == null) self.adjusting = [];
+                    if (!self.adjusting.contains(state.voucher)) self.adjusting.push_back(state.voucher);
+                }
+            } else {
+                state.lease_used = Num::round(state.lease_used + cost, 9);
+                state.lease_calls.push_back([n, cost]);
+            }
+        }
+        self.receipt(customer, n, cost, allowed, body != null ? <Network>.text_digest(body) : null)
+    }
+
+
+    /**
+     * Answer a request in one go (for a host whose work is a Stof function): handle() it, and when it's allowed, run
+     * `work(route, customer, request)` (its result is the response body), then done(). The receipt goes on the
+     * response either way. Work that throws is a 500 ('the work failed': its error stays here, in a
+     * 'network-work-failed' event with the route, customer, and error). Returns a NetworkResponse map.
+     */
+    fn serve(request: map!, work: fn) -> map {
+        const out = self.handle(request);
+        if (out.get('status') != 200 || out.get('customer') == null || out.get('request') == null) return out;
+        let body = '';
+        try body = str(work(out.get('route'), out.get('customer'), request) ?? '');
+        catch (e, why) {
+            out.insert('status', 500);
+            body = 'the work failed';
+            using failed = new { route: out.get('route'), customer: out.get('customer'), error: why };
+            await <Event>.send('network-work-failed', failed);
+        }
+        out.insert('body', body);
+        const headers: map = out.get('headers') ?? map();
+        headers.insert(<Network>.RECEIPT_HEADER, self.done(out.get('customer'), out.get('request'), body));
+        out.insert('headers', headers);
+        out
+    }
+
+
+    /*****************************************************************************
+     * With a state operator.
+     *****************************************************************************/
+
+    /**
+     * What to hold at the operator for a request: with a declared entitlement, exactly what it costs the voucher
+     * (quote()); else the route's `hold`, or the config's share of the voucher's spend.
+     */
+    fn hold_for(customer: Customer!, route: NetworkRoute!, config: NetworkStateConfig!) -> float {
+        if (route.entitlement != null && route.entitlement.len() > 0) return self.quote(customer, route);
+        if (route.hold != null) return route.hold;
+        const cap: Cap = customer.caps.get('network');
+        Num::round((cap != null ? cap.value as float : 0) * config.hold, 9)
+    }
+
+
+    /**
+     * What a request to a route will cost the voucher (runes on its 'network' cap), without metering it: the same
+     * figures check() and allow() use for that cap (the period's meter, the credit's tiers and overhead).
+     */
+    fn quote(customer: Customer!, route: NetworkRoute!) -> float {
+        const policy = self.policy();
+        const cap: Cap = customer.caps.get('network');
+        const pair = policy.customer_entitlement(customer.id, route.entitlement);
+        if (cap == null || pair == null) return 0;
+        const owner: Customer = pair[0];
+        const limit = policy.customer_entitlement_limit(owner, route.entitlement, pair[1]);
+        const meter: Meter = owner.meters.get(route.entitlement);
+        const credit_name = limit != null ? limit.credit : meter?.credit;
+        if (credit_name == null) return 0;
+        const credit = policy.credit(credit_name);
+        const stof_units = credit != null ? (credit.stof_units ?? 'float') : 'float';
+        const value = (route.value as float).to_units(stof_units);
+        const call_overhead: float = policy.call_overhead(value, credit, null);
+        const rate: float = value != 0 ? call_overhead / value.remove_units() : (credit != null ? (credit.overhead_cost ?? 0) : 0);
+        const reset = policy.meter_reset_pending(limit, meter, owner);
+        const meter_value: float = meter != null && !reset ? meter.value : 0;
+        const limit_value = limit != null ? (limit.value as float).to_units(stof_units) : 0.0;
+        const position = (meter_value - limit_value).remove_units();
+        const converted = customer.cap_consumption(policy, cap, route.entitlement, credit_name, rate, value, value, 0, position);
+        converted != null ? Num::round(converted as float, 9) : 0
+    }
+
+
+    /// A request the operator refused (402, with its reason), or couldn't answer (503: the provider fails closed).
+    fn operator_refused(customer: Customer!, n: int!, route_name: str!, why: str!) -> map {
+        const unreachable = why.starts_with('unreachable');
+        const reason = unreachable ? 'the network\'s state operator can\'t be reached' : why.replace('refused: ', '');
+        <NetworkResponse>.refused(unreachable ? 503 : 402, route_name, reason, self.receipt(customer, n, 0, false, null))
+    }
+
+
+    /// Take a lease of a voucher's spend (bounded): its config's share of the spend, and at least `at_least` (the call
+    /// that needs it). Returns null, or why it couldn't ('refused: ...', 'unreachable: ...').
+    fn lease(customer: Customer!, op: NetworkOperator!, config: NetworkStateConfig!, at_least: float = 0) -> str {
+        const state: NetworkVoucherState = customer.metadata.network;
+        const cap: Cap = customer.caps.get('network');
+        const spend: float = cap != null ? cap.value as float : 0;
+        const until: ms = Time::now() + config.lease_ttl;
+        using body = new NetworkStateRequest { voucher: state.voucher, amount: Num::round(max(spend * config.lease, at_least), 9), expires: until, adjust: state.adjust };
+        using answer = new {};
+        let leased: NetworkStateAnswer = null;
+        try leased = op.ask('lease', body, 'leased', answer);
+        catch (e, why) {
+            if (answer.body?.spent != null) state.take(answer.body);
+            return why;
+        }
+        state.adjust = 0;
+        state.take(leased);
+        state.lease = leased.lease;
+        state.lease_amount = leased.amount ?? 0;
+        state.lease_used = 0;
+        state.lease_until = leased.until ?? 0;
+        state.lease_taken = Time::now();
+        state.lease_stale = false;
+        state.lease_calls = [];
+        if (self.leased == null) self.leased = [];
+        if (!self.leased.contains(state.voucher)) self.leased.push_back(state.voucher);
+        null
+    }
+
+
+    /**
+     * Settle a voucher's lease (bounded): send what it paid for ([n, runes] a call), and close it. The operator charges
+     * each request number once; any it already saw (a replay to another instance) comes back as `duplicates`, which
+     * go out in a 'network-duplicates' event. When the operator can't be reached the lease stays open (stale), and is
+     * settled next time. True when it was settled.
+     */
+    fn settle(customer: Customer!) -> bool {
+        const op = self.network().operator('state');
+        const state: NetworkVoucherState = customer.metadata.network;
+        if (op == null || state.lease == null) return false;
+        using body = new NetworkStateRequest { voucher: state.voucher, lease: state.lease, calls: state.lease_calls, adjust: state.adjust };
+        using answer = new {};
+        let settled: NetworkStateAnswer = null;
+        try settled = op.ask('settle', body, 'settled', answer);
+        catch (e, why) {
+            if (why.starts_with('unreachable')) {
+                state.lease_stale = true;
+                return false;
+            }
+            // refused (Ex. the operator already released it): this lease is done either way
+        }
+        state.adjust = 0;
+        if (settled != null) {
+            state.take(settled);
+            if ((settled.duplicates ?? []).len() > 0) {
+                using event = new { voucher: state.voucher, customer: customer.id, duplicates: settled.duplicates };
+                await <Event>.send('network-duplicates', event);
+            }
+        }
+        state.lease = null;
+        state.lease_amount = 0;
+        state.lease_used = 0;
+        state.lease_until = 0;
+        state.lease_calls = [];
+        state.lease_stale = false;
+        if (self.leased != null) self.leased.remove_first(state.voucher);
+        true
+    }
+
+
+    /// Settle the leases that are due (open longer than settle_every, or past their end). handle() calls this.
+    fn settle_due() {
+        const op = self.network().operator('state');
+        if (op == null) return;
+        const config = op.state_config();
+        const now: ms = Time::now();
+        const policy = self.policy();
+        if (self.adjusting != null && self.adjusting.len() > 0) {
+            // strict: what requests cost beyond (or short of) what was held, when no request has carried it since
+            const vouchers = [];
+            for (const voucher in self.adjusting) vouchers.push_back(voucher);
+            for (const voucher in vouchers) {
+                const customer: Customer = policy.customer('nv_' + voucher);
+                const state = customer?.metadata?.network;
+                if (state == null || state.adjust == 0) {
+                    self.adjusting.remove_first(voucher);
+                    continue;
+                }
+                if (state.adjusted + config.settle_every > now) continue;
+                using body = new NetworkStateRequest { voucher, adjust: state.adjust };
+                using answer = new {};
+                try {
+                    const found: NetworkStateAnswer = op.ask('find', body, 'found', answer);
+                    state.adjust = 0;
+                    if (found.spent != null) state.take(found);
+                    self.adjusting.remove_first(voucher);
+                } catch {} // unreachable: it goes next time
+            }
+        }
+        if (self.leased == null || self.leased.len() < 1) return;
+        const vouchers = [];
+        for (const voucher in self.leased) vouchers.push_back(voucher);
+        for (const voucher in vouchers) {
+            const customer: Customer = policy.customer('nv_' + voucher);
+            const state = customer?.metadata?.network;
+            if (state == null || state.lease == null) {
+                self.leased.remove_first(voucher);
+                continue;
+            }
+            const due: ms = state.lease_taken + config.settle_every;
+            if (due <= now || state.lease_until <= now) self.settle(customer);
+        }
+    }
+
+
+    /// Tell the state operator a voucher ended here (revoked or cancelled). Best effort: its expiry ends it anyway.
+    fn end_at_operator(customer: Customer!, reason: str!) {
+        const op = self.network().operator('state');
+        if (op == null) return;
+        const state: NetworkVoucherState = customer.metadata.network;
+        if (state.lease != null) self.settle(customer);
+        using body = new NetworkStateRequest { voucher: state.voucher, reason };
+        using answer = new {};
+        try op.ask('end', body, 'ended', answer);
+        catch {}
+    }
+
+
+    /**
+     * End a voucher from this side: it stops being allowed now. Returns the signed revoke for the consumer (null for
+     * an unknown voucher). Its usage is kept until the sweep.
+     */
+    fn revoke(voucher: str!, reason: str = '') -> str {
+        const policy = self.policy();
+        const customer: Customer = policy.customer('nv_' + voucher);
+        const state = customer?.metadata?.network;
+        if (state == null) return null;
+        policy.set_customer_expires(customer.id, Time::now());
+        self.end_at_operator(customer, reason.len() > 0 ? reason : 'revoked');
+        using body = new { voucher, reason };
+        self.network().envelope('revoke', state.key, body)
+    }
+
+
+    /**
+     * A consumer ended its voucher: it stops being allowed now. True when the cancel was valid.
+     */
+    fn cancelled(envelope: str!) -> bool {
+        const policy = self.policy();
+        using msg = new {};
+        try self.network().open(envelope, 'cancel', msg);
+        catch return false;
+        const voucher = msg.body.voucher;
+        const customer: Customer = <Network>.valid_name(voucher) ? policy.customer('nv_' + voucher) : null;
+        const state = customer?.metadata?.network;
+        if (state == null || state.key != msg.from) return false;
+        const now: ms = Time::now();
+        const ends: ms = customer.expires ?? now;
+        policy.set_customer_expires(customer.id, ends < now ? ends : now);
+        self.end_at_operator(customer, 'cancelled');
+        true
+    }
+
+
+    /**
+     * Remove voucher customers that ended more than keep_ended ago (so their usage could be read and billed first).
+     * Sends 'network-voucher-ended' with each one before it's removed. Returns how many were removed.
+     */
+    fn sweep(now?: ms) -> int {
+        const policy = self.policy();
+        const at: ms = now ?? Time::now();
+        const ended = [];
+        for (const (id, customer) in policy.customers.fields()) {
+            if (customer.type != 'voucher' || customer.metadata?.network == null || customer.expires == null) continue;
+            const removed_at: ms = customer.expires + self.keep_ended;
+            if (removed_at <= at) ended.push_back(id);
+        }
+        for (const id in ended) {
+            const customer: Customer = policy.customer(id);
+            if (customer.metadata.network.lease != null) self.settle(customer);
+            await <Event>.send('network-voucher-ended', customer);
+            policy.delete_customer(id);
+        }
+        self.last_sweep = Time::now();
+        ended.len()
+    }
+
+
+    /// Sweep at most once an hour (handle() calls this, so a host never has to).
+    fn sweep_hourly() {
+        const last: ms = self.last_sweep ?? 0;
+        const due: ms = last + 1hr;
+        const now: ms = Time::now();
+        if (due <= now) self.sweep();
+    }
+
+
+    /**
+     * The terms this provider offers (into `into`): name, label, url, plans, the credits they use, routes, tools, and
+     * the tools' logic.
+     * Each is written field by field with its default (never exported whole: the engine fills in a plan's typed
+     * fields as it uses it), then through JSON, so both sides read the same text and its digest matches.
+     */
+    fn terms(into: obj!) {
+        const policy = self.policy();
+        using raw = new { name: self.name, label: self.label.len() > 0 ? self.label : self.name, url: self.url, currency: 'rune' };
+        // what this provider takes a rune to be (its exchange's rune: 1 rune is `value` of `currency`)
+        const rune: ExchangePair = policy.exchange?.rune;
+        raw.rune = new { value: <Network>.number(rune?.value ?? 1), currency: rune?.currency ?? 'usd' } on raw;
+        raw.plans = new {} on raw;
+        raw.credits = new {} on raw;
+        raw.routes = new {} on raw;
+        raw.tools = new {} on raw;
+        for (const name in self.offers) {
+            const plan = policy.plans.get(name);
+            if (plan == null) continue;
+            const p = new { label: plan.label ?? name, period: plan.period ?? 'monthly', identity: self.needs_identity(name) } on raw.plans;
+            p.entitlements = new {} on p;
+            raw.plans.insert(name, p);
+            for (const (ent_name, ent) in plan.entitlements.fields()) {
+                if (typeof ent != 'obj') continue;
+                const e = new { description: ent.description ?? '' } on p.entitlements;
+                p.entitlements.insert(ent_name, e);
+                const limit = ent.limit;
+                if (limit == null) continue;
+                e.limit = new {
+                    credit: limit.credit,
+                    mode: limit.mode ?? 'hard',
+                    value: <Network>.number(limit.value ?? 0),
+                    increment: <Network>.number(limit.increment ?? 1),
+                    resets: limit.resets ?? false,
+                } on e;
+                if (limit.reset_sch != null) e.limit.reset_sch = limit.reset_sch;
+                if (limit.reset_inc != null) e.limit.reset_inc = limit.reset_inc;
+                self.credit_terms(limit.credit, raw.credits);
+            }
+        }
+        // the operators this provider accepts, by role (a voucher agrees to them, with the rest of the terms)
+        const network = self.network();
+        if (network.operators != null && network.operators.fields().len() > 0) {
+            raw.operators = new {} on raw;
+            for (const (_, op) in network.operators.fields()) {
+                for (const role in op.roles) raw.operators.insert(role, op.key);
+            }
+        }
+        for (const (name, route) in (self.routes ?? new {}).fields()) {
+            if (route.plans != null && !route.plans.any((plan: str): bool => self.offers.contains(plan))) continue;
+            const r = new {} on raw.routes;
+            route.terms(r);
+            raw.routes.insert(name, r);
+        }
+        for (const (name, tool) in (self.tools ?? new {}).fields()) {
+            if (tool.plans != null && !tool.plans.any((plan: str): bool => self.offers.contains(plan))) continue;
+            const t = new {} on raw.tools;
+            tool.terms(t);
+            raw.tools.insert(name, t);
+        }
+        if (raw.tools.fields().len() > 0) raw.logic = self.logic;
+        parse(stringify('json', raw), into, 'json');
+    }
+
+
+    /**
+     * A credit's terms (once, into `credits`): what it costs the consumer in runes, never what it costs the provider.
+     * Its price is what the policy charges for it, through the exchange (Exchange.resolve, as price_units() does): a
+     * credit with an exchange pair (Ex. `forecast: { value: 0.01, currency: 'usd' }`) is priced through it, one
+     * that resolves to another credit takes that credit's pricing (its tiers in this credit's units), and one with no
+     * price is 0.
+     */
+    fn credit_terms(name: str, credits: obj!) {
+        if (name == null || credits.get(name) != null) return;
+        const policy = self.policy();
+        const credit: Credit = policy.credit(name);
+        if (credit == null) return;
+        const res = policy.exchange?.resolve(name);
+        const factor: float = res != null ? res[0] as float : 0;
+        const base: Credit = res != null ? res[1] : null;
+        let price = 0.0;
+        let model = 'flat';
+        let tiers = null;
+        if (res != null && base == null) price = factor; // runes for one unit
+        else if (base != null) {
+            model = base.pricing_model ?? 'flat';
+            price = Num::round((base.price?.amount ?? 0) * factor, 12);
+            if (base.tiers != null && base.tiers.len() > 0) {
+                // one unit of this credit is `factor` units of the base: its tiers, in this credit's units
+                tiers = [];
+                for (const tier in base.tiers) {
+                    const up_to = tier.up_to != null && factor > 0 ? Num::round(tier.up_to / factor, 12) : null;
+                    tiers.push_back(map(('up_to', <Network>.number(up_to)), ('price', <Network>.number(Num::round((tier.price?.amount ?? 0) * factor, 12)))));
+                }
+            }
+        }
+        const c = new {
+            label: credit.label ?? name,
+            unit: credit.unit ?? 'credit',
+            description: credit.description ?? '',
+            pricing_model: model,
+            price: <Network>.number(price),
+        } on credits;
+        if (tiers != null) c.tiers = tiers;
+        credits.insert(name, c);
+    }
+
+
+    /// The terms this provider offers now, as the JSON text its manifest carries.
+    fn terms_text() -> str {
+        using t = new {};
+        self.terms(t);
+        stringify('json', t)
+    }
+
+
+    /// The digest of the terms this provider offers now: the SHA-256 of terms_text(), what a voucher agrees to.
+    fn terms_digest() -> str {
+        <Network>.text_digest(self.terms_text())
+    }
+
+
+    /// The route a method and path go to (the path without its query string), or null.
+    fn route_for(method: str!, path: str!) -> str {
+        for (const (name, route) in (self.routes ?? new {}).fields()) {
+            if (route.matches(method, path)) return name;
+        }
+        null
+    }
+
+
+    /// A signed refusal.
+    fn refuse(to: str, voucher: str, reason: str!) -> str {
+        using body = new { voucher, reason };
+        self.network().envelope('refused', to, body)
+    }
+
+
+    /**
+     * A signed receipt for a request: whether it was allowed, what it cost (runes), the response body's SHA-256 (when
+     * there's a response), and what the voucher has spent and has left (runes). With a state operator, those are the
+     * operator's figures (across every instance), plus what this instance has spent since (its open lease, or what's
+     * still to be settled with a strict operator); and what the voucher's budget has left.
+     */
+    fn receipt(customer: Customer!, n: int!, cost: float!, allowed: bool!, body: str) -> str {
+        const state: NetworkVoucherState = customer.metadata.network;
+        const cap: Cap = customer.caps.get('network');
+        const limit: float = cap != null ? cap.value as float : 0;
+        let spent: float = cap != null ? cap.meter_value : 0;
+        let remaining: float = max(0, limit - spent);
+        let budget_remaining = null;
+        if (self.network().operator('state') != null) {
+            const local: float = state.lease_used + state.adjust; // spent here, not yet at the operator
+            spent = state.spent + local;
+            remaining = max(0, state.remaining - local);
+            if (state.budget_remaining != null) budget_remaining = Num::round(max(0, state.budget_remaining - local), 9);
+        }
+        using receipt = new NetworkReceipt {
+            voucher: state.voucher,
+            n,
+            allowed,
+            cost,
+            body,
+            spent: Num::round(spent, 9),
+            remaining: Num::round(remaining, 9),
+            budget_remaining,
+        };
+        self.network().envelope('receipt', customer.metadata.network.key, receipt)
+    }
+}
+
+
+#[type]
+/**
+ * A route a provider's plans reach (policy.network.provider.routes.<name>): what a request may do, and how it's
+ * metered. Declared as data. Every request to it is signed by the voucher's key, checked for replay, and metered by
+ * the provider's policy, whoever's code made it (the consumer's, or the provider's tools running there). Unless
+ * `tool` is false, a consumer also gets it as a tool as-is (the default way to use a provider: no Stof needed).
+ *
+ *   forecast: {
+ *       description: 'The forecast for a city'
+ *       method: 'GET'
+ *       path: '/forecast'
+ *       parameters: [{ name: 'city', description: 'City name' }]
+ *       entitlement: 'forecasts'             // optional: what a request meters under (else the work meters)
+ *       value: 1                             // how much a request uses (with entitlement)
+ *       plans: ['agent']                     // optional: which offered plans reach it (all of them when null)
+ *       tool: true                           // optional: a tool as-is on the consumer's side (true by default)
+ *   }
+ */
+NetworkRoute: {
+    /// What it does (as a tool, an agent reads this).
+    str! description: '';
+
+    #[schema((target_val: str!): bool => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].contains(target_val.upper()) ? true : <LimitrValidation>.error(`Network route method "${target_val}" must be GET, POST, PUT, PATCH, or DELETE`))]
+    /// Its HTTP method. GET and DELETE send their arguments as a query string, the others as a JSON body.
+    str! method: 'GET';
+
+    #[schema((target_val: str!): bool => target_val.starts_with('/') && !target_val.contains('//') && !target_val.contains('?') ? true : <LimitrValidation>.error(`Network route path "${target_val}" must start with / (and have no query string)`))]
+    /// Its path, under the provider's url.
+    str! path: '/';
+
+    #[schema((target_val: list!): bool => <NetworkRoute>.valid_parameters(target_val, 'route'))]
+    /// Its arguments: a list of { name, description, schema_type ('string' by default), required (true by default) }.
+    list! parameters: [];
+
+    /// Optional: the entitlement a request meters under, before its work (allow() on the voucher's customer, by
+    /// `value`). Without one, the work meters (the voucher's customer is a Limitr customer like any other: allow(),
+    /// reserve() and settle(), by calls, outcomes, bytes, tokens), and a request nothing meters is free. Either way,
+    /// what a request spent is measured by a cap on that customer for the request, for its receipt.
+    str entitlement: null;
+
+    #[schema((target_val: float!): bool => target_val >= 0 ? true : <LimitrValidation>.error('A network route value cannot be negative'))]
+    /// How much a request uses (with `entitlement`).
+    float! value: 1;
+
+    #[schema((target_val: float): bool => target_val == null || target_val >= 0 ? true : <LimitrValidation>.error('A network route hold cannot be negative'))]
+    /// Optional, with a strict state operator and no `entitlement`: what a request holds there before its work (runes),
+    /// its most; what it actually spent is settled after. The state config's `hold` share of the voucher's spend when
+    /// null.
+    float hold: null;
+
+    /// Which offered plans reach it (all of them when null).
+    list plans: null;
+
+    /// A tool as-is on the consumer's side (false: only the provider's tools call it).
+    bool! tool: true;
+
+
+    /// Does a method and path (its query string is ignored) go to this route?
+    fn matches(method: str!, path: str!) -> bool {
+        self.method.upper() == method.upper() && self.path == path.split('?')[0]
+    }
+
+
+    /// Does a plan reach this route?
+    fn reaches(plan: str!) -> bool {
+        self.plans == null || self.plans.contains(plan)
+    }
+
+
+    /// Its terms (into `into`): what a consumer sees, field by field (numbers as floats, see <Network>.number).
+    fn terms(into: obj!) {
+        into.description = self.description;
+        into.method = self.method.upper();
+        into.path = self.path;
+        if (self.entitlement != null && self.entitlement.len() > 0) {
+            into.entitlement = self.entitlement;
+            into.value = <Network>.number(self.value);
+        }
+        if (self.hold != null) into.hold = <Network>.number(self.hold);
+        into.parameters = <NetworkRoute>.parameter_terms(self.parameters);
+        if (self.plans != null) into.plans = self.plans;
+        into.tool = self.tool;
+    }
+
+
+    #[static]
+    /// Parameters as terms: a map each, every field with its default.
+    fn parameter_terms(parameters: list!) -> list {
+        const params = [];
+        for (const param in parameters) {
+            params.push_back(map(
+                ('name', param.name ?? ''),
+                ('description', param.description ?? ''),
+                ('schema_type', param.schema_type ?? 'string'),
+                ('required', param.required ?? true),
+            ));
+        }
+        params
+    }
+
+
+    #[static]
+    /// Are these parameters valid (each one an object with a name)? False, with <LimitrValidation>.error_message.
+    fn valid_parameters(parameters: list!, what: str!) -> bool {
+        for (const param in parameters) {
+            if (typeof param != 'obj' || typeof param.name != 'str' || param.name.len() < 1) return <LimitrValidation>.error(`A network ${what}'s parameters each need a name`);
+        }
+        true
+    }
+}
+
+
+#[type]
+/**
+ * A tool in a provider's own Stof (policy.network.provider.tools.<name>): it runs the function of the same name in the
+ * provider's `logic`, on the consumer's side, sealed and confined (see NetworkProvider.logic), when the consumer
+ * trusts the provider's logic. Its requests are to the provider's routes, so they're signed, checked, and metered
+ * like any other.
+ *
+ *   compare: {
+ *       description: 'Which of two cities will be warmer'
+ *       parameters: [{ name: 'a', description: 'A city' }, { name: 'b', description: 'Another city' }]
+ *       plans: ['agent']                     // optional: which offered plans reach it (all of them when null)
+ *   }
+ */
+NetworkTool: {
+    /// What it does (an agent reads this).
+    str! description: '';
+
+    #[schema((target_val: list!): bool => <NetworkRoute>.valid_parameters(target_val, 'tool'))]
+    /// Its arguments, as for a route: a list of { name, description, schema_type, required }. The function gets them
+    /// as a map.
+    list! parameters: [];
+
+    /// Which offered plans reach it (all of them when null).
+    list plans: null;
+
+
+    /// Does a plan reach this tool?
+    fn reaches(plan: str!) -> bool {
+        self.plans == null || self.plans.contains(plan)
+    }
+
+
+    /// Its terms (into `into`): what a consumer sees, field by field.
+    fn terms(into: obj!) {
+        into.description = self.description;
+        into.parameters = <NetworkRoute>.parameter_terms(self.parameters);
+        if (self.plans != null) into.plans = self.plans;
+    }
+}
+
+
+#[type]
+/**
+ * What a provider keeps about a voucher, on its customer (customer.metadata.network): whose it is, its latest seq,
+ * the terms it agreed to, and the replay window. A fixed size, so checking a call never grows the document.
+ */
+NetworkVoucherState: {
+    /// The consumer's public key: every request and update must be signed by it.
+    str! key: '';
+
+    /// The voucher's ID.
+    str! voucher: '';
+
+    /// The latest voucher seq accepted (an older one is refused).
+    int! seq: 0;
+
+    /// The digest of the terms it agreed to.
+    str! terms: '';
+
+    /// The highest request number seen.
+    int! n: 0;
+
+    /// The last WINDOW request numbers seen.
+    list! seen: [];
+
+    /// With a state operator: the budget it spends from, and the operator's latest figures (runes) for the voucher
+    /// (spent, remaining) and its budget.
+    str budget: null;
+    float! spent: 0;
+    float! remaining: 0;
+    float budget_remaining: null;
+
+    /// Runes metered beyond (or short of) what was claimed (sent with the next claim, lease, or settle), and when.
+    float! adjust: 0;
+    ms! adjusted: 0;
+
+    /// Who the consumer is (its identity statement's subject) and who said so (the identity operator's key), or null.
+    str subject: null;
+    str issuer: null;
+
+    /// The request under way (its number, while its work runs), and what was held for it at a strict operator.
+    int open: null;
+    float! held: 0;
+
+    /// bounded: this instance's open lease (its ID, amount, what it has spent, until when, when it was taken,
+    /// whether a settle failed, and the calls it paid for as [n, runes]).
+    str lease: null;
+    float! lease_amount: 0;
+    float! lease_used: 0;
+    ms! lease_until: 0;
+    ms! lease_taken: 0;
+    bool! lease_stale: false;
+    list! lease_calls: [];
+
+
+    /// Is a request number new (not seen, and not older than the window)?
+    fn fresh(n: int!, window: int = <Network>.WINDOW) -> bool {
+        n >= 1 && n > self.n - window && !self.seen.contains(n)
+    }
+
+
+    /// Use up a request number.
+    fn use(n: int!, window: int = <Network>.WINDOW) {
+        self.seen.push_back(n);
+        if (self.seen.len() > window) self.seen.pop_front();
+        if (n > self.n) self.n = n;
+    }
+
+
+    /// Take a state operator's figures for this voucher.
+    fn take(answer: NetworkStateAnswer!) {
+        self.spent = answer.spent;
+        self.remaining = answer.remaining;
+        self.budget_remaining = answer.budget_remaining;
+    }
+}

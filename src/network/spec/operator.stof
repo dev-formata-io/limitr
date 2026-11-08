@@ -1,0 +1,351 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Operators: someone both sides trust with a part of the network (its roles). A policy maps roles to operators in
+// policy.network.operators (at most one operator per role), and works without any (peer to peer).
+//
+//   operators: {
+//       cloud: {
+//           url: 'https://operator.example'
+//           key: '<operator public key>'
+//           roles: ['state']
+//           state: { mode: 'strict' }       // the state role's config (NetworkStateConfig), with defaults
+//       }
+//       ids: { url: 'https://id.example', key: '<key>', roles: ['identity'] }
+//   }
+//
+// Core roles: 'state' (voucher and budget state: spend, replay, expiry), 'revoke' (pushes revokes and cancels),
+// 'identity' (identity statements, key rotation), 'payment' (clearing between parties), 'discovery' (an index of
+// manifests). Extension roles are namespaced ('<domain>/<role>', Ex. 'acme.com/audit'); anything that doesn't know one
+// ignores it. This module builds 'state'; the others are contracts (see SPEC.md).
+//
+
+#[type]
+/**
+ * An operator this policy uses (policy.network.operators.<name>): where it is, its key, and the roles it serves here.
+ */
+NetworkOperator: {
+    #[schema((target_val: str!): bool => <Network>.secure(target_val) ? true : <LimitrValidation>.error(`Network operator url "${target_val}" must start with https:// (http:// only for localhost)`))]
+    /// Where it's reached: its manifest and every role's messages are under this URL.
+    str! url: '';
+
+    #[schema((target_val: str!): bool => target_val.len() > 0 ? true : <LimitrValidation>.error('A network operator needs its public key'))]
+    /// Its public key: everything it answers must be signed by it (never by a key a message carries).
+    str! key: '';
+
+    /// How people see it.
+    str! label: '';
+
+    #[schema((target_val: list!): bool => {
+        for (const role in target_val) {
+            if (!<NetworkOperator>.valid_role(role)) return <LimitrValidation>.error(`Network operator role "${role}" is not a core role (${<Network>.ROLES.join(', ')}) or a namespaced one (<domain>/<role>)`);
+        }
+        true
+    })]
+    /// The roles it serves for this policy.
+    list! roles: [];
+
+    #[schema((target_val: obj): bool => target_val == null ? true : <NetworkStateConfig>.schemafy(target_val))]
+    /// The state role's config (defaults when null).
+    NetworkStateConfig state: null;
+
+    /// Extension roles' configs, by role (Ex. { 'acme.com/audit': { ... } }).
+    obj extensions: null;
+
+    /// Its current signing key, when it has rotated from `key` (null: `key` itself). `key` stays its identity (in
+    /// terms, budgets, and statements' issuers); this follows its manifest's rotations (see follow()).
+    str current: null;
+
+    /// The host carries this operator's messages (NetworkChannel::send(name, request)), Ex. over a connection it
+    /// already has to it, instead of HTTP. Messages are signed envelopes, so the channel can't change them: what comes
+    /// back is still checked with the operator's key. (A policy can also give an operator its own
+    /// `fn transport(request: map) -> map`, Ex. tests.)
+    bool! channel: false;
+
+
+    #[static]
+    /// A core role, or a namespaced one ('<domain>/<role>').
+    fn valid_role(role: unknown) -> bool {
+        if (typeof role != 'str') return false;
+        if (<Network>.ROLES.contains(role)) return true;
+        role.matches(r#"^[a-z0-9.-]+\.[a-z]{2,}/[a-z0-9_-]+$"#)
+    }
+
+
+    /// Does it serve a role here?
+    fn serves(role: str!) -> bool {
+        self.roles.contains(role)
+    }
+
+
+    /// The state role's config (its defaults when there's none).
+    fn state_config() -> NetworkStateConfig {
+        if (self.state == null) self.state = new NetworkStateConfig {} on self;
+        self.state
+    }
+
+
+    /// The policy this operator belongs to.
+    fn policy() -> Limitr {
+        <LimitrValidation>.get_policy(self)
+    }
+
+
+    /**
+     * Send this operator a message (POST <url>/limitr-network/operator/<type>, signed by this policy) and open its
+     * answer (signed by the operator's key, of type `answer`) into `into`. Returns the answer's body. Throws
+     * 'refused: <reason>' when the operator refuses (its signed refusal is opened into `into`, with any figures it
+     * gave), and 'unreachable: ...' when it can't be reached. Make `into` first (`using msg = new {};`).
+     */
+    fn ask(type: str!, body: obj!, answer: str!, into: obj!) -> obj {
+        const network = self.policy().network;
+        const message = network.envelope(type, self.signing_key(), body);
+        let response = null;
+        try response = self.send(map(
+            ('method', 'POST'),
+            ('url', <Network>.base(self.url) + <Network>.OPERATOR_PATH + type),
+            ('headers', map(('content-type', 'application/json'))),
+            ('body', message),
+        ));
+        catch (e, why) throw(`unreachable: ${why}`);
+        const status = response.get('status') ?? 0;
+        if (status == 0 || status >= 500) throw(`unreachable: ${status}`);
+        const text = response.get('body') ?? '';
+        if (status >= 200 && status < 300) {
+            try network.open(text, answer, into, self.signing_key());
+            catch (e, why) {
+                // signed by a key it rotated to since: learn it from its manifest, then check again
+                if (!why.contains('unexpected key') || !self.refresh()) throw(why);
+                network.open(text, answer, into, self.signing_key());
+            }
+            return into.body;
+        }
+        let reason = null;
+        try {
+            network.open(text, 'refused', into, self.signing_key());
+            reason = into.body?.reason;
+        } catch {}
+        throw(reason != null ? `refused: ${reason}` : `refused: an unexpected answer (${status})`);
+    }
+
+
+    /**
+     * Send this operator a request (a NetworkRequest map) and return its response (a NetworkResponse map): through its
+     * own transport function when it has one, through the host's channel when `channel` is set, and otherwise as any
+     * of the network's requests (Network.send: HTTP, or the network's transport).
+     */
+    fn send(request: map!) -> map {
+        const transport = self.transport;
+        if (transport != null) return transport(request);
+        if (self.channel) {
+            const name = Obj::name(self);
+            let response = null;
+            try response = await NetworkChannel::send(name, request);
+            catch (e, why) throw(`operator '${name}', through the host's channel: ${why}`);
+            if (typeof response != 'map') throw(`operator '${name}': its channel answered with no response`);
+            return response;
+        }
+        self.policy().network.send(request)
+    }
+
+
+    /// The key its messages are signed with now (`current`, or `key`).
+    fn signing_key() -> str {
+        self.current ?? self.key
+    }
+
+
+    /**
+     * Follow a chain of key rotations from `key` (signed 'rotate' messages, in order, each signed by the key before
+     * it) and return the last key. A chain that doesn't pass through `current` (the key followed to before) is
+     * refused, so a retired key can't start another chain. Throws with the reason.
+     */
+    fn follow(rotations: list!) -> str {
+        const network = self.policy().network;
+        let key = self.key;
+        let through = self.current == null;
+        for (const text in rotations) {
+            if (typeof text != 'str') throw('a broken key rotation');
+            using msg = new {};
+            try network.open(text, 'rotate', msg, key, null, false);
+            catch (e, why) throw(`a broken key rotation: ${why}`);
+            const rotation: NetworkRotation = msg.body;
+            if (!<NetworkRotation>.schemafy(rotation) || rotation.previous != key || rotation.key.len() < 1) throw('a broken key rotation');
+            key = rotation.key;
+            if (key == self.current) through = true;
+        }
+        if (!through) throw('a key rotation that doesn\'t pass through the key it rotated to before');
+        key
+    }
+
+
+    /**
+     * Check an identity statement this operator issued (signed by its key now; after reading its manifest again when
+     * it's signed by a key it rotated to) into `into` (key, subject, expires), and return `into`. With `current:
+     * false`, only its signature is checked (Ex. a voucher accepted earlier, whose expiry is already the statement's).
+     * Throws with the reason.
+     */
+    fn verify_identity(statement: str!, into: obj!, current: bool = true) -> obj {
+        const network = self.policy().network;
+        let failed = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            failed = null;
+            try {
+                if (current) network.identity_of(statement, self.signing_key(), into);
+                else {
+                    using msg = new {};
+                    network.open(statement, 'identity', msg, self.signing_key(), null, false);
+                    into.key = msg.body?.key;
+                    into.subject = msg.body?.subject;
+                    into.expires = msg.body?.expires;
+                }
+            } catch (e, why) failed = why;
+            if (failed == null || !failed.contains('unexpected key') || attempt > 0 || !self.refresh()) break;
+        }
+        if (failed != null) throw(failed);
+        into
+    }
+
+
+    /// Read its manifest again to learn a key it rotated to (check()). True when its signing key changed.
+    fn refresh() -> bool {
+        const before = self.signing_key();
+        try self.check();
+        catch return false;
+        self.signing_key() != before
+    }
+
+
+    /**
+     * Read and check this operator's manifest (GET <url>/.well-known/limitr-network-operator): signed by its key,
+     * a protocol we speak, serving every role it's configured for here, and the state mode chosen. Throws with the
+     * reason when anything is off.
+     */
+    fn check() -> bool {
+        const network = self.policy().network;
+        const response = self.send(map(('method', 'GET'), ('url', <Network>.base(self.url) + <Network>.OPERATOR_MANIFEST_PATH)));
+        using msg = new {};
+        network.open(<Network>.expect(response, 'operator'), 'operator', msg);
+        const manifest: NetworkOperatorManifest = msg.body;
+        // signed by `key`, or by a key it rotated to (each rotation signed by the key before it)
+        const signer = self.follow(manifest.rotations ?? []);
+        if (signer != msg.from) throw('signed by an unexpected key');
+        self.current = signer == self.key ? null : signer;
+        for (const role in self.roles) {
+            if (!manifest.roles.contains(role)) throw(`operator '${self.label}' doesn't serve '${role}'`);
+        }
+        if (self.serves('state') && !manifest.modes.contains(self.state_config().mode)) throw(`operator '${self.label}' doesn't support state mode '${self.state_config().mode}'`);
+        true
+    }
+}
+
+
+#[type]
+/**
+ * The state role's config, set by the provider using the operator (operators.<name>.state). Every field has a default.
+ */
+NetworkStateConfig: {
+    #[schema((target_val: str!): bool => ['strict', 'bounded'].contains(target_val) ? true : <LimitrValidation>.error(`Network state mode "${target_val}" must be 'strict' or 'bounded'`))]
+    /// 'strict': each call is claimed from the operator first (exact across any number of provider instances, one
+    /// round trip a call). 'bounded': calls spend a lease of the voucher's spend locally, settled on an interval
+    /// (fast; spend can run over by at most the outstanding leases, and a replay across instances is caught at settle).
+    str! mode: 'strict';
+
+    #[schema((target_val: float!): bool => target_val > 0 && target_val <= 1 ? true : <LimitrValidation>.error('A network state lease must be a share of the voucher\'s spend, more than 0 and at most 1'))]
+    /// bounded: how much to lease at a time, as a share of the voucher's spend.
+    float! lease: 0.1;
+
+    #[schema((target_val: float!): bool => target_val > 0 && target_val <= 1 ? true : <LimitrValidation>.error('A network state hold must be a share of the voucher\'s spend, more than 0 and at most 1'))]
+    /// What a request to a route with no declared metering (no entitlement, and no `hold` of its own) holds at the
+    /// operator before its work, as a share of the voucher's spend: its most. What it actually spent is settled after.
+    float! hold: 0.1;
+
+    /// bounded: how often a lease is settled (and at the latest, when it runs out).
+    ms! settle_every: 30s;
+
+    /// How long a lease is good for before the operator releases it (unsettled spend on it isn't charged).
+    ms! lease_ttl: 5min;
+
+    #[schema((target: obj, target_val: str!): bool => {
+        if (!['refuse', 'local'].contains(target_val)) return <LimitrValidation>.error(`Network state offline "${target_val}" must be 'refuse' or 'local'`);
+        if (target_val == 'local' && target.mode != 'bounded') return <LimitrValidation>.error('Network state offline \'local\' needs mode \'bounded\' (it spends what\'s left of a lease)');
+        true
+    })]
+    /// When the operator can't be reached: 'refuse' (fail closed, 503), or 'local' (bounded only: keep spending what's
+    /// left of the current lease).
+    str! offline: 'refuse';
+}
+
+
+#[type]
+/**
+ * An operator's manifest (GET /.well-known/limitr-network-operator, signed by the operator): what it serves.
+ */
+NetworkOperatorManifest: {
+    /// How people see it.
+    str! label: '';
+
+    /// The roles it serves (core and namespaced).
+    list! roles: [];
+
+    /// The state modes it supports ('strict', 'bounded').
+    list! modes: [];
+
+    /// Its key rotations, in order from its first key (signed 'rotate' messages), or null.
+    list rotations: null;
+
+    /// Who must be identified (by it) to use it: 'provider', 'consumer'.
+    list requires: null;
+}
+
+
+#[type]
+/**
+ * A consumer's budget at a state operator (policy.network.budgets.<id>): one spend across many providers. Vouchers
+ * that name it spend from it (each still has its own spend under it).
+ */
+NetworkBudget: {
+    /// The budget's ID (the consumer's).
+    str! budget: '';
+
+    /// The operator holding it (policy.network.operators.<name>).
+    str! operator: '';
+
+    /// Goes up with each update.
+    int! seq: 1;
+
+    /// The most it spends (runes) across its providers, until `expires`.
+    float! spend: 0;
+    ms! expires: 0;
+
+    /// The providers (public keys) it may be spent with; any provider that trusts the operator when null.
+    list providers: null;
+
+    /// What it has spent and has left, from the operator's latest answer.
+    float! spent: 0;
+    float! remaining: 0;
+
+
+    /// This budget as JSON.
+    fn json() -> str {
+        using out = new {
+            budget: self.budget, operator: self.operator, seq: self.seq, spend: self.spend, expires: self.expires,
+            providers: self.providers, spent: self.spent, remaining: self.remaining,
+        };
+        stringify('json', out)
+    }
+}

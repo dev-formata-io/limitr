@@ -8,17 +8,86 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Added
 
-- **Limitr Network 0.1 (the protocol module).** `src/network/`: one policy uses another's services and pays for
-  them, peer to peer, with signed messages and no shared secrets (see `src/network/SPEC.md`). A provider publishes
-  its terms from its policy; a consumer signs a voucher (a plan, a spend, an expiry); the provider meters a voucher
-  customer with the spend as a cap and grants its endpoints; the consumer gets a capability per endpoint, whose
-  HTTP call is sealed and confined to the provider's host; every call is signed, checked for replay, and answered
-  with a signed receipt. Compiled next to the engine (`typescript/limitr.ts` exports `limitrNetwork`) and loaded
-  only by policies that use it. 17 tests in `src/network/tests/`, run by `stof test` with the engine's.
+- **Limitr Network 0.1: the Limitr Network Protocol (LNP).** `src/network/` (see `src/network/SPEC.md`): one policy
+  uses another's services and pays for them, peer to peer, with signed messages and no shared secrets. A provider
+  publishes its terms from its policy; a consumer signs a voucher (a plan, a spend in runes, an expiry); the provider
+  meters a voucher customer with the spend as a cap and grants the routes (and tools) its plan reaches; every request
+  is signed, checked for replay, metered, and answered with a signed receipt. It's a module compiled next to the
+  engine (`typescript/limitr.ts` exports `limitrNetwork`) and loaded only by policies that use it. Every shape is a
+  Stof type with schemas (`src/network/spec/`), so the policy's `network` is checked like the rest of it (the
+  policy's `valid()` runs it), and the whole protocol, HTTP included (`Http::fetch`, at most
+  `network.request_timeout` and `network.max_response`), runs in the policy: an SDK in any language only holds the
+  key, allows the hosts, and converts requests. Digests are plain SHA-256 of text (the terms travel as JSON text, so
+  a voucher agrees to their exact bytes). URLs must be https (http only to localhost); peers check versions; every
+  wire name derives from one constant (`limitr-network`). 71 tests in `src/network/tests/`, run by `stof test` with
+  the engine's.
+- **Routes and tools.** A provider declares **routes** (`network.provider.routes`: what a request may do; every
+  request is checked and metered by its policy, whoever's code made it), and each is a tool on the consumer's side
+  as-is (no Stof needed). A provider can also ship **tools** of its own (`network.provider.tools`, functions in
+  `network.provider.logic`, Stof source that's part of the terms). They run on the consumer's side only when it
+  trusts the provider's logic (`trust: 'logic'`; `'declarations'` is the default): parsed as untrusted source, sealed
+  and confined (nothing of the consumer's policy, no hosts, only `<Network>.TOOL_LIBS`, `network.tool_time` per run),
+  reaching the provider only through a gate, `self.api.call(route, args)`, which signs requests for that voucher only.
+  With `may_call`, a trusted provider's tools can call the consumer's other connections' routes. A refused request is
+  the tool's result (`{ "refused": { ... } }`, and a `network-refused` event); a failed tool is
+  `{ "failed": { ... } }`.
+- **Metering: a cap for each request, receipts after the work.** A request's work meters the voucher's customer like
+  any Limitr customer (`allow()`, `reserve()`/`settle()`), and a cap the module puts on it for the request
+  (`network_request`) measures what it spent. A route's declared `entitlement` is optional (metered before the work);
+  without one the work meters, and a request nothing meters is free. With a state operator the request first holds
+  what it may spend (the route's quote, its `hold`, or the voucher's spend times `config.hold`), and the cap enforces it.
+  The consumer can cap each request (`connect(..., max)`, signed into it). Receipts are made after the work
+  (`{ voucher, n, allowed, cost, body, spent, remaining, budget_remaining }`, `body` the response body's SHA-256),
+  and the consumer refuses a 2xx response without a matching one. Hosts call `done(customer, n, body)` after the work
+  (`serve(request, work)` does it all for a Stof function; TypeScript `handle` does it, one request at a time per
+  voucher).
+- **Terms in runes.** A provider's terms state its rune (`rune: { value, currency }`, from its exchange) and price
+  each credit (and its tiers) through the exchange, the way the policy charges it.
+- **Operators.** Optional parties both sides trust with roles (`network.operators`, at most one per role): `state`
+  (voucher and budget state across any number of provider instances, `strict` by default or `bounded` with leases,
+  fail-closed by default when offline; **budgets**: one spend across many providers), `identity`, and `discovery`
+  are built; `revoke` and `payment` are contracts (in the spec) for the Cloud operator; extension roles are
+  namespaced. Any policy can be an operator (`network.service`, the reference operator, serving state, identity,
+  and discovery). An operator is named by its first key and can rotate it (`rotation(newKey)`, published in its
+  manifest; policies follow the chain, and a chain that skips a key already followed is refused). An operator with
+  `channel: true` is reached through the host instead of HTTP (TypeScript `limitr.network({ channels })`, a
+  web-standard function; never a fallback to HTTP).
+- **Identity.** An identity operator signs "this key is <subject>" (`identify()`). A consumer sends its statement with
+  every voucher; a provider requires one by default when it has an identity operator (`network.provider.identity:
+  'auto'`, `'required'`, or `'optional'`, per plan with `identity_plans`; the terms say which), never lets a voucher
+  outlast it, and its work sees who the consumer is (`metadata.network.subject`; TypeScript `call.subject`). A
+  provider's statement goes in its manifest, and a consumer with `network.require_identity` connects only to
+  providers its identity operator vouches for. An operator can require identity of providers, consumers, or both
+  (`service.requires`, in its manifest).
+- **Discovery.** A provider lists itself at a discovery operator (`list('public' | 'private', members, subjects)`,
+  `unlist()`), and anyone searches it (`discover(query)`). Searches are signed, so private listings show only to their
+  members (by key, or by who the operator identified), and results are the providers' own signed manifests, checked
+  on the searcher's side, so an index can't forge one.
+- **TypeScript: `limitr.network()` and `limitr.module()`.** `await limitr.network({ secretKey, name, channels })`
+  loads the Network module (sealed) and gives this policy an identity; the secret key stays in the process, and the
+  policy signs through a host function that signs only Network messages. Providers serve
+  `network.handle(request, work)`, a web-standard handler (`Request` in, `Response` out, for Deno, Bun, Workers,
+  Hono, Next.js, or Node with a small adapter), running `work` only for allowed requests (`{ route, customer,
+  subject, query, body }`). Consumers `connect(url, plan, spend, expires, { budget, trust, mayCall, max })`, run the
+  provider's tools as capabilities (`runCapability`, `claudeTools`), and `trust`, `update`, `cancel`, or read a
+  `connection(name)`. Also `budget()`, `identify()`, `list()`, `unlist()`, `discover()`, `rotation()`,
+  `refusal(result)`, `failure(result)`, `checkOperators()`, and `operate(request)` (a policy that is an operator).
+  Every call sends a `network-receipt` event. `limitr.module(name, bytes)` is the general way to add a sealed module
+  to a policy (Cloud documents get the same modules).
+- **Demo:** `typescript/demos/network/` (a weather service and an agent that buys forecasts from it, two processes).
 - **Customer expiry.** `Customer.expires` (ms), set with `set_customer_expires(id, expires)` (TypeScript
   `setCustomerExpires`): from then on the customer has no entitlements, so `allow()` and `check()` refuse. Its
   meters, grants, and caps are kept, and a later time (or null, never) gives its access back. For trials, temporary
   access, and Limitr Network vouchers.
+
+### Changed
+
+- **Stof 0.11.3** (`@formata/stof ^0.11.3`). The engine is compiled with it (`typescript/limitr.ts`); policies,
+  customers, and their exports are unchanged. It has what Limitr Network's provider tools build on: parsing source
+  from somewhere else as declarations only (the `untrusted` profile), confined seals that limit the libraries a part
+  calls (`libs`), how long it runs (`time`), and the functions outside it that it may call (gates, `calls`), and
+  (0.11.3) confined code that can't end its caller (`exit`), reach the host's environment, parse files or graphs,
+  or keep running after it returns.
 
 ### Removed
 

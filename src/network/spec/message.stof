@@ -1,0 +1,371 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// The protocol's messages, as types. On the wire, every message is JSON text inside a signed envelope:
+//
+//   { "message": "<the JSON text of a NetworkMessage>", "key": "<sender's public key>", "signature": "..." }
+//
+// signed (exactly that text) under the context 'limitr-network/v1/<type>' (Network.envelope(), Network.open()).
+//
+// Between peers: manifest, voucher, grant, refused, receipt, revoke, cancel. With a state operator (operator.stof):
+// operator (its manifest), budget/budgeted (consumer), and register/registered, find/found, claim/claimed,
+// lease/leased, settle/settled, end/ended (provider). Unknown fields are ignored, so later minor versions can add
+// fields without breaking earlier peers.
+//
+
+#[type]
+/**
+ * A signed message's contents: who it's from and for, when it's good for, and its body (one of the types below,
+ * by `type`).
+ */
+NetworkMessage: {
+    /// 'limitr-network/0.1'.
+    str! protocol: '';
+
+    /// The message's type (see above): its signature's context is 'limitr-network/v1/<type>'.
+    str! type: '';
+
+    /// The sender's public key (it must be the key that signed it).
+    str! from: '';
+
+    /// The receiver's public key ('' for anyone, Ex. a manifest).
+    str! to: '';
+
+    /// A unique ID for the message.
+    str! id: '';
+
+    /// When it was signed, and when it stops being good (ms).
+    ms! issued: 0;
+    ms! expires: 0;
+
+    /// The message itself.
+    obj body: null;
+}
+
+
+#[type]
+/**
+ * A voucher (consumer to provider): "I'll pay up to `spend` runes, on `plan`, until `expires`." Sent again with a
+ * higher `seq` to change it.
+ */
+NetworkVoucher: {
+    #[schema((target_val: str!): bool => <Network>.valid_name(target_val) ? true : <LimitrValidation>.error('the voucher needs an ID (letters, numbers, _ and -)'))]
+    /// The consumer's ID for it.
+    str! voucher: '';
+
+    #[schema((target_val: int!): bool => target_val >= 1 ? true : <LimitrValidation>.error('the voucher needs a seq of 1 or more'))]
+    /// Goes up with each update (an older one is refused).
+    int! seq: 1;
+
+    /// The provider's plan it's for.
+    str! plan: '';
+
+    /// The digest of the provider's terms it agrees to (from the manifest).
+    str! terms: '';
+
+    #[schema((target_val: float!): bool => target_val > 0 ? true : <LimitrValidation>.error('the voucher needs a spend'))]
+    /// The most it spends, in the provider's runes.
+    float! spend: 0;
+
+    /// Until when (ms).
+    ms! expires: 0;
+
+    /// How the consumer calls itself.
+    str! name: '';
+
+    /// The budget it spends from (at a state operator the provider accepts), or null.
+    str budget: null;
+
+    /// The public key of the state operator holding that budget.
+    str operator: null;
+
+    /// An identity statement for the consumer's key (a signed message from an identity operator, see
+    /// NetworkIdentity), or null.
+    str identity: null;
+}
+
+
+#[type]
+/**
+ * A key rotation (the body of a signed 'rotate' message, signed by `previous`): "my key is now `key`."
+ */
+NetworkRotation: {
+    /// The new key.
+    str! key: '';
+
+    /// The key it replaces (the one that signed this).
+    str! previous: '';
+}
+
+
+#[type]
+/**
+ * An identity statement (an identity operator to anyone, the body of a signed 'identity' message): "the key `key`
+ * is `subject`, until `expires`." The message is signed by the operator, and its own expiry is the statement's.
+ */
+NetworkIdentity: {
+    /// The public key it's about.
+    str! key: '';
+
+    /// Who's behind that key, as the operator knows them (Ex. an organization's name or ID).
+    str! subject: '';
+
+    /// Until when it holds (ms).
+    ms! expires: 0;
+}
+
+
+#[type]
+/**
+ * A grant (provider to consumer): the voucher accepted, the customer that meters it, and the routes and tools its plan
+ * reaches (by name: their declarations are in the terms the voucher agreed to).
+ */
+NetworkGrant: {
+    /// The voucher (and its seq) this grant is for.
+    str! voucher: '';
+    int! seq: 1;
+
+    /// The voucher's customer on the provider's side.
+    str! customer: '';
+
+    /// Its plan.
+    str! plan: '';
+
+    /// Its spend (runes), and its expiry: the provider may shorten it, never lengthen it.
+    float! spend: 0;
+    ms! expires: 0;
+
+    /// The provider's URL.
+    str! url: '';
+
+    /// The routes and tools its plan reaches, by name.
+    list! routes: [];
+    list! tools: [];
+}
+
+
+#[type]
+/**
+ * A receipt (provider to consumer, on every answer to a known voucher): what a call used, and what the voucher has
+ * spent and has left.
+ */
+NetworkReceipt: {
+    /// The voucher, and the request number it answers.
+    str! voucher: '';
+    int! n: 0;
+
+    /// Whether it was allowed.
+    bool! allowed: false;
+
+    /// What the request cost the voucher (runes): whatever its work metered, measured by the request's cap.
+    float! cost: 0;
+
+    /// The SHA-256 of the response body, as sent (null for a refusal): the consumer checks it, so a response can't be
+    /// changed without its receipt failing.
+    str body: null;
+
+    /// What the voucher has spent, and has left (runes).
+    float! spent: 0;
+    float! remaining: 0;
+
+    /// What its budget has left (runes), when it spends from one.
+    float budget_remaining: null;
+}
+
+
+#[type]
+/**
+ * What a consumer signs for each call (the Limitr-Network-Request header, with its signature in
+ * Limitr-Network-Signature): exactly which request it is, so it can't be changed or used again.
+ */
+NetworkSignedRequest: {
+    str! protocol: '';
+    str! type: 'request';
+
+    /// The voucher it's under, and its request number (each one is used once).
+    str! voucher: '';
+    int! n: 0;
+
+    /// The method and path (with its query string) it's for.
+    str! method: '';
+    str! path: '';
+
+    /// The digest of its body (SHA-256 of the body text).
+    str! body: '';
+
+    /// The most this request may spend (runes), when the consumer caps it (on top of the voucher's spend).
+    float max: null;
+
+    /// When it was signed (ms): a request more than a minute off is refused.
+    ms! issued: 0;
+}
+
+
+/*****************************************************************************
+ * State operator messages.
+ *****************************************************************************/
+
+#[type]
+/**
+ * A budget (consumer to its state operator, type 'budget'): "My vouchers that name this budget spend up to `spend`
+ * runes in all, until `expires`, with these providers (any that trust you when null)." Sent again with a higher
+ * `seq` to change it; an expiry of now ends it.
+ */
+NetworkBudgetMessage: {
+    #[schema((target_val: str!): bool => <Network>.valid_name(target_val) ? true : <LimitrValidation>.error('the budget needs an ID (letters, numbers, _ and -)'))]
+    str! budget: '';
+
+    #[schema((target_val: int!): bool => target_val >= 1 ? true : <LimitrValidation>.error('the budget needs a seq of 1 or more'))]
+    int! seq: 1;
+
+    #[schema((target_val: float!): bool => target_val >= 0 ? true : <LimitrValidation>.error('a budget\'s spend cannot be negative'))]
+    float! spend: 0;
+
+    ms! expires: 0;
+
+    list providers: null;
+}
+
+
+#[type]
+/**
+ * A provider's message to its state operator about a voucher:
+ *   register  { voucher, envelope, expires, customer }   a voucher it accepted (the consumer's signed envelope)
+ *   find      { voucher }                                 a voucher another instance accepted
+ *   claim     { voucher, n, runes, adjust }               strict: one call's spend, and its request number
+ *   lease     { voucher, amount, adjust }                 bounded: spend to use locally
+ *   settle    { voucher, lease, calls, adjust }           bounded: what a lease paid for ([n, runes] a call)
+ *   end       { voucher, reason }                         the voucher was revoked or cancelled
+ * `adjust` is the runes its calls really cost beyond what was claimed (Ex. a call priced differently than quoted).
+ */
+NetworkStateRequest: {
+    str! voucher: '';
+    str envelope: null;
+    ms expires: null;
+    str customer: null;
+    int n: null;
+    float runes: null;
+    float amount: null;
+    str lease: null;
+    list calls: null;
+    float! adjust: 0;
+    str reason: null;
+}
+
+
+#[type]
+/**
+ * A state operator's answer (registered, found, claimed, leased, settled, ended, budgeted): where the voucher (or
+ * budget) stands, and what was asked for.
+ */
+NetworkStateAnswer: {
+    /// The voucher (or, for 'budgeted', the budget) it's about.
+    str! voucher: '';
+    str budget: null;
+
+    /// What it has spent and has left (runes), and what its budget has left.
+    float! spent: 0;
+    float! remaining: 0;
+    float budget_remaining: null;
+
+    /// claimed: the request number.
+    int n: null;
+
+    /// found: the consumer's voucher (signed), its expiry, and its customer.
+    str envelope: null;
+    ms expires: null;
+    str customer: null;
+
+    /// leased: the lease, how much, and until when. settled: what it charged, and the duplicate request numbers it
+    /// didn't charge (a replay across provider instances).
+    str lease: null;
+    float amount: null;
+    ms until: null;
+    float charged: null;
+    list duplicates: null;
+
+    /// budgeted: its seq.
+    int seq: null;
+}
+
+
+/*****************************************************************************
+ * HTTP, as any host has it. Hosts pass these as maps (Ex. a web Request becomes
+ * { method, url, headers, body }), and get maps back.
+ *****************************************************************************/
+
+#[type]
+/**
+ * An HTTP request: method, url (absolute, or a path with its query string), headers (names in lower case), body
+ * (text).
+ */
+NetworkRequest: {
+    str! method: 'GET';
+    str! url: '/';
+    map headers: null;
+    str! body: '';
+
+
+    /// Its path, with its query string.
+    fn path() -> str {
+        <Network>.path(self.url)
+    }
+
+
+    #[static]
+    /// Headers with lower-case names (the protocol's are single values).
+    fn lower_headers(headers: map!) -> map {
+        const out = map();
+        for (const (k, v) in headers) out.insert(str(k).lower(), typeof v == 'list' ? v.first() : v);
+        out
+    }
+}
+
+
+#[type]
+/**
+ * An HTTP response: status, headers, body (text). Network.handle() also says, for a request to a route, which `route`
+ * it was and the voucher's `customer` (when it was allowed: do the work and put the result in `body`), and the
+ * `reason` when it wasn't.
+ */
+NetworkResponse: {
+    int! status: 200;
+    map headers: null;
+    str! body: '';
+    str route: null;
+    str customer: null;
+    str reason: null;
+
+
+    #[static]
+    /// A response (as a map).
+    fn of(status: int!, headers: map!, body: str!) -> map {
+        map(('status', status), ('headers', headers), ('body', body))
+    }
+
+
+    #[static]
+    /// A refused request to a route (as a map): its status, the reason as the body, and the receipt when there is one.
+    fn refused(status: int!, route: str, reason: str!, receipt: str) -> map {
+        const headers = map(('content-type', 'text/plain'));
+        if (receipt != null) headers.insert(<Network>.RECEIPT_HEADER, receipt);
+        const out = <NetworkResponse>.of(status, headers, reason);
+        out.insert('reason', reason);
+        if (route != null) out.insert('route', route);
+        out
+    }
+}

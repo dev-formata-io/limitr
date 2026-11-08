@@ -126,6 +126,12 @@ Limitr: {
                 if (self.exchange.to_runes(1, val.currency) == null) return <LimitrValidation>.error(`Credit "${key}" exchange "${val.currency}" currency does not map to Limitr runes (broken conversions)`);
             }
         }
+        // Loaded modules check their parts of the policy too: a module marks its check #[limitr_valid] (one param, the
+        // policy; true when valid, else false with <LimitrValidation>.error). Ex. the Network module checks policy.network.
+        for (const check in funcs(attributes = 'limitr_valid')) {
+            if (check.params().len() != 1) continue;
+            if (!check(self)) return <LimitrValidation>.error_message != '' ? false : <LimitrValidation>.error('A module found this policy not valid');
+        }
         true
     }
 
