@@ -177,6 +177,7 @@ Network: {
         if (policy.network == null) policy.network = new Network {} on policy;
         if (!<Network>.check(policy)) return false;
         const network: Network = policy.network;
+        for (const (name, op) in network.operators?.fields() ?? []) op.name = name;
         if (network.connections == null) network.connections = new {} on network;
         for (const (_, conn) in network.connections.fields()) {
             const typed: NetworkConnection = conn;
@@ -187,6 +188,81 @@ Network: {
         }
         if (network.service != null) network.service.load();
         true
+    }
+
+
+    #[static]
+    /**
+     * Take a new version of the policy's network (`updated`, Ex. from a published policy) and keep what this policy
+     * holds of its own: its key and identity statement (the host's), its connections and budgets, and, as a provider
+     * or an operator, what it's in the middle of (sweeps, leases, and the vouchers, budgets, listings, and identities
+     * an operator holds). Everything else (operators, the provider's terms, the service's settings) comes from
+     * `updated`, moved into the network the policy has. Then types and checks it (false, with
+     * <LimitrValidation>.error_message, when something is off). The name and the service's identities stay when
+     * `updated` has none. A host that adds operators of its own (host_operator) adds them again after.
+     */
+    fn take_update(policy: obj!, updated: obj!) -> bool {
+        const network = policy.network;
+        if (network == null) {
+            policy.network = updated;
+            updated.move(policy);
+            return <Network>.load(policy);
+        }
+        // into the network this policy has, in place: what it holds is never moved (some of it is sealed)
+        if ((updated.name ?? '') == '') updated.name = network.name;
+        using defaults = new Network {};
+        <Network>.merge(network, updated, ['key', 'identity', 'connections', 'budgets', 'provider', 'service'], defaults);
+        using provider = new NetworkProvider {};
+        <Network>.merge_part(network, updated, 'provider', ['last_sweep', 'leased', 'adjusting'], provider);
+        using service = new NetworkOperatorService {};
+        const keep = ['vouchers', 'budgets', 'listings'];
+        if (updated.service != null && updated.service.identities == null) keep.push_back('identities');
+        <Network>.merge_part(network, updated, 'service', keep, service);
+        drop(updated);
+        <Network>.load(policy)
+    }
+
+
+    #[static]
+    /// Take one part of an updated network (its provider or service): gone when the update has none, moved in when the
+    /// network has none, and otherwise merged (Network.merge()).
+    fn merge_part(network: obj!, updated: obj!, part: str!, keep: list!, defaults: obj!) {
+        const next = updated.get(part);
+        const now = network.get(part);
+        if (next == null) {
+            network.remove(part, shallow = false);
+        } else if (now == null) {
+            network.insert(part, next);
+            next.move(network);
+        } else {
+            <Network>.merge(now, next, keep, defaults);
+        }
+    }
+
+
+    #[static]
+    /**
+     * Replace an object's fields with another's, except the fields in `keep`. A field the other doesn't have goes back
+     * to its default (from `defaults`, a new object of the type), or goes. An object is deleted or moved only when it's
+     * the object's own: a field can refer to an object anywhere in the graph.
+     */
+    fn merge(into: obj!, from: obj!, keep: list!, defaults: obj!) {
+        const gone = [];
+        for (const (field, _) in into.fields()) {
+            if (!keep.contains(field)) gone.push_back(field);
+        }
+        for (const field in gone) {
+            const value = into.get(field);
+            into.remove(field, shallow = !(typeof value == 'obj' && value.parent() == into));
+        }
+        for (const (field, value) in defaults.fields()) {
+            if (!keep.contains(field) && from.get(field) == null && value != null && typeof value != 'obj') into.insert(field, value);
+        }
+        for (const (field, value) in from.fields()) {
+            if (keep.contains(field)) continue;
+            into.insert(field, value);
+            if (typeof value == 'obj' && value.parent() == from) value.move(into);
+        }
     }
 
 
@@ -217,7 +293,7 @@ Network: {
 
     /// The operator serving a role here, or null (peer to peer for that role).
     fn operator(role: str!) -> NetworkOperator {
-        for (const (_, op) in (self.operators ?? new {}).fields()) {
+        for (const (_, op) in self.operators?.fields() ?? []) {
             if (op.serves(role)) return op;
         }
         null
@@ -230,10 +306,37 @@ Network: {
     }
 
 
+    /**
+     * Use an operator the host is already connected to (Ex. the service it runs on), its messages carried by the
+     * host (`channel`). An operator this policy names with the same key just gets the channel; its roles stay this
+     * policy's. Otherwise it's added as `name` for each of `roles` (the ones it serves) that no other operator serves
+     * here. Returns the name its messages go by, or null when it has nothing to do here (every role taken, or `name`
+     * already used by another operator).
+     */
+    fn host_operator(name: str!, url: str!, key: str!, label: str!, roles: list!) -> str {
+        if (self.operators == null) self.operators = new {} on self;
+        for (const (existing, op) in self.operators.fields()) {
+            if (op.key == key) {
+                op.channel = true;
+                return existing;
+            }
+        }
+        if (self.operators.get(name) != null) return null;
+        const free = [];
+        for (const role in roles) {
+            if (<NetworkOperator>.valid_role(role) && self.operator(role) == null) free.push_back(role);
+        }
+        if (free.len() < 1) return null;
+        const op = new NetworkOperator { name, url, key, label, roles: free, channel: true } on self.operators;
+        self.operators.insert(name, op);
+        name
+    }
+
+
     /// The URLs of this policy's operators (a host lets Http::fetch reach them).
     fn operator_urls() -> list {
         const out = [];
-        for (const (_, op) in (self.operators ?? new {}).fields()) out.push_back(op.url);
+        for (const (_, op) in self.operators?.fields() ?? []) out.push_back(op.url);
         out
     }
 
@@ -298,7 +401,7 @@ Network: {
             name: terms.name,
             label: terms.label ?? terms.name,
             url: base,
-            terms: <Network>.text_digest(terms_text),
+            terms: sha256(terms_text),
             voucher: nanoid(),
             plan,
             spend,
@@ -426,7 +529,7 @@ Network: {
     fn discover(query: str = '', limit: int = 20, operator?: str) -> list {
         const op = operator != null ? self.operator_named(operator) : self.operator('discovery');
         if (op == null) throw(operator != null ? `no operator '${operator}'` : 'no operator serves discovery here');
-        if (!op.serves('discovery')) throw(`operator '${Obj::name(op)}' doesn't serve 'discovery' here`);
+        if (!op.serves('discovery')) throw(`operator '${op.name}' doesn't serve 'discovery' here`);
         using body = new NetworkSearch { query, limit, identity: self.identity };
         using answer = new {};
         const results = op.ask('search', body, 'results', answer);
@@ -466,15 +569,15 @@ Network: {
     fn identify(operator?: str) -> str {
         const op = operator != null ? self.operator_named(operator) : self.operator('identity');
         if (op == null) throw(operator != null ? `no operator '${operator}'` : 'no operator serves identity here');
-        if (!op.serves('identity')) throw(`operator '${Obj::name(op)}' doesn't serve 'identity' here`);
+        if (!op.serves('identity')) throw(`operator '${op.name}' doesn't serve 'identity' here`);
         using body = new {};
         using answer = new {};
         const identified = op.ask('identify', body, 'identified', answer);
         const statement = identified?.statement;
-        if (typeof statement != 'str') throw(`operator '${Obj::name(op)}' answered with no identity statement`);
+        if (typeof statement != 'str') throw(`operator '${op.name}' answered with no identity statement`);
         using s = new {};
         const who = self.identity_of(statement, op.signing_key(), s);
-        if (who.key != self.key) throw(`operator '${Obj::name(op)}' identified another key`);
+        if (who.key != self.key) throw(`operator '${op.name}' identified another key`);
         self.identity = statement;
         who.subject
     }
@@ -548,7 +651,7 @@ Network: {
     /// The connection holding a voucher.
     fn connection_for(voucher: unknown) -> NetworkConnection {
         if (typeof voucher != 'str') return null;
-        for (const (_, conn) in (self.connections ?? new {}).fields()) {
+        for (const (_, conn) in self.connections?.fields() ?? []) {
             if (conn.voucher == voucher) return conn;
         }
         null
@@ -728,13 +831,6 @@ Network: {
         if (!url.starts_with('http://')) return false;
         const host = <Network>.host(url);
         host == 'localhost' || host == '127.0.0.1'
-    }
-
-
-    #[static]
-    /// The digest of a text: the SHA-256 (lowercase hex) of its UTF-8 bytes, which any language can compute.
-    fn text_digest(text: str!) -> str {
-        sha256(text)
     }
 
 

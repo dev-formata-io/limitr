@@ -17,7 +17,7 @@
 import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrEngine, limitrNetwork } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
-import { LimitrNetwork, LimitrNetworkInit } from "./network.js";
+import { LimitrNetwork, LimitrNetworkChannel, LimitrNetworkInit } from "./network.js";
 import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEntitlementSource, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
 export * from './network.js';
@@ -35,6 +35,18 @@ export const LIMITR_SDK_VERSION = '0.8.4';
  * 'policy-source': Cloud sends the policy only, and this SDK keeps the engine it ships with.
  */
 const CLOUD_ACCEPTS = ['policy-source', 'meter-seq'];
+
+/** Limitr Cloud's operator, from its reply to hello (only for a workspace with Limitr Network). */
+interface CloudNetworkOperator { url: string; key: string; label: string; roles: string[] }
+
+/** The name Limitr Cloud's operator goes by in a policy (policy.network.operators.limitr). */
+const CLOUD_OPERATOR = 'limitr';
+
+/** How long an operator request over the Cloud connection waits for its answer. */
+const CLOUD_OPERATOR_MS = 30_000;
+
+/** How long limitr.network() waits for Cloud's reply to hello (a server from before hello never replies). */
+const CLOUD_HELLO_MS = 3000;
 
 /** How long a meter message Cloud hasn't confirmed is added back onto a customer it sends (then Cloud's copy wins). */
 const METER_PENDING_MS = 5 * 60 * 1000;
@@ -157,6 +169,11 @@ export class Limitr {
     /** Modules loaded into this policy's document (see module()), by name, to load again into a new document. */
     protected modules: Map<string, { bytes: Uint8Array, setup?: (doc: StofDoc) => void }> = new Map();
     private _network?: LimitrNetwork;
+    /** Cloud's reply to hello came (cloudFeatures), and its operator when it has one for this workspace. */
+    private _cloudHello = false;
+    private _cloudNetwork?: CloudNetworkOperator;
+    /** Operator requests sent over the Cloud connection, waiting for their answers, by ID. */
+    private _operatorRequests: Map<string, (reply: Record<string, unknown>) => void> = new Map();
 
 
     /**
@@ -198,6 +215,22 @@ export class Limitr {
     }
 
 
+    /**
+     * After a policy update: run each module's setup again, since an update can bring a module's part of the policy
+     * (Ex. policy.network) and the module keeps what the host adds to it (Ex. Limitr Cloud as an operator). A setup
+     * that throws (Ex. an update the module finds not valid) is logged; the update stands.
+     */
+    protected reloadModules(doc: StofDoc) {
+        for (const name of this.modules.keys()) {
+            try {
+                this.loadModule(doc, name);
+            } catch (e) {
+                console.error(`Limitr: module '${name}' after a policy update:`, e);
+            }
+        }
+    }
+
+
     /** Load a module into a document (once), seal it, and run its setup. */
     protected loadModule(doc: StofDoc, name: string) {
         const module = this.modules.get(name);
@@ -226,15 +259,71 @@ export class Limitr {
             if (init.keyStore) await init.keyStore(secretKey);
         }
         const network = new LimitrNetwork(this, secretKey, init.channels ?? {});
+        const cloud = init.cloud !== false ? await this.cloudOperator() : undefined;
         await this.module('LimitrNetwork', limitrNetwork, (doc) => {
             network.setup(doc);
             doc.sync_call('LimitrNetwork.identity', network.publicKey, init.name ?? null);
+            if (cloud) {
+                // Limitr Cloud, over this engine's connection (see LimitrNetworkInit.cloud)
+                const name = doc.sync_call('LimitrNetwork.host_operator', CLOUD_OPERATOR, cloud.url, cloud.key, cloud.label, cloud.roles) as string | null;
+                if (name) network.addChannel(name, this.cloudOperatorChannel(cloud.url));
+            }
             doc.sync_call('LimitrNetwork.load'); // types and checks policy.network (throws with the reason)
             // the policy's operators: its Http::fetch may reach them
             for (const url of doc.sync_call('LimitrNetwork.operator_urls') as string[]) this.allowNetworkHost(url, doc);
         });
         this._network = network;
         return network;
+    }
+
+
+    /** Limitr Cloud's operator for this workspace, once Cloud has replied to hello (undefined without one). */
+    protected async cloudOperator(): Promise<CloudNetworkOperator | undefined> {
+        if (!this.ws) return undefined;
+        const start = Date.now();
+        while (!this._cloudHello && Date.now() - start < CLOUD_HELLO_MS) await new Promise((r) => setTimeout(r, 50));
+        return this._cloudNetwork;
+    }
+
+
+    /**
+     * An operator channel over the Cloud connection: { type: 'network-operator', id, method, path, body }, answered by
+     * Cloud with { type: 'network-operator', id, status, headers, body }. The path is the request's, under the
+     * operator's URL. Messages are signed envelopes, checked by the policy with the operator's key either way.
+     */
+    protected cloudOperatorChannel(base: string): LimitrNetworkChannel {
+        const prefix = new URL(base).pathname.replace(/\/+$/, '');
+        return async (request: Request) => {
+            const url = new URL(request.url);
+            let path = url.pathname;
+            if (prefix && (path === prefix || path.startsWith(prefix + '/'))) path = path.slice(prefix.length) || '/';
+            path += url.search;
+            const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await request.text();
+            const ws = this.ws;
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                return new Response(JSON.stringify({ error: 'not connected to Limitr Cloud' }), { status: 503 });
+            }
+            const id = randomId();
+            return await new Promise<Response>((resolve) => {
+                const timer = setTimeout(() => {
+                    this._operatorRequests.delete(id);
+                    resolve(new Response(JSON.stringify({ error: 'Limitr Cloud didn\'t answer' }), { status: 504 }));
+                }, CLOUD_OPERATOR_MS);
+                this._operatorRequests.set(id, (reply) => {
+                    clearTimeout(timer);
+                    this._operatorRequests.delete(id);
+                    const status = typeof reply.status === 'number' && reply.status >= 200 && reply.status <= 599 ? reply.status : 502;
+                    const headers = new Headers();
+                    if (reply.headers && typeof reply.headers === 'object') {
+                        for (const [key, value] of Object.entries(reply.headers as Record<string, unknown>)) {
+                            if (typeof value === 'string') headers.set(key, value);
+                        }
+                    }
+                    resolve(new Response(typeof reply.body === 'string' ? reply.body : '', { status, headers }));
+                });
+                ws.send(JSON.stringify({ type: 'network-operator', id, method: request.method, path, body }));
+            });
+        };
     }
 
 
@@ -1837,6 +1926,7 @@ export class Limitr {
             } else {
                 await doc.call('policy.update_policy_internals', JSON.stringify({ policy: record.policy ?? {} }), 'json');
             }
+            if (this.wsInit) this.reloadModules(doc);
             for (const fn of Array.isArray(record.functions) ? record.functions : []) {
                 if (typeof fn?.path !== 'string' || typeof fn?.source !== 'string') continue;
                 const node = doc.get(fn.path);
@@ -1901,8 +1991,20 @@ export class Limitr {
                 } else if (record.type === 'policy-source') {
                     await this.loadCloudPolicySource(record);
                 } else if (record.type === 'hello') {
-                    // the server's reply: what it supports
+                    // the server's reply: what it supports, and its Limitr Network operator for this workspace
                     this.cloudFeatures = new Set(Array.isArray(record.features) ? record.features : []);
+                    const op = record.network;
+                    if (op && typeof op.url === 'string' && typeof op.key === 'string' && Array.isArray(op.roles)) {
+                        const label = typeof op.label === 'string' ? op.label : 'Limitr Cloud';
+                        const roles = op.roles.filter((role: unknown) => typeof role === 'string');
+                        this._cloudNetwork = { url: op.url, key: op.key, label, roles };
+                    } else {
+                        this._cloudNetwork = undefined;
+                    }
+                    this._cloudHello = true;
+                } else if (record.type === 'network-operator') {
+                    // an operator's answer, over this connection (see cloudOperatorChannel)
+                    if (typeof record.id === 'string') this._operatorRequests.get(record.id)?.(record);
                 } else if (record.type === 'sdk-unsupported') {
                     console.error(record.message ?? `Limitr Cloud needs a newer SDK (this is ${LIMITR_SDK_VERSION})`);
                     this.emit('sdk-unsupported', record);
@@ -1911,7 +2013,10 @@ export class Limitr {
                         this._deniedCloudCustomers.add(record.id);
                     }
                 } else if (!!record.policy && !!record.policy.plans) {
-                    await this.gate.run(() => this.doc.call('policy.update_policy_internals', data, 'json'));
+                    await this.gate.run(async () => {
+                        await this.doc.call('policy.update_policy_internals', data, 'json');
+                        this.reloadModules(this.doc);
+                    });
                 } else if (record.type === 'customer-invoices' && !!record.data.invoices && !!record.id) {
                     await this.gate.run(() => this.doc.call('policy.update_customer_invoices', data, 'json'));
                 } else if (!!record.type && !!record.id) {
@@ -1944,6 +2049,7 @@ export class Limitr {
                             doc.remove('LimitrTypes');
                             const cleanBuffer = doc.blobify('bstf');
                             await this.doc.call('policy.update_policy_internals', cleanBuffer, 'bstf');
+                            this.reloadModules(this.doc);
                         } else {
                             Limitr.sealEngine(doc);
                             this.doc = doc;

@@ -138,7 +138,7 @@ NetworkProvider: {
             if (policy.plans?.get(plan) == null) return <LimitrValidation>.error(`Network provider offers plan "${plan}", which the policy doesn't have`);
         }
         const paths = map();
-        for (const (name, route) in (self.routes ?? new {}).fields()) {
+        for (const (name, route) in self.routes?.fields() ?? []) {
             for (const plan in route.plans ?? self.offers) {
                 if (policy.plans?.get(plan) == null) return <LimitrValidation>.error(`Network route "${name}" lists plan "${plan}", which the policy doesn't have`);
                 if (!self.offers.contains(plan) || route.entitlement == null || route.entitlement.len() < 1) continue;
@@ -150,7 +150,7 @@ NetworkProvider: {
         }
 
         const identifies = self.network()?.operator('identity') != null;
-        for (const (plan, _) in (self.identity_plans ?? new {}).fields()) {
+        for (const (plan, _) in self.identity_plans?.fields() ?? []) {
             if (!self.offers.contains(plan)) return <LimitrValidation>.error(`Network provider identity lists plan "${plan}", which it doesn't offer`);
         }
         if (!identifies) {
@@ -159,8 +159,8 @@ NetworkProvider: {
             }
         }
 
-        const tools = self.tools ?? new {};
-        if (tools.fields().len() < 1) return true;
+        const tools = self.tools;
+        if (tools == null || tools.fields().len() < 1) return true;
         if (self.logic == null) return <LimitrValidation>.error('Network tools need the provider\'s logic (network.provider.logic)');
         for (const (name, tool) in tools.fields()) {
             if (self.routes?.get(name) != null) return <LimitrValidation>.error(`Network tool "${name}" has a route's name`);
@@ -355,10 +355,10 @@ NetworkProvider: {
             expires,
             url: self.url,
         };
-        for (const (name, route) in (self.routes ?? new {}).fields()) {
+        for (const (name, route) in self.routes?.fields() ?? []) {
             if (route.reaches(voucher.plan)) grant.routes.push_back(name);
         }
-        for (const (name, tool) in (self.tools ?? new {}).fields()) {
+        for (const (name, tool) in self.tools?.fields() ?? []) {
             if (tool.reaches(voucher.plan)) grant.tools.push_back(name);
         }
         network.envelope('grant', msg.from, grant)
@@ -461,7 +461,7 @@ NetworkProvider: {
         if (!<Network>.verify(state.key, 'request', request_text, signature)) reason = 'the signature does not match';
         else if (!<Network>.compatible(signed.protocol) || signed.type != 'request') reason = 'not a Limitr Network request';
         else if (signed.method != req.method || signed.path != path) reason = 'the signature is for another request';
-        else if (signed.body != <Network>.text_digest(req.body)) reason = 'the signature is for another body';
+        else if (signed.body != sha256(req.body)) reason = 'the signature is for another body';
         else if (signed.issued == null || issued < oldest || issued > newest) reason = 'the request is too old (or from the future)';
         else if (typeof signed.n != 'int' || !state.fresh(signed.n)) reason = 'this request was already used';
         else if (route_name == null) reason = 'no such route';
@@ -581,7 +581,7 @@ NetworkProvider: {
                 state.lease_calls.push_back([n, cost]);
             }
         }
-        self.receipt(customer, n, cost, allowed, body != null ? <Network>.text_digest(body) : null)
+        self.receipt(customer, n, cost, allowed, body != null ? sha256(body) : null)
     }
 
 
@@ -907,13 +907,13 @@ NetworkProvider: {
                 for (const role in op.roles) raw.operators.insert(role, op.key);
             }
         }
-        for (const (name, route) in (self.routes ?? new {}).fields()) {
+        for (const (name, route) in self.routes?.fields() ?? []) {
             if (route.plans != null && !route.plans.any((plan: str): bool => self.offers.contains(plan))) continue;
             const r = new {} on raw.routes;
             route.terms(r);
             raw.routes.insert(name, r);
         }
-        for (const (name, tool) in (self.tools ?? new {}).fields()) {
+        for (const (name, tool) in self.tools?.fields() ?? []) {
             if (tool.plans != null && !tool.plans.any((plan: str): bool => self.offers.contains(plan))) continue;
             const t = new {} on raw.tools;
             tool.terms(t);
@@ -977,13 +977,13 @@ NetworkProvider: {
 
     /// The digest of the terms this provider offers now: the SHA-256 of terms_text(), what a voucher agrees to.
     fn terms_digest() -> str {
-        <Network>.text_digest(self.terms_text())
+        sha256(self.terms_text())
     }
 
 
     /// The route a method and path go to (the path without its query string), or null.
     fn route_for(method: str!, path: str!) -> str {
-        for (const (name, route) in (self.routes ?? new {}).fields()) {
+        for (const (name, route) in self.routes?.fields() ?? []) {
             if (route.matches(method, path)) return name;
         }
         null

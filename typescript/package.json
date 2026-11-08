@@ -1,6 +1,6 @@
 {
     "name": "@formata/limitr",
-    "version": "0.8.4",
+    "version": "0.8.5",
     "description": "Limits, credits, and billing inside your AI product: an open-source engine that decides what each customer can do, what it costs you, and what to bill, on every call, in-process.",
     "author": "Formata, Inc. (https://limitr.dev)",
     "type": "module",

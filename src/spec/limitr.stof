@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.8.4;
+    ver version: 0.8.5;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -2670,6 +2670,12 @@ Limitr: {
                         }
                     }
                 }
+            }
+
+            // Loaded modules take their parts of an update too: a module marks it #[limitr_policy_updated] (two params,
+            // this policy and the update's). Ex. the Network module takes policy.network, keeping its own state.
+            for (const update in funcs(attributes = 'limitr_policy_updated')) {
+                if (update.params().len() == 2) update(self, p.policy);
             }
 
             await <Event>.send('internal-self-updated');

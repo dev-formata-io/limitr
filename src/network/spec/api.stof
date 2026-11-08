@@ -31,6 +31,14 @@ fn load() {
 /// policy without one).
 fn valid(policy: obj) -> bool { <Network>.check(policy) }
 
+#[limitr_policy_updated]
+/// A policy update (Ex. a published version from Limitr Cloud) brings a new network: take it, keeping this policy's
+/// own state (Network.take_update()). One without a network leaves this one as it is.
+fn policy_updated(policy: obj, updated: obj) {
+    if (typeof updated.network != 'obj') return;
+    if (!<Network>.take_update(policy, updated.network)) throw(<LimitrValidation>.error_message);
+}
+
 /// Set this policy's identity: its public key (the host keeps the secret key), and how it calls itself.
 fn identity(key: str!, name?: str) {
     <Network>.load(root.policy);
@@ -114,9 +122,16 @@ fn identify(operator?: str) -> str { root.policy.network.identify(operator) }
 /// The URLs of this policy's operators (a host lets Http::fetch reach them).
 fn operator_urls() -> list { root.policy.network.operator_urls() }
 
+/// Use an operator the host is connected to, its messages carried by the host (Network.host_operator()). Returns the
+/// name its messages go by (NetworkChannel::send), or null when it has nothing to do here.
+fn host_operator(name: str!, url: str!, key: str!, label: str!, roles: list!) -> str {
+    <Network>.load(root.policy);
+    root.policy.network.host_operator(name, url, key, label, roles)
+}
+
 /// Check every operator's manifest (NetworkOperator.check()). Throws with the reason when one is off.
 fn check_operators() -> bool {
-    for (const (_, op) in (root.policy.network.operators ?? new {}).fields()) op.check();
+    for (const (_, op) in root.policy.network.operators?.fields() ?? []) op.check();
     true
 }
 

@@ -4,7 +4,7 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
-## Unreleased
+## 0.8.5
 
 ### Added
 
@@ -52,6 +52,17 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   manifest; policies follow the chain, and a chain that skips a key already followed is refused). An operator with
   `channel: true` is reached through the host instead of HTTP (TypeScript `limitr.network({ channels })`, a
   web-standard function; never a fallback to HTTP).
+- **Limitr Cloud as an operator.** On a `Limitr.cloud()` engine whose workspace has Limitr Network, `limitr.network()`
+  adds Cloud as `network.operators.limitr`, for each role it serves (state, identity, discovery) that no operator in
+  the policy does, and carries its messages over the engine's WebSocket. A policy that names Cloud's operator itself
+  keeps its entry and gets the channel. `limitr.network({ cloud: false })` opts out. (`Network.host_operator()` does
+  this for any host-carried operator.)
+- **Policy updates bring a module's part.** `update_policy_internals` runs every loaded module's
+  `#[limitr_policy_updated]` (the policy, the update's policy). The Network module takes a new `policy.network` in
+  place and keeps the policy's own state (key, identity, connections, budgets, a provider's leases, an operator's
+  vouchers, budgets, and listings), so a policy published on Limitr Cloud changes running engines' networks without
+  dropping a connection. The TypeScript SDK runs each module's setup again after an update. Each operator has its
+  `name` (its key in `network.operators`, set on load): channels go by it.
 - **Identity.** An identity operator signs "this key is <subject>" (`identify()`). A consumer sends its statement with
   every voucher; a provider requires one by default when it has an identity operator (`network.provider.identity:
   'auto'`, `'required'`, or `'optional'`, per plan with `identity_plans`; the terms say which), never lets a voucher
@@ -92,6 +103,8 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   calls (`libs`), how long it runs (`time`), and the functions outside it that it may call (gates, `calls`), and
   (0.11.3) confined code that can't end its caller (`exit`), reach the host's environment, parse files or graphs,
   or keep running after it returns.
+- The skills say Limitr needs Stof 0.11.3 or later, and the limitr-ts skill covers Limitr Cloud as an engine's
+  operator. The `limitr-network` skill ships with the package (`skill/limitr-network`) and the Claude plugin.
 
 ### Removed
 

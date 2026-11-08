@@ -155,6 +155,10 @@ network: {
   terms }`).
 - **channel: true** sends an operator's messages through the host: `limitr.network({ channels: { ours: (request) =>
   response } })` (web-standard; another policy's `network.operate` is one). Never falls back to HTTP.
+- **Limitr Cloud:** on a `Limitr.cloud()` engine whose workspace has Limitr Network, `limitr.network()` adds Cloud as
+  `operators.limitr` (state, identity, discovery: the roles no operator in the policy serves) over the engine's
+  WebSocket, so `identify()`, `budget('limitr', ...)`, `list()`, and `discover()` just work. `{ cloud: false }` opts
+  out; a policy that names Cloud's key itself keeps its own entry.
 - **Any policy can be an operator:** `network.service` (`roles`, `identities`, `requires`, `rotations`, ...), served
   with `network.operate(request)`. `requires: ['provider', 'consumer']` refuses keys it hasn't identified.
 - **Key rotation:** an operator is named by its first key; `network.rotation(newPublicKey)` returns a statement to

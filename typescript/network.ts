@@ -48,6 +48,14 @@ export interface LimitrNetworkInit {
      * them: answers are still checked with the operator's key.
      */
     channels?: Record<string, LimitrNetworkChannel>;
+
+    /**
+     * On a Limitr.cloud() engine, use Limitr Cloud as an operator (policy.network.operators.limitr), its messages
+     * carried over the engine's connection: for the roles Cloud serves that no operator in the policy does (or, when
+     * the policy names Cloud's operator itself, only the channel). True by default; only when the workspace has
+     * Limitr Network on Cloud. False to leave the policy's operators as they are.
+     */
+    cloud?: boolean;
 }
 
 
@@ -209,6 +217,12 @@ export class LimitrNetwork {
 
     constructor(private limitr: Limitr, private secretKey: string, private channels: Record<string, LimitrNetworkChannel> = {}) {
         this.publicKey = StofDoc.publicKey(secretKey);
+    }
+
+
+    /** Carry an operator's messages (policy.network.operators.<name>, with `channel: true`) through `channel`. */
+    addChannel(operator: string, channel: LimitrNetworkChannel) {
+        this.channels = { ...this.channels, [operator]: channel };
     }
 
 

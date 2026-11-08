@@ -115,8 +115,8 @@ Limitr Network, a service publishes its plans and routes from its Limitr policy,
 service with a policy) signs a **voucher**: up to this much, on this plan, until then. The service meters it like any
 customer, with the voucher's spend as a hard cap; the agent gets the service's routes as tools; and every request and
 receipt is signed, so both sides hold the same record. No keys exchanged, no integration work. Optional operators
-(Limitr Cloud is one, and anyone can run one) add shared state across servers, budgets across services, identities,
-and discovery. It's the Limitr Network Protocol (LNP): start with
+(Limitr Cloud is one, set up for you on a `Limitr.cloud()` engine, and anyone can run one) add shared state across
+servers, budgets across services, identities, and discovery. It's the Limitr Network Protocol (LNP): start with
 [`src/network`](https://github.com/dev-formata-io/limitr/tree/main/src/network) and the
 [tutorial track](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial/network).
 

@@ -309,7 +309,7 @@ NetworkConnection: {
             n: self.n,
             method,
             path,
-            body: <Network>.text_digest(body),
+            body: sha256(body),
             issued: Time::now(),
             max: self.max,
         };
@@ -426,7 +426,7 @@ NetworkConnection: {
             self.network().open(receipt, 'receipt', msg, self.provider);
             const r: NetworkReceipt = msg.body;
             if (r.voucher != self.voucher || r.n != n) return ok ? 'the receipt is for another request' : null;
-            if (ok && r.body != <Network>.text_digest(response.get('body') ?? '')) return "the response doesn't match its receipt";
+            if (ok && r.body != sha256(response.get('body') ?? '')) return "the response doesn't match its receipt";
             self.spent = r.spent;
             self.remaining = r.remaining;
             if (r.budget_remaining != null) {

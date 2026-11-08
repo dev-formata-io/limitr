@@ -85,8 +85,9 @@ What happened:
 - **A budget** is one spend at the operator, across whichever providers the agent connects to with it. The voucher
   allowed a dollar, but the budget allowed 2 cents, so the third forecast was refused.
 - **Channels.** Operator messages are signed, so they don't need HTTP: `channels` hands them to a function, here a
-  direct call to the operator's handler, and in production any connection the host already has (Limitr Cloud uses its
-  WebSocket). Answers are still checked with the operator's key. Over HTTP, an operator is served like a provider:
+  direct call to the operator's handler, and in production any connection the host already has. Answers are still
+  checked with the operator's key. On a `Limitr.cloud()` engine you don't set any of this up: `limitr.network()` adds
+  Cloud as the `limitr` operator, over the engine's WebSocket (when your workspace has Limitr Network). Over HTTP, an operator is served like a provider:
   `serve(port, (request) => operatorNetwork.operate(request))`.
 - **It fails closed.** If the operator can't be reached, the service refuses requests (503) rather than spend what it
   can't count.

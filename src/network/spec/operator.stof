@@ -39,6 +39,9 @@
  * An operator this policy uses (policy.network.operators.<name>): where it is, its key, and the roles it serves here.
  */
 NetworkOperator: {
+    /// Its name in the policy (its key in network.operators). Set when the network loads; its channel goes by it.
+    str! name: '';
+
     #[schema((target_val: str!): bool => <Network>.secure(target_val) ? true : <LimitrValidation>.error(`Network operator url "${target_val}" must start with https:// (http:// only for localhost)`))]
     /// Where it's reached: its manifest and every role's messages are under this URL.
     str! url: '';
@@ -152,7 +155,7 @@ NetworkOperator: {
         const transport = self.transport;
         if (transport != null) return transport(request);
         if (self.channel) {
-            const name = Obj::name(self);
+            const name = self.name;
             let response = null;
             try response = await NetworkChannel::send(name, request);
             catch (e, why) throw(`operator '${name}', through the host's channel: ${why}`);

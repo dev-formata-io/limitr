@@ -270,6 +270,108 @@ fn one_operator_per_role_and_known_roles() {
 }
 
 #[test]
+fn an_operator_the_host_carries() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    const cloud = 'NRfTF03GnsPUowmyO2x1QqcwtnvPgfhM1Lb8INTq/9g=';
+
+    // added for the roles it serves that nothing else here does (state is the policy's own operator's)
+    assert_eq(agent.network.host_operator('cloud', 'https://cloud.example/network', cloud, 'Cloud', ['state', 'identity', 'discovery']), 'cloud');
+    const added = agent.network.operators.cloud;
+    assert_eq(added.roles, ['identity', 'discovery']);
+    assert(added.channel);
+    assert_eq(added.label, 'Cloud');
+    assert_eq(added.name, 'cloud'); // what its channel goes by
+    assert(<Network>.load(agent), <LimitrValidation>.error_message);
+    assert_eq(agent.network.operator('state').url, 'https://operator.example');
+    assert_eq(agent.network.operator('identity').key, cloud);
+
+    // again (Ex. a new document from the service): the same operator, by its key
+    assert_eq(agent.network.host_operator('cloud', 'https://cloud.example/network', cloud, 'Cloud', ['state', 'identity']), 'cloud');
+    assert_eq(agent.network.operators.cloud.roles, ['identity', 'discovery']);
+
+    // one the policy already names (by key) keeps its name and roles, and gets the channel
+    const op = agent.network.operators.op;
+    assert_not(op.channel);
+    assert_eq(agent.network.host_operator('other', 'https://x.example', op.key, 'X', ['payment']), 'op');
+    assert(op.channel);
+    assert_eq(op.roles, ['state']);
+
+    // nothing to do: every role taken, or the name is another operator's
+    assert_eq(agent.network.host_operator('third', 'https://third.example', 'TIKQxM7BumgtFpwDZZ4ERoXYn7iPPjjNqen6IPz1CX8=', 'Third', ['state', 'identity']), null);
+    assert_eq(agent.network.host_operator('op', 'https://third.example', 'TIKQxM7BumgtFpwDZZ4ERoXYn7iPPjjNqen6IPz1CX8=', 'Third', ['revoke']), null);
+    assert_eq(agent.network.operators.third, null);
+    assert(<Network>.load(agent), <LimitrValidation>.error_message);
+}
+
+#[test]
+fn a_new_network_keeps_this_policys_own_state() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    const key = agent.network.key;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    const budget = agent.network.budget('op', 0.5, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+    const voucher = agent.network.connection('acme_weather').voucher;
+
+    // a new version of the agent's network (Ex. published): its operator relabeled, a longer request timeout
+    const updated = copy(self.Agent.network);
+    updated.operators.op.label = 'Renamed';
+    updated.request_timeout = 45s;
+    updated.world = world;
+    assert(<Network>.take_update(agent, updated), <LimitrValidation>.error_message);
+    assert_eq(agent.network.operators.op.label, 'Renamed');
+    assert_eq(agent.network.request_timeout, 45s);
+    assert_eq(agent.network.key, key);
+    assert_eq(agent.network.connection('acme_weather').voucher, voucher, 'its connections stay');
+    assert(agent.network.budgets.get(budget) != null, 'and its budgets');
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+
+    // the operator too: what it holds stays (the voucher, its spend), its settings change
+    const op = world.operator;
+    const settings = copy(self.Operator.network);
+    settings.service.label = 'Renamed Operator';
+    assert(<Network>.take_update(op, settings), <LimitrValidation>.error_message);
+    assert_eq(op.network.service.label, 'Renamed Operator');
+    assert_eq(<TestOperated>.record(world, agent.network.connection('acme_weather')).spent, 0.02);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Austin'}), 'sunny in Austin');
+    assert_eq(<TestOperated>.record(world, agent.network.connection('acme_weather')).spent, 0.03);
+}
+
+#[test]
+fn a_policy_update_brings_its_network() {
+    using world = <TestOperated>.world(self, 'strict', 1);
+    const agent = world.agent;
+    const key = agent.network.key;
+    agent.network.connect('https://api.acme.example', 'agent', 1, Time::now() + 1hr);
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Boston'}), 'sunny in Boston');
+
+    // the engine's policy update (Ex. a version published on Limitr Cloud) hands its network to the module
+    agent.update_policy_internals('{"policy":{"network":{"name":"renamed","operators":{"op":{"url":"https://operator.example","key":"3XhNUu77i26n40tw242gwPGkB0e6iyGiwgcqN/7+E9U=","roles":["state"],"label":"From the update"}}}}}', 'json');
+    assert_eq(agent.network.name, 'renamed');
+    assert_eq(agent.network.operators.op.label, 'From the update');
+    assert_eq(agent.network.key, key);
+    assert_eq(agent.network.request_timeout, 30s, 'what the update leaves out is its default');
+    assert(agent.network.connection('acme_weather') != null);
+    agent.network.world = world; // the test's own field (not in the update)
+    assert_eq(agent.run_capability('acme_weather_forecast', {'city': 'Denver'}), 'sunny in Denver');
+
+    // an update without a network leaves it as it is
+    agent.update_policy_internals('{"policy":{"hold_ttl":60000}}', 'json');
+    assert_eq(agent.network.operators.op.label, 'From the update');
+}
+
+#[test]
+fn peer_to_peer_lookups_make_nothing() {
+    // no operators, connections, routes, or tools: looking them up makes no objects (`stof test --leaks`)
+    using policy = new {};
+    assert(<Network>.load(policy), <LimitrValidation>.error_message);
+    policy.network.operators = null;
+    assert_eq(policy.network.operator('state'), null);
+    assert_eq(policy.network.operator_urls(), []);
+}
+
+#[test]
 fn state_config_defaults_and_checks() {
     using world = <TestOperated>.world(self, 'strict', 1);
     const op = world.agent.network.operators.op;

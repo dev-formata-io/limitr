@@ -24,7 +24,7 @@ it before designing a policy or explaining a result.
 npm i @formata/limitr
 ```
 
-The package depends on `@formata/stof` (0.11.0 or later: the SDK seals the engine when it loads it). Import only
+The package depends on `@formata/stof` (0.11.3 or later: the SDK seals the engine when it loads it). Import only
 from `@formata/limitr`. It ships this skill and the limitr skill in `node_modules/@formata/limitr/skill/`; the stof
 skill (the Stof language) ships with Stof, in `node_modules/@formata/stof/skill/stof/`. A step-by-step tutorial with
 runnable examples is in the repo's `typescript/tutorial`.
@@ -323,7 +323,8 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
 
 `await limitr.network({ secretKey, name, channels })` loads the Network module and gives the policy an identity: sell
 routes to agents with `network.handle(request, work)`, or buy them with `network.connect(url, plan, spend, expires)`
-and run them as capabilities. `limitr.module(name, bytes, setup?)` is the general way to add a sealed module. The
+and run them as capabilities. On a `Limitr.cloud()` engine whose workspace has Limitr Network, Limitr Cloud is its
+operator (state, identity, discovery) over the engine's connection, with nothing to set up (`cloud: false` opts out). `limitr.module(name, bytes, setup?)` is the general way to add a sealed module. The
 **limitr-network** skill covers it all.
 
 ## Common mistakes

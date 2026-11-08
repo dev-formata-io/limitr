@@ -617,6 +617,14 @@ one budget.
   `network.operate` is one); a policy can also give an operator its own `fn transport(request) -> response`. Either
   way, answers are still checked with the operator's key, and a channel the host doesn't have is an error (never a
   fallback to HTTP).
+- **Cloud as the operator** (built): Cloud's reply to an engine's hello carries its operator (`network: { url, key,
+  label, roles }`) when the workspace has Limitr Network (a platform feature, early access). On a `Limitr.cloud()`
+  engine, `limitr.network()` adds it as `operators.limitr` (`host_operator`: for each role Cloud serves that no
+  operator in the policy does; a policy that already names Cloud's key keeps its own entry and only gets the
+  channel), and carries its messages over the engine's socket (`{ type: 'network-operator', id, method, path, body }`,
+  answered with `{ type: 'network-operator', id, status, headers, body }`). `limitr.network({ cloud: false })` leaves
+  the policy's operators as they are; after a policy update, it's added again (4e). A key that identifies over a socket is registered to that socket's workspace
+  (the identity's subject); a usage-only API key can't register one.
 - **Role contracts, as messages:**
   - revoke (contract): the operator relays the provider's own signed revoke, unchanged, to the consumer (over its
     channel, Ex. Cloud's WebSocket), and the consumer takes it with `revoked(envelope)`, which checks it with the
@@ -675,6 +683,13 @@ one budget.
 4c. Validation: the policy's `valid()` runs every loaded module's `#[limitr_valid]` check; the Network's checks
    `policy.network` and how the provider fits the policy (offered plans exist, route entitlements are in the
    plans they reach, no two routes on one method and path). **Done.**
+4e. Policy updates: the engine's `update_policy_internals` hands every loaded module's
+   `#[limitr_policy_updated]` (this policy, the update's) its part of a new version. The Network's (`Network.take_update`) takes a new
+   `policy.network` in place, keeping what the policy holds of its own: its key and identity statement, connections,
+   budgets, a provider's sweeps and leases, and an operator's vouchers, budgets, listings (and identities when the
+   update has none); a field the update leaves out goes back to its default. An update without a network leaves it as
+   it is. The TS SDK runs each module's setup again after an update, so the host's own operators (Cloud's) come back.
+   Each operator has its `name` (its key in `network.operators`, set on load), which its channel goes by. **Done** (2 tests, and the server's publish test).
 4d. The agreed items above, in this order: the Stof release (seal library allowlist, a time limit per confined
    call: Stof 0.11.2, **done**); routes and tools with trust and grants (**done**, with the Stof 0.11.3 fixes it
    found); a cap for each request (holds with an operator, the consumer's

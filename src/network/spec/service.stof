@@ -220,8 +220,8 @@ NetworkOperatorService: {
                 parse(m.body?.terms ?? '', terms, 'json');
             } catch (e, why) return <NetworkResponse>.of(400, json, self.refuse(msg.from, '', `not your manifest: ${why}`));
             let text = `${terms.name ?? ''} ${terms.label ?? ''}`;
-            for (const (_, r) in (terms.routes ?? new {}).fields()) text += ' ' + (r.description ?? '');
-            for (const (_, t) in (terms.tools ?? new {}).fields()) text += ' ' + (t.description ?? '');
+            for (const (_, r) in terms.routes?.fields() ?? []) text += ' ' + (r.description ?? '');
+            for (const (_, t) in terms.tools?.fields() ?? []) text += ' ' + (t.description ?? '');
             self.listings.remove(msg.from);
             const record = new NetworkListingRecord {
                 provider: msg.from,

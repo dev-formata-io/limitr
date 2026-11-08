@@ -51,9 +51,9 @@ fn vector_keys() {
 #[test]
 fn vector_digests() {
     const v = self.Vectors;
-    assert_eq(<Network>.text_digest(v.terms), v.terms_digest);
-    assert_eq(<Network>.text_digest(''), v.empty_digest);
-    assert_eq(<Network>.text_digest(v.request_body), v.request_body_digest);
+    assert_eq(sha256(v.terms), v.terms_digest);
+    assert_eq(sha256(''), v.empty_digest);
+    assert_eq(sha256(v.request_body), v.request_body_digest);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn vector_envelopes_open() {
     using consumer = new Network { key: v.consumer_public };
     using r = new {};
     consumer.open(v.receipt_envelope, 'receipt', r, v.provider_public, null, false);
-    assert_eq(r.body.body, <Network>.text_digest(v.response_body));
+    assert_eq(r.body.body, sha256(v.response_body));
     assert_eq(r.body.cost, 0.01);
 
     // one byte changed: the signature doesn't check out
