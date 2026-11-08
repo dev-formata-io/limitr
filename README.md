@@ -105,6 +105,20 @@ Limitr is the control without the build. The engine is yours, like your code:
 - **Prepaid credits:** credit packs with expiry, resets, and rollover, spent across features at their own rates.
 - **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.
 - **Billing events:** overage, limits hit, and thresholds crossed, sent to your code as they happen.
+- **Services agents can buy:** sell your API to agents and other services with Limitr Network (below), metered by
+  the same policy.
+
+## Limitr Network: services agents pay for
+
+An agent that needs a forecast, a search, or a translation usually needs an account and an API key first. With
+Limitr Network, a service publishes its plans and routes from its Limitr policy, and an agent (or any app or
+service with a policy) signs a **voucher**: up to this much, on this plan, until then. The service meters it like any
+customer, with the voucher's spend as a hard cap; the agent gets the service's routes as tools; and every request and
+receipt is signed, so both sides hold the same record. No keys exchanged, no integration work. Optional operators
+(Limitr Cloud is one, and anyone can run one) add shared state across servers, budgets across services, identities,
+and discovery. It's the Limitr Network Protocol (LNP): start with
+[`src/network`](https://github.com/dev-formata-io/limitr/tree/main/src/network) and the
+[tutorial track](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial/network).
 
 ## Every deal, enforced as written
 
@@ -134,9 +148,10 @@ user on its org's plan gets the org's rules too.
 
 ## Made for AI coding agents
 
-The npm package ships two skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
-engine function, and every event) and `limitr-ts` (the TypeScript SDK). The third, `stof` (the language policies are
-written in), ships with Stof in `node_modules/@formata/stof/skill/stof`. Point your coding agent at all three and it
+The npm package ships three skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
+engine function, and every event), `limitr-ts` (the TypeScript SDK), and `limitr-network` (Limitr Network). The
+fourth, `stof` (the language policies are written in), ships with Stof in `node_modules/@formata/stof/skill/stof`.
+Point your coding agent at them and it
 can write, review, and debug policies and integrations correctly, instead of guessing. The Limitr skills are also packaged as zips in
 [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for uploading to an agent.
 
@@ -181,6 +196,9 @@ and have the Analyst write your first policy.
 - [Limitr skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr): the policy reference, every engine
   function, and every event (`limitr-ts` for TypeScript is in
   [typescript/skill](https://github.com/dev-formata-io/limitr/tree/main/typescript/skill))
+- [Limitr Network](https://github.com/dev-formata-io/limitr/tree/main/src/network): the protocol, its
+  [wire format](https://github.com/dev-formata-io/limitr/blob/main/src/network/PROTOCOL.md), and its
+  [skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr-network)
 - [Stof skill](https://github.com/dev-formata-io/stof/blob/main/content/SKILL.md): the language policies are written in
 - [Docs](https://limitr.dev/docs/introduction) and [limitr.dev](https://limitr.dev)
 - [Changelog](https://github.com/dev-formata-io/limitr/blob/main/CHANGELOG.md)

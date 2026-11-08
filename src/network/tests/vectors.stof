@@ -1,0 +1,95 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+//
+// The test vectors in src/network/PROTOCOL.md: fixed keys, messages, digests, and signatures, checked here against the
+// module (and, when they were made, against an independent Ed25519 and SHA-256 in Node). If one of these fails, the
+// wire format changed: update PROTOCOL.md with it.
+//
+
+#[type_ignore]
+Vectors: {
+    consumer_secret: "a47o0A9U6j7LYo/7XUvHLr+wNc8lPWPi79Pn3FPCaxI="
+    consumer_public: "quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig="
+    provider_secret: "f0hrbcBxEsY/2hs5j3AGA4Pv6ETSnIZvjk9bBvimM/o="
+    provider_public: "eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE="
+    terms: "{\"name\":\"acme_weather\",\"label\":\"Acme Weather\",\"url\":\"https://api.acme.example\",\"currency\":\"rune\",\"rune\":{\"value\":1.0,\"currency\":\"usd\"},\"plans\":{\"agent\":{\"label\":\"Agent\",\"period\":\"monthly\",\"identity\":false,\"entitlements\":{\"forecasts\":{\"description\":\"\",\"limit\":{\"credit\":\"forecast\",\"mode\":\"soft\",\"value\":0.0,\"increment\":1.0,\"resets\":false}}}}},\"credits\":{\"forecast\":{\"label\":\"Forecast\",\"unit\":\"forecast\",\"description\":\"\",\"pricing_model\":\"flat\",\"price\":0.01}},\"routes\":{\"forecast\":{\"description\":\"The forecast for a city\",\"method\":\"GET\",\"path\":\"/forecast\",\"parameters\":[{\"name\":\"city\",\"description\":\"\",\"schema_type\":\"string\",\"required\":true}],\"entitlement\":\"forecasts\",\"value\":1.0}},\"tools\":{}}"
+    terms_digest: "8737a4a6764704757806a563d6f162bfc37c901a1af512a8b1ceae123be67f8c"
+    empty_digest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    request_body: "{\"city\":\"Boston\"}"
+    request_body_digest: "0fa7bd0f89782a366cf67bb0b561086ca441a453c24bcda0af0077c7917d3b65"
+    voucher_envelope: "{\"message\":\"{\\\"protocol\\\":\\\"limitr-network/0.1\\\",\\\"type\\\":\\\"voucher\\\",\\\"from\\\":\\\"quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig=\\\",\\\"to\\\":\\\"eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE=\\\",\\\"id\\\":\\\"q3Xv9kz0Lr2Jm8wTnB5yC\\\",\\\"issued\\\":1794100000000.0,\\\"expires\\\":1794100300000.0,\\\"body\\\":{\\\"voucher\\\":\\\"V1StGXR8_Z5jdHi6B-myT\\\",\\\"seq\\\":1,\\\"plan\\\":\\\"agent\\\",\\\"terms\\\":\\\"8737a4a6764704757806a563d6f162bfc37c901a1af512a8b1ceae123be67f8c\\\",\\\"spend\\\":5.0,\\\"expires\\\":1794200000000.0,\\\"name\\\":\\\"test_agent\\\",\\\"budget\\\":null,\\\"operator\\\":null,\\\"identity\\\":null}}\",\"key\":\"quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig=\",\"signature\":\"jq8oPNkg4vpBfbSJzRbnzrWpTWgUGI/rw4WPxdrbnv5FzjefqBTSZXJuaJ0hRlxor/NoBk0M3o8HtX6ieJo7DA==\"}"
+    voucher_signature: "jq8oPNkg4vpBfbSJzRbnzrWpTWgUGI/rw4WPxdrbnv5FzjefqBTSZXJuaJ0hRlxor/NoBk0M3o8HtX6ieJo7DA=="
+    request_header: "{\"protocol\":\"limitr-network/0.1\",\"type\":\"request\",\"voucher\":\"V1StGXR8_Z5jdHi6B-myT\",\"n\":1,\"method\":\"GET\",\"path\":\"/forecast?city=Boston\",\"body\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"max\":null,\"issued\":1794100001000.0}"
+    request_signature: "b7ROMo1Y7tZL9nN+BqMtBoby4jJuojP1oNByW3Zqyvf0fJwksCjU0s63xnpvCZNA9M3A0leL7FxoTDtPPGBVDw=="
+    response_body: "{\"city\":\"Boston\",\"forecast\":\"sunny\",\"high\":12}"
+    receipt_envelope: "{\"message\":\"{\\\"protocol\\\":\\\"limitr-network/0.1\\\",\\\"type\\\":\\\"receipt\\\",\\\"from\\\":\\\"eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE=\\\",\\\"to\\\":\\\"quMqUnOWtAeYIIxUlcMBO7HdUb5GASQMJFUZTQCFXig=\\\",\\\"id\\\":\\\"Hk7Lw2QpZ9xVb4NcR1tYs\\\",\\\"issued\\\":1794100001500.0,\\\"expires\\\":1794100301500.0,\\\"body\\\":{\\\"voucher\\\":\\\"V1StGXR8_Z5jdHi6B-myT\\\",\\\"n\\\":1,\\\"allowed\\\":true,\\\"cost\\\":0.01,\\\"body\\\":\\\"98d7dd613ec1f27e03a71a7f0dea838e009924fba4bf4a36929e8a2561705ae4\\\",\\\"spent\\\":0.01,\\\"remaining\\\":4.99,\\\"budget_remaining\\\":null}}\",\"key\":\"eKFw/TZJJlkCuIgkPEz/Dc887hVDNlUYZm3VJvz8DyE=\",\"signature\":\"WEa1pWShF5dLu0BNsRcH7iqp7/omzC60paE7m1VWysAG5rW+JRsGYm3ZI/dKg4T8OKjIH+aVzqDMfM2WqNJ0Dg==\"}"
+    receipt_signature: "WEa1pWShF5dLu0BNsRcH7iqp7/omzC60paE7m1VWysAG5rW+JRsGYm3ZI/dKg4T8OKjIH+aVzqDMfM2WqNJ0Dg=="
+}
+
+
+#[test]
+fn vector_keys() {
+    assert_eq(Key::public(self.Vectors.consumer_secret), self.Vectors.consumer_public);
+    assert_eq(Key::public(self.Vectors.provider_secret), self.Vectors.provider_public);
+}
+
+#[test]
+fn vector_digests() {
+    const v = self.Vectors;
+    assert_eq(<Network>.text_digest(v.terms), v.terms_digest);
+    assert_eq(<Network>.text_digest(''), v.empty_digest);
+    assert_eq(<Network>.text_digest(v.request_body), v.request_body_digest);
+}
+
+#[test]
+fn vector_signatures() {
+    const v = self.Vectors;
+    using env = new {};
+    parse(v.voucher_envelope, env, 'json');
+    assert_eq(Key::sign(v.consumer_secret, <Network>.CONTEXT + 'voucher', env.message), v.voucher_signature, 'Ed25519 is deterministic');
+    assert(<Network>.verify(v.consumer_public, 'voucher', env.message, v.voucher_signature));
+    assert_not(<Network>.verify(v.consumer_public, 'grant', env.message, v.voucher_signature), 'the context is the type');
+    assert(<Network>.verify(v.consumer_public, 'request', v.request_header, v.request_signature));
+    assert_eq(Key::sign(v.consumer_secret, <Network>.CONTEXT + 'request', v.request_header), v.request_signature);
+    using rec = new {};
+    parse(v.receipt_envelope, rec, 'json');
+    assert_eq(Key::sign(v.provider_secret, <Network>.CONTEXT + 'receipt', rec.message), v.receipt_signature);
+}
+
+#[test]
+fn vector_envelopes_open() {
+    const v = self.Vectors;
+    // the provider opens the consumer's voucher (not current: these are from a fixed time)
+    using provider = new Network { key: v.provider_public };
+    using msg = new {};
+    provider.open(v.voucher_envelope, 'voucher', msg, v.consumer_public, null, false);
+    assert_eq(msg.body.plan, 'agent');
+    assert_eq(msg.body.terms, v.terms_digest, 'the voucher agrees to the terms by their digest');
+    assert(<TestNetwork>.refused(() => provider.open(v.voucher_envelope, 'voucher', msg, v.consumer_public)).contains('expired'), 'its time has passed');
+
+    // the consumer opens the receipt, and it binds the response body
+    using consumer = new Network { key: v.consumer_public };
+    using r = new {};
+    consumer.open(v.receipt_envelope, 'receipt', r, v.provider_public, null, false);
+    assert_eq(r.body.body, <Network>.text_digest(v.response_body));
+    assert_eq(r.body.cost, 0.01);
+
+    // one byte changed: the signature doesn't check out
+    using t = new {};
+    assert(<TestNetwork>.refused(() => consumer.open(v.receipt_envelope.replace('0.01', '0.02'), 'receipt', t, v.provider_public, null, false)).contains('signature'));
+}

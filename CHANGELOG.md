@@ -19,7 +19,7 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   `network.request_timeout` and `network.max_response`), runs in the policy: an SDK in any language only holds the
   key, allows the hosts, and converts requests. Digests are plain SHA-256 of text (the terms travel as JSON text, so
   a voucher agrees to their exact bytes). URLs must be https (http only to localhost); peers check versions; every
-  wire name derives from one constant (`limitr-network`). 71 tests in `src/network/tests/`, run by `stof test` with
+  wire name derives from one constant (`limitr-network`). 75 tests in `src/network/tests/`, run by `stof test` with
   the engine's.
 - **Routes and tools.** A provider declares **routes** (`network.provider.routes`: what a request may do; every
   request is checked and metered by its policy, whoever's code made it), and each is a tool on the consumer's side
@@ -71,10 +71,14 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   subject, query, body }`). Consumers `connect(url, plan, spend, expires, { budget, trust, mayCall, max })`, run the
   provider's tools as capabilities (`runCapability`, `claudeTools`), and `trust`, `update`, `cancel`, or read a
   `connection(name)`. Also `budget()`, `identify()`, `list()`, `unlist()`, `discover()`, `rotation()`,
-  `refusal(result)`, `failure(result)`, `checkOperators()`, and `operate(request)` (a policy that is an operator).
+  `refusal(result)`, `failure(result)`, `checkOperators()`, and `operate(request)` (a policy that is an operator);
+  `LimitrNetwork.generateKey()` makes an identity up front.
   Every call sends a `network-receipt` event. `limitr.module(name, bytes)` is the general way to add a sealed module
   to a policy (Cloud documents get the same modules).
-- **Demo:** `typescript/demos/network/` (a weather service and an agent that buys forecasts from it, two processes).
+- **Demo, docs, and a tutorial track:** `typescript/demos/network/` (a weather service and an agent that buys
+  forecasts from it, two processes); `src/network/README.md`; `src/network/PROTOCOL.md`, the wire format with test
+  vectors (checked by `src/network/tests/vectors.stof`); `typescript/tutorial/network/`, seven chapters; and a
+  `limitr-network` skill.
 - **Customer expiry.** `Customer.expires` (ms), set with `set_customer_expires(id, expires)` (TypeScript
   `setCustomerExpires`): from then on the customer has no entitlements, so `allow()` and `check()` refuse. Its
   meters, grants, and caps are kept, and a later time (or null, never) gives its access back. For trials, temporary

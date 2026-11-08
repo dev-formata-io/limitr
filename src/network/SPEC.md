@@ -7,8 +7,9 @@ tests), routes and tools (the provider's own Stof, run sealed and confined on th
 operators (the state, identity, and discovery roles, strict and bounded state, budgets, key rotation, and a reference
 operator), identity on both sides, metering by a cap per request with receipts after the work, terms in runes, the
 TypeScript SDK (`limitr.network()`, `typescript/network.ts`, with operator channels), and the demo
-(`typescript/demos/network/`). 71 tests in `src/network/tests/`. Next: the README, the protocol document with test
-vectors, a tutorial, and the limitr-network skill; then the Cloud operator.
+(`typescript/demos/network/`). 75 tests in `src/network/tests/`. Docs: `README.md`, the wire format with test vectors
+(`PROTOCOL.md`), a tutorial track (`typescript/tutorial/network/`), and the `limitr-network` skill. Next: the Cloud
+operator.
 
 ## What it is
 
@@ -487,7 +488,8 @@ The Network is the first Limitr module, and the pattern for the ones after it (o
 - **SDK (TS first):** `await limitr.network({ secretKey, keyStore, name, channels })` returns the handle (`handle`,
   `connect`, `trust`, `update`, `cancel`, `revoked`, `connection`, `manifest`, `revoke`, `sweep`, `budget`,
   `budgetInfo`, `identify`, `list`, `unlist`, `discover`, `rotation`, `refusal`, `failure`, `checkOperators`,
-  `operate`), each a passthrough to the module's entry points. All HTTP is the policy's
+  `operate`), each a passthrough to the module's entry points; `LimitrNetwork.generateKey()` makes a key pair up
+  front. All HTTP is the policy's
   `Http::fetch` (requests from the confined link); connecting lets the policy reach that provider's host, and
   loading lets it reach its operators.
 
@@ -679,7 +681,7 @@ one budget.
    `max`, requests queued by voucher, receipts after the work: **done**); the provider's rune and exchange-priced terms (**done**); the
    operator transport hook (**done**); the role contracts (identity and discovery **built**, revoke and payment as contracts: **done**); operator keys (**done**).
 5. Docs and skills: `src/network/README.md`, a protocol document with test vectors (`PROTOCOL.md`), a tutorial
-   track (`typescript/tutorial/network/`), and a `limitr-network` skill; a limitr.dev section.
+   track (`typescript/tutorial/network/`), and a `limitr-network` skill (**done**); a limitr.dev section.
 6. Then: Limitr Cloud as the first official operator (a preset that fills in its URL, key, and roles), serving every
    role, with the engine-side clients for revoke, identity, payment, and discovery built alongside it.
 

@@ -15,7 +15,7 @@ node demos/network/consumer.ts             # terminal 2: the agent
 
 What happens:
 
-1. **The agent connects.** It reads the service's manifest (its plans, prices, and endpoints, signed), signs a
+1. **The agent connects.** It reads the service's manifest (its plans, prices, and routes, signed), signs a
    voucher for up to 3 cents for an hour, and gets the service's grant. The service now has a customer for that
    voucher, with the 3 cents as a cap.
 2. **The route is a tool.** `acme_weather_forecast` shows up in `claudeTools()`, ready to pass to Claude.

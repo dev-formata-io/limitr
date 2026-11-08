@@ -2,7 +2,7 @@
   "name": "limitr",
   "displayName": "Limitr",
   "version": "0.8.4",
-  "description": "Design, write, and debug Limitr pricing policies (credits, plans, limits, caps, grants, feature flags, overhead costs) and integrate the in-process Limitr engine into TypeScript and JavaScript apps.",
+  "description": "Design, write, and debug Limitr pricing policies (credits, plans, limits, caps, grants, feature flags, overhead costs) and integrate the in-process Limitr engine into TypeScript and JavaScript apps, including Limitr Network services that agents pay for with signed vouchers.",
   "author": {
     "name": "Formata, Inc.",
     "email": "info@limitr.dev",

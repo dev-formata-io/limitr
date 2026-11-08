@@ -30,5 +30,8 @@ Limitr runs the same way in the browser.
 14. [The language underneath: Stof](14-stof.md): reading a policy from your app, and asking it questions
 15. [Feature flags and custom deals](15-feature-flags.md): rollouts, kill switches, and giving or taking features per customer
 
+A second track, [Limitr Network](network/README.md), covers services that sell to agents and to each other, paid
+with signed vouchers instead of API keys.
+
 The policy reference, every engine function, and every event are in the [Limitr skill](../../skill/limitr), which
 is written for people and AI coding agents alike.

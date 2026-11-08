@@ -20,7 +20,7 @@
 // Responses into the module's NetworkRequest and NetworkResponse maps.
 //
 
-import { StofDoc } from "@formata/stof";
+import { StofDoc, initStof } from "@formata/stof";
 import type { Limitr } from "./main.js";
 
 
@@ -209,6 +209,17 @@ export class LimitrNetwork {
 
     constructor(private limitr: Limitr, private secretKey: string, private channels: Record<string, LimitrNetworkChannel> = {}) {
         this.publicKey = StofDoc.publicKey(secretKey);
+    }
+
+
+    /**
+     * A new identity (an Ed25519 key pair): its secret key, to keep in your secrets store and pass to
+     * `limitr.network({ secretKey })`, and its public key, which others know it by (Ex. an operator that identifies it).
+     */
+    static async generateKey(): Promise<{ secretKey: string, publicKey: string }> {
+        await initStof();
+        const secretKey = StofDoc.generateKey();
+        return { secretKey, publicKey: StofDoc.publicKey(secretKey) };
     }
 
 

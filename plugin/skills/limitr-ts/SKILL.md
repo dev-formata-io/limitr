@@ -4,7 +4,7 @@ description: >
   Use Limitr from TypeScript or JavaScript with the @formata/limitr package: create the engine, load policies and
   customers, gate calls with allow/check, feature flags and rollouts, give or take a customer's features, reserve
   and settle LLM calls, predict output tokens before a call, handle events, persist customer state, and connect to
-  Limitr Cloud. Use for code that imports @formata/limitr or calls
+  Limitr Cloud, and load the Limitr Network module (limitr.network(), see the limitr-network skill). Use for code that imports @formata/limitr or calls
   Limitr.new / Limitr.cloud, and for integrating usage limits, credits, or pricing into a Node, Deno, Bun, or browser
   app. Load the limitr skill for policy semantics and the stof skill for Stof syntax.
 ---
@@ -318,6 +318,13 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   lead to (its team and org, any depth), and `ensureCustomer` creates it only when Cloud doesn't have it (loading its
   refs from Cloud first, so a new user is on its org's plan).
 - Call `await limitr.close()` on shutdown to flush pending updates.
+
+## Limitr Network
+
+`await limitr.network({ secretKey, name, channels })` loads the Network module and gives the policy an identity: sell
+routes to agents with `network.handle(request, work)`, or buy them with `network.connect(url, plan, spend, expires)`
+and run them as capabilities. `limitr.module(name, bytes, setup?)` is the general way to add a sealed module. The
+**limitr-network** skill covers it all.
 
 ## Common mistakes
 

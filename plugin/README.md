@@ -4,10 +4,11 @@ Limitr is an open-source engine for usage-based pricing. One policy decides what
 
 ## What it adds
 
-Three skills that work together:
+Four skills that work together:
 
 - `limitr`: writing, reviewing, and debugging Limitr policies. Credits, plans, entitlements, limits, caps, grants, topups, overhead costs, reservations, usage estimates, feature flags, and notifications, plus `allow`, `check`, `reserve`, and `settle` semantics, events, and margin questions. Its `references/` folder covers the policy format, the engine API, events, and common patterns.
 - `limitr-ts`: using Limitr from TypeScript or JavaScript with the `@formata/limitr` package. Creating the engine, loading policies and customers, gating calls, reserving and settling LLM calls, predicting output tokens before a call, handling events, persisting customer state, and connecting to Limitr Cloud.
+- `limitr-network`: Limitr Network, services that sell to agents and to each other with signed vouchers instead of API keys. Providers, routes, consumers, receipts, operators (state, budgets, identity, discovery), and the `limitr.network()` API.
 - `stof`: the Stof language. Limitr policies are Stof documents, so Claude uses this skill for policy syntax. It is the same skill as the standalone Stof plugin.
 
 ## Install
@@ -26,6 +27,7 @@ Ask Claude things like:
 - "Gate this OpenAI call with Limitr and settle the real token count after it returns."
 - "Why does `allow` return false for this customer?"
 - "Add a feature flag that rolls out to 10% of customers on the pro plan."
+- "Sell this API to agents on Limitr Network, a cent per call."
 
 ## Data
 

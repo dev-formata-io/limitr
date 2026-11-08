@@ -20,8 +20,8 @@
     ],
     "scripts": {
         "build": "tsc",
-        "skills": "rimraf skill/limitr skill/stof && cpy . ../../typescript/skill/limitr --cwd=../skill/limitr",
-        "plugin": "rimraf ../plugin/skills && cpy . ../../plugin/skills/limitr --cwd=../skill/limitr && cpy . ../../../plugin/skills/limitr-ts --cwd=skill/limitr-ts && cpy . ../../../../../../plugin/skills/stof --cwd=node_modules/@formata/stof/skill/stof",
+        "skills": "rimraf skill/limitr skill/limitr-network skill/stof && cpy . ../../typescript/skill/limitr --cwd=../skill/limitr && cpy . ../../typescript/skill/limitr-network --cwd=../skill/limitr-network",
+        "plugin": "rimraf ../plugin/skills && cpy . ../../plugin/skills/limitr --cwd=../skill/limitr && cpy . ../../plugin/skills/limitr-network --cwd=../skill/limitr-network && cpy . ../../../plugin/skills/limitr-ts --cwd=skill/limitr-ts && cpy . ../../../../../../plugin/skills/stof --cwd=node_modules/@formata/stof/skill/stof",
         "readme": "cpy README.md LICENSE typescript --cwd=..",
         "prepublishOnly": "npm run skills && npm run plugin && npm run readme && npm run build",
         "clean": "rimraf dist"

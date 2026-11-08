@@ -21,3 +21,4 @@ import './protocol' as TestNetworkProtocol;
 import './operator' as TestNetworkOperator;
 import './tools' as TestNetworkTools;
 import './metering' as TestNetworkMetering;
+import './vectors' as TestNetworkVectors;
