@@ -15,16 +15,19 @@
 </h1>
 
 <p align="center">
-    <b>Limits, credits, and billing, inside your AI product.</b>
+    <b>Usage and margin control for AI products.</b>
     <br>
-    An open-source engine that decides, on every call, what each customer can do, what it costs you, and what to bill. You build on it: your rules, your UI, your coding agent. Limitr Cloud keeps every plan, price, and contract live, with no release.
+    Own the logic like you wrote it. Change prices, limits, and contracts for users and agents as easily as a git commit. An open-source engine decides every call in your app: what each customer can do, what it costs you, and what to bill.
 </p>
 
-Limitr is an open-source engine for usage control and billing. It meters usage (AI tokens by model, API calls,
-agent runs, seats, anything you count), enforces plans and limits, prices every call at what it costs you and what you
-charge, and tells your code what to bill. It's a library, not a service: it runs in your process, in Node, Bun, Deno,
-or the browser, so there's nothing to deploy or self-host and no network call in the middle of a request. It's built
-for usage that doesn't follow the plan, which is most AI usage.
+Limitr is usage and margin control for AI products. The engine meters usage (AI tokens by model, API calls, agent
+runs, seats, anything you count), enforces plans and limits, prices every call at what it costs you and what you
+charge, and tells your code what to bill. It's a library, not a service: it runs natively in your process, in about a
+millisecond, with nothing to deploy and no network call in the middle of a request. It's built on
+[Stof](https://stof.dev) (Rust and WebAssembly), so it runs in practically any language; the first SDK is
+TypeScript/JavaScript (Node, Bun, Deno, and the browser), and more are on the way, so
+[tell us yours](https://github.com/dev-formata-io/limitr/issues). It's built for usage that doesn't follow the plan,
+which is most AI usage.
 
 ## Quick start
 
@@ -68,7 +71,7 @@ That's a plan with a monthly AI token allowance, overage billed past it, and mar
 [tutorial](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial) builds on it in 15 short,
 runnable chapters.
 
-## Billing you own, not billing that owns you
+## Own the logic, like you wrote it
 
 Pricing never sits still. Costs, usage, and deals change every month, and every change lands on your code and the
 customers you already have. Most billing platforms are fast to start, and put your pricing in their system: usage is
@@ -77,13 +80,15 @@ and costs engineering time on every plan and every deal.
 
 Limitr is the control without the build. The engine is yours, like your code:
 
-- **Inside your app.** Every check runs in your process, before the work runs, with no network call.
+- **Pricing like a git commit.** Plans, prices, costs, limits, and every customer's deal live in one versioned policy.
+  Change it, diff it, review it, ship it, and roll it back, from your repo or from Limitr Cloud with no release.
+- **Never rip it out.** A new pricing model, product, or business model is a policy change, not a migration. Your own
+  pricing functions, feature conditions, rules, and tools run in the policy, written in [Stof](https://stof.dev), and
+  any built-in rule can be overridden, so it bends to your business as it changes.
+- **Inside your app.** Every check runs natively in your process, before the work runs, with no network call.
 - **Priced across the task, not one call at a time.** One task is dozens of calls across models, tools, and vendors.
   The engine sees every one with the customer, their plan, and what the task has cost so far, so it prices and limits
   the whole task as it runs.
-- **Shaped to your business.** Plans, prices, costs, limits, and every customer's deal in one policy document.
-- **Extends like code.** Your own pricing functions, feature conditions, rules, and tools run in the policy, written
-  in [Stof](https://stof.dev).
 - **Safe in your process.** A policy runs sandboxed: no files or environment, no network unless it's allowed (and
   never your private network unless you list it), and time and memory limits on every call. The engine is sealed
   when it loads, so a policy can build on it but can't change it.
@@ -100,23 +105,31 @@ Limitr is the control without the build. The engine is yours, like your code:
 - **Custom deals and contracts:** give one customer a feature their plan doesn't have, take one away, or change
   their limits, with expiry, without a new plan for each deal. For a deal many customers sign, write it once as a
   rule in the policy and assign it to each of them (below).
-- **Customers that belong together:** refs put a user in a team and a team in an org, any way you model it. A user
-  with no plan of its own is on its org's plan, with the org's deals, seats, and shared budgets.
+- **Customers of any kind:** a customer is anything you want limits and entitlements around: a user, a team, an
+  org, an API key, or an agent. Refs put a user in a team and a team in an org, any way you model it, and a user with
+  no plan of its own is on its org's plan, with the org's deals, seats, and shared budgets.
+- **Allowances inside your own company:** internal AI tools where each department gets its own allowance and each
+  employee a cap inside it, or a tool you built for yourself and a few friends with a cap per person.
 - **Prepaid credits:** credit packs with expiry, resets, and rollover, spent across features at their own rates.
 - **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.
 - **Billing events:** overage, limits hit, and thresholds crossed, sent to your code as they happen.
-- **Services agents can buy:** sell your API to agents and other services with Limitr Network (below), metered by
-  the same policy.
+- **Private networks of agents:** your agents, your customers' agents, and your partners' use each other's
+  services with Limitr Network (below), each on a budget, metered by the same policy.
 
-## Limitr Network: services agents pay for
+## Limitr Network: private networks for your agents
 
-An agent that needs a forecast, a search, or a translation usually needs an account and an API key first. With
-Limitr Network, a service publishes its plans and routes from its Limitr policy, and an agent (or any app or
-service with a policy) signs a **voucher**: up to this much, on this plan, until then. The service meters it like any
-customer, with the voucher's spend as a hard cap; the agent gets the service's routes as tools; and every request and
-receipt is signed, so both sides hold the same record. No keys exchanged, no integration work. Optional operators
-(Limitr Cloud is one, set up for you on a `Limitr.cloud()` engine, and anyone can run one) add shared state across
-servers, budgets across services, identities, and discovery. It's the Limitr Network Protocol (LNP): start with
+In any agent network, billed or not, control is the hard part: what each agent may spend, who it can reach, and how to
+stop it. With Limitr Network, a service publishes its plans and routes from its Limitr policy, and an agent (or any
+app or service with a policy) signs a **voucher**: up to this much, on this plan, until then. The service meters it
+like any customer, with the voucher's spend as a hard cap; the agent gets the service's routes as tools; and every
+request and receipt is signed, so both sides hold the same record. Either side can revoke a voucher at any time. No
+keys exchanged, no integration work, and nothing billed unless the service prices its calls.
+
+Start private: your own agents and services, your customers' agents, or a set of partners, each with one budget across
+every service it uses. Optional operators (Limitr Cloud is one, set up for you on a `Limitr.cloud()` engine, and
+anyone can run one) add shared state across servers, budgets across services, identities, and discovery, with
+listings private to the workspaces you name or public. Network on Limitr Cloud is in early access:
+[join the waitlist](https://limitr.dev/network). It's the Limitr Network Protocol (LNP): start with
 [`src/network`](https://github.com/dev-formata-io/limitr/tree/main/src/network) and the
 [tutorial track](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial/network).
 
@@ -179,7 +192,8 @@ still runs in your process:
   place from the order form, answers questions about customers, usage, and margin with charts and dashboards, and
   shows what a price change would do to real bills before you publish. It works in a draft and proposes the rest:
   nothing is published or changed until you apply it.
-- **Policies** you edit, review, and publish to every running copy of your app, with no deploy, and roll back.
+- **Policies** versioned like code: edit, diff, test a change on real traffic, publish to every running copy of your
+  app with no deploy, and roll back in a click.
 - **Customers** kept for you, with the customers their refs lead to loaded alongside them.
 - **Billing:** ledgers, invoices through your own Stripe, and accounts that bill a customer and everyone under it as
   one invoice.
