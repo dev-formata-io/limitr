@@ -20,7 +20,7 @@
  * A Limitr rule: a named set of changes on top of a plan, for the customers it's assigned to (Customer.rules).
  * It holds the same changes a customer can have of its own, in the same shapes: gives, takes, limit overrides,
  * and caps (plus prices, which Limitr Cloud applies when it invoices). Rules have no customers and no dates of
- * their own: who has a rule, and when, is up to whoever assigns it (Ex. a contract in Limitr Cloud).
+ * their own: who has a rule, and when, is up to whoever assigns it (Ex. Limitr Cloud: a rule's segments, or a contract).
  *
  * For a customer, a customer's own change comes first, then its rules (highest priority first, then in the
  * order the policy writes them), then its plan.

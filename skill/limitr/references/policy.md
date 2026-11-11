@@ -175,7 +175,7 @@ Schedules: `monthly:N` (day N), `monthly:last`, `weekly:mon`, `nth_weekday:N:mon
 | `overrides` | obj! | Entitlement -> `Limit`. |
 | `given` | obj | Entitlement -> `{ plan, expires_on }`: given on top of the plan (`give_entitlement`). Null until the first. |
 | `taken` | obj | Entitlement -> `{ expires_on }`: taken even though the plan has it (`take_entitlement`). Null until the first. |
-| `rules` | list | Rule names that apply (`set_customer_rules`; Cloud sets them from contracts). Unknown names are skipped. Null when none. |
+| `rules` | list | Rule names that apply (`set_customer_rules`; on Limitr Cloud, also from the segments a rule names and from contracts). Unknown names are skipped. Null when none. |
 | `grants` | obj! | Grant ID -> `Grant`. |
 | `caps` | obj! | Cap ID -> `Cap`. |
 | `metadata` | obj | Anything. |

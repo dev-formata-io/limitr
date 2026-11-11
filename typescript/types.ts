@@ -31,7 +31,7 @@ export interface LimitrCustomer {
     given?: Record<string, { plan: string, expires_on: number | null }> | null,
     /** Entitlements taken away, even though the plan has them: entitlement -> { expires_on }. */
     taken?: Record<string, { expires_on: number | null }> | null,
-    /** The policy's rules that apply to this customer, by name (setCustomerRules; Limitr Cloud sets them from contracts). */
+    /** The policy's rules that apply to this customer, by name (setCustomerRules; on Limitr Cloud, also from a rule's segments and from contracts). */
     rules?: string[] | null,
     grants: Record<string, unknown>,
     metadata: Record<string, unknown> | null,

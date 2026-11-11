@@ -285,8 +285,8 @@ feature through a downgrade, pausing one feature):
   `customer-set`.
 
 **Rules** are the same changes for many customers: a named set of gives, takes, limits, and caps in
-`policy.rules`, applied to the customers that have it (`set_customer_rules(id, ['acme_2027'])`; Limitr Cloud sets
-them from contracts). Use one when a deal or program covers more than one customer, so the deal is written once and
+`policy.rules`, applied to the customers that have it (`set_customer_rules(id, ['acme_2027'])`; Limitr Cloud also
+gives them to the segments a rule names, and by contract). Use one when a deal or program covers more than one customer, so the deal is written once and
 versioned with the policy.
 
 ```stof

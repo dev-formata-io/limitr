@@ -146,8 +146,9 @@ const why = await limitr.entitlementSource(userId, 'api'); // { access: 'ref:org
 - Give/take return false for an unknown customer, and give returns false when no plan defines the entitlement.
   Gives and takes are stored on the customer (`given`, `taken`), so persisting customers persists them. An org's
   apply to the users on its plan.
-- `setCustomerRules(id, names)` replaces the customer's rules (an empty list clears them). On Limitr Cloud,
-  contracts set rules: don't set them from the app there.
+- `setCustomerRules(id, names)` replaces the customer's rules (an empty list clears them). On Limitr Cloud, these
+  are the customer's own rules: Cloud keeps them, and adds the ones a rule's segments and the customer's contracts
+  give.
 - Per-customer targeting (a beta list) is customer metadata: `createCustomer(id, plan, type, label, refs, alts,
   { beta: true })` or `setCustomer`, read by the rule as `customer.metadata`.
 - Entitlements with `track: true` send `feature-checked` (`caller.id`, `entitlement`, `enabled`) on every check:
