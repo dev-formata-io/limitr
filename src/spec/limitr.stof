@@ -157,7 +157,7 @@ Limitr: {
      * `overhead` when the host passes the actual cost (Ex. from the provider's response), otherwise the
      * credit's overhead(units, context) cost function, with the event data as context.
      */
-    fn allow(id: str!, entitlement: str!, value: float | str = 0, event: bool | str | obj = true, cap: Cap | map = null, overhead?: float, force: bool = false) -> bool {
+    fn allow(id: str!, entitlement: str!, value: float | str = 0, event: bool | str | obj = true, cap: Cap | map = null, overhead?: float, force: bool = false, detail: bool = false) -> bool | map {
         if (typeof value == 'str') value = value as float; // takes units into consideration too
 
         // event data: an obj, or a Stof/JSON string parsed here (and dropped when allow() returns)
@@ -177,7 +177,9 @@ Limitr: {
 
             // Is the entitlement on for this call (Ex. a rollout)? Only usage is gated: never a forced
             // record of usage that already happened (settle) or a decrement.
-            if ((ent.enabled != null || ent.track == true) && !force && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, event_data)) return false;
+            if ((ent.enabled != null || ent.track == true) && !force && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, event_data)) {
+                return detail ? self.decision(false, 'disabled', id, entitlement, value) : false;
+            }
 
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
@@ -293,7 +295,7 @@ Limitr: {
                         overhead: overhead_base, overhead_diff: call_overhead,
                         price_diff: call_price,
                     } on scratch, scratch, plan, credit, event_data);
-                    return false;
+                    return detail ? self.decision(false, 'cap', id, entitlement, value, self.cap_detail(denied, caller)) : false;
                 }
             }
             if (!force && limit != null && limit.grants_apply) {
@@ -312,7 +314,7 @@ Limitr: {
                         overhead: overhead_base, overhead_diff: call_overhead,
                         price_diff: call_price,
                     } on scratch, scratch, plan, credit, event_data);
-                            return false;
+                            return detail ? self.decision(false, 'cap', id, entitlement, value, self.cap_detail(denied, caller)) : false;
                         }
                     }
                 }
@@ -352,7 +354,7 @@ Limitr: {
                         await notes.handle_event('meter-governed', event_value);
                         await <Event>.send('meter-governed', event_value);
                     }
-                    return false;
+                    return detail ? self.decision(false, 'governor', id, entitlement, value, map(('available', Num::round(existing_meter.governor_tokens, 9)))) : false;
                 }
 
                 // Consume tokens
@@ -554,9 +556,10 @@ Limitr: {
                 }
             }
             await self.send_meter_events(meter_events); // a call that moved no caps (Ex. no credit, or not valid)
+            if (detail) return self.decision(valid, valid ? null : (own_valid ? 'held' : 'limit'), id, entitlement, value);
             return valid;
         }
-        false
+        detail ? self.decision(false, self.missing_reason(id, entitlement), id, entitlement, value) : false
     }
 
 
@@ -569,7 +572,7 @@ Limitr: {
      * `context` (the event data you'd pass to allow(), as an obj or a Stof string) and `overhead`
      * (the call's actual cost in runes) price the call for overhead caps, the same way allow() does.
      */
-    fn check(id: str!, entitlement: str!, value: float | str = 0, cap: Cap | map = null, context: obj | str = null, overhead?: float) -> bool {
+    fn check(id: str!, entitlement: str!, value: float | str = 0, cap: Cap | map = null, context: obj | str = null, overhead?: float, detail: bool = false) -> bool | map {
         if (typeof value == 'str') value = value as float; // takes units into consideration too
 
         // context: an obj, or a Stof/JSON string parsed here (and dropped when check() returns)
@@ -586,7 +589,9 @@ Limitr: {
             const ent = pair[1];
 
             // Is the entitlement on for this call (Ex. a rollout)? Decrements aren't gated.
-            if ((ent.enabled != null || ent.track == true) && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, context)) return false;
+            if ((ent.enabled != null || ent.track == true) && value >= 0 && !self.entitlement_on(customer, id, entitlement, ent, context)) {
+                return detail ? self.decision(false, 'disabled', id, entitlement, value) : false;
+            }
 
             const limit = self.customer_entitlement_limit(customer, entitlement, ent);
 
@@ -644,8 +649,9 @@ Limitr: {
             const ephemeral_caps = cap == null ? [] : customer.caps_from_arg(cap, scratch);
             const cap_extras = self.shared_caps_for(caller);
             for (const ec in ephemeral_caps) cap_extras.push_back(ec);
-            if (value > 0 && credit_name != null && !caller.check_caps(self, entitlement, credit_name, gate_rate, gate_value, gate_overage, cap_extras, stof_units, true, position)) {
-                return false;
+            if (value > 0 && credit_name != null) {
+                const denied: Cap = caller.denying_cap(self, entitlement, credit_name, gate_rate, gate_value, gate_overage, cap_extras, stof_units, true, position);
+                if (denied != null) return detail ? self.decision(false, 'cap', id, entitlement, value, self.cap_detail(denied, caller)) : false;
             }
             if (limit != null && limit.grants_apply) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
@@ -654,8 +660,9 @@ Limitr: {
                     const diff_overage = max(0, Num::round(gate_overage - remaining, 9));
                     const diff_position = position + (gate_value - diff);
                     const diff_overage_position = billable + max(0, max(0, gate_overage) - diff_overage);
-                    if (diff > 0 && !caller.check_caps(self, entitlement, credit_name, gate_rate, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position)) { // will be overage even in the case of fully used grants
-                        return false;
+                    if (diff > 0) { // will be overage even in the case of fully used grants
+                        const denied: Cap = caller.denying_cap(self, entitlement, credit_name, gate_rate, diff, diff_overage, cap_extras, stof_units, false, diff_position, diff_overage_position);
+                        if (denied != null) return detail ? self.decision(false, 'cap', id, entitlement, value, self.cap_detail(denied, caller)) : false;
                     }
                 }
             }
@@ -666,25 +673,27 @@ Limitr: {
                 const capacity = limit.governor_capacity as float;
                 const available = existing_meter == null || reset_pending ? capacity : existing_meter.governor_available(capacity, limit.governor_refill_rate);
                 if (Num::round(value, 9) > Num::round(available, 9)) {
-                    return false;
+                    return detail ? self.decision(false, 'governor', id, entitlement, value, map(('available', Num::round(available, 9)))) : false;
                 }
             }
 
             // check to see if the new value is valid (bounded by limit)
             let valid = limit != null ? (held_value != 0 ? limit.check(gate_new, meter_value + held_value) : limit.check(new_value, meter_value)) : true;
             if (valid || (limit != null && limit.mode != 'hard')) {
-                return true;
+                return detail ? self.decision(true, null, id, entitlement, value) : true;
             }
 
             // if we have a hard limit, lets check against credit grants to see if we're good
             if (limit != null && limit.mode == 'hard' && limit.grants_apply && gate_overage > 0) {
                 const remaining = customer.remaining_grant_credit(self, limit.credit, billable);
                 if (remaining != null && Num::round(remaining, 9) >= Num::round(gate_overage, 9)) {
-                    return true;
+                    return detail ? self.decision(true, null, id, entitlement, value) : true;
                 }
             }
+            // the call fits on its own when only room held by in-flight calls (reserve()) is in the way
+            return detail ? self.decision(false, limit.check(new_value, meter_value) ? 'held' : 'limit', id, entitlement, value) : false;
         }
-        false
+        detail ? self.decision(false, self.missing_reason(id, entitlement), id, entitlement, value) : false
     }
 
 
@@ -3106,6 +3115,64 @@ Limitr: {
         self.round_event(event_value);
         await notes.handle_event('cap-limit', event_value);
         await <Event>.send('cap-limit', event_value);
+    }
+
+
+    /**
+     * allow() and check() with `detail`: what was decided and why, with where the customer stands now (after the
+     * call for allow(), as things are for check()). `reason` is null when allowed, else one of: 'no_customer',
+     * 'expired', 'not_entitled', 'taken', 'no_scope' (no customer of the entitlement's scope up the refs),
+     * 'disabled' (its `enabled` said no), 'cap', 'governor', 'limit', or 'held' (the call fits, but room held by
+     * reservations doesn't leave enough). `extra` adds reason-specific fields (Ex. the denying cap).
+     */
+    fn decision(allowed: bool, reason?: str, id: str!, entitlement: str!, value: float = 0, extra?: map) -> map {
+        const pair = self.customer_entitlement(id, entitlement);
+        const limit = pair != null ? self.customer_entitlement_limit(pair[0], entitlement, pair[1]) : null;
+        const source = self.entitlement_source(id, entitlement);
+        const out = map(
+            ('allowed', allowed),
+            ('reason', reason),
+            ('customer', pair != null ? pair[0].id : id), // whose meter it is (Ex. the org's for a scoped entitlement)
+            ('entitlement', entitlement),
+            ('value', Num::round(value.remove_units(), 9)),
+            ('credit', limit?.credit),
+            ('mode', limit?.mode),
+            ('used', self.value(id, entitlement)),
+            ('limit', self.limit(id, entitlement)),
+            ('remaining', self.remaining(id, entitlement)),
+            ('allowance', self.allowance(id, entitlement)),
+            ('held', self.held(id, entitlement)),
+            ('resets', self.resets(id, entitlement)),
+            ('access', source != null ? source.get('access') : null),
+            ('limit_source', source != null ? source.get('limit') : null)
+        );
+        if (extra != null) for (const (key, val) in extra) out.insert(key, val);
+        out
+    }
+
+
+    /**
+     * Why a customer has no entitlement for a call (a decision's reason).
+     */
+    fn missing_reason(id: str!, entitlement: str!) -> str {
+        const customer = self.customer(id);
+        if (customer == null) return 'no_customer';
+        if (customer.expires != null && Time::now() >= customer.expires) return 'expired';
+        if (self.entitlement(id, entitlement) != null) return 'no_scope'; // it has the entitlement, but no customer of its scope
+        // taken by the customer's own change or by one of its rules (the decision's `access` says which)
+        let change = null;
+        if (customer.given != null || customer.taken != null) change = customer.entitlement_change(entitlement);
+        if (change == null && customer.rules != null) change = self.changing_rule(customer, entitlement)?.change(entitlement);
+        if (change != null && change[0] == 'taken') return 'taken';
+        'not_entitled'
+    }
+
+
+    /**
+     * A decision's fields for a cap that denied a call: its ID and the customer holding it.
+     */
+    fn cap_detail(cap: Cap!, caller: Customer!) -> map {
+        map(('cap', cap.id), ('cap_customer', (self.cap_holder(cap) ?? caller).id))
     }
 
 

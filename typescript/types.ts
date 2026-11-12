@@ -63,6 +63,64 @@ export interface LimitrEntitlementSource {
 }
 
 
+/**
+ * Why a call was refused (a decision's `reason`).
+ * - 'no_customer': no such customer (or Limitr Cloud couldn't load it).
+ * - 'unconnected': connected to Limitr Cloud, the connection is down, and the engine denies while unconnected.
+ * - 'expired': the customer's access has ended (setCustomerExpires).
+ * - 'not_entitled': neither its plan, its gives, its rules, nor its refs have the entitlement.
+ * - 'taken': taken from the customer (takeEntitlement) or by one of its rules (`access` says which).
+ * - 'no_scope': the entitlement is scoped to a customer type (Ex. 'org') with none up the customer's refs.
+ * - 'disabled': the entitlement's `enabled` said no for this call (Ex. a rollout or kill switch).
+ * - 'cap': a spend cap has no room (`cap` and `cap_customer` name it).
+ * - 'governor': the rate governor hasn't refilled enough (`available` says how much it has).
+ * - 'limit': a hard limit, with no grants left to cover the rest.
+ * - 'held': the call fits on its own, but room held by reservations (reserve) doesn't leave enough.
+ */
+export type LimitrDecisionReason = 'no_customer' | 'unconnected' | 'expired' | 'not_entitled' | 'taken' | 'no_scope'
+    | 'disabled' | 'cap' | 'governor' | 'limit' | 'held';
+
+
+/**
+ * What allow() or check() decided and why (with `detail`), and where the customer stands: after the call for
+ * allow(), as things are for check(). Values are in the credit's units. Fields that don't apply are null
+ * (Ex. a feature flag has no credit, limit, or remaining).
+ */
+export interface LimitrDecision {
+    allowed: boolean;
+    /** Null when allowed. */
+    reason: LimitrDecisionReason | null;
+    /** Whose meter it is (Ex. the org's for an entitlement scoped to 'org'). */
+    customer: string;
+    entitlement: string;
+    /** The call's value. */
+    value: number;
+    credit: string | null;
+    mode: 'hard' | 'soft' | 'observe' | null;
+    /** Metered this period. */
+    used: number | null;
+    /** The limit, including grants. */
+    limit: number | null;
+    /** limit - used (negative past a soft limit). */
+    remaining: number | null;
+    /** What can be used right now: remaining, or less when a governor allows less. */
+    allowance: number | null;
+    /** Room held by reservations. */
+    held: number;
+    /** When the meter resets (ms timestamp). */
+    resets: number | null;
+    /** Where access comes from (see entitlementSource): 'plan', 'given', 'taken', 'rule:<name>', 'ref:<id>', 'default'. */
+    access: string | null;
+    /** Where the limit comes from: 'override', 'rule:<name>', 'plan', or null. */
+    limit_source: string | null;
+    /** reason 'cap': the cap's ID and the customer holding it. */
+    cap?: string;
+    cap_customer?: string;
+    /** reason 'governor': how much the governor has available. */
+    available?: number;
+}
+
+
 export interface LimitrCap {
     id: string;
     credit: string;

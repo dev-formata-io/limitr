@@ -98,13 +98,22 @@ await limitr.increment(orgId, 'seats');                                       //
 const ok = await limitr.check(userId, 'api', 50);                             // dry run, changes nothing
 ```
 
-`allow(customer, entitlement, value = 0, event = true, overhead?, force = false)`:
+`allow(customer, entitlement, value = 0, event = true, overhead?, force = false, detail = false)` and
+`check(customer, entitlement, value = 0, context?, overhead?, detail = false)`:
 
 - `event`: `true`, `false` (no events), or event data (an object or string). Event data is sent with the events as
   `event_data` and is the context for the credit's `overhead()` cost function (Ex. `{ model, input, output }`).
 - `overhead`: the call's real provider cost in runes (USD by default), when you have it. It overrides the cost
   function.
 - `force`: record usage that already happened, even past a hard limit or cap.
+- `detail`: return a `LimitrDecision` instead of a boolean: `allowed`, `reason` (a `LimitrDecisionReason`, null when
+  allowed), and where the customer stands (`used`, `limit`, `remaining`, `allowance`, `held`, `resets`, `access`,
+  `limit_source`, plus `cap` / `cap_customer` or `available` for those reasons). Tell a user or an agent why:
+
+```ts
+const d = await limitr.check(userId, 'api', 50, undefined, undefined, true);
+if (!d.allowed) return deny(d.reason === 'limit' ? `Monthly limit reached, resets ${new Date(d.resets!)}` : d.reason);
+```
 
 Reads: `value`, `remaining`, `limit`, `allowance`, `cost`, `resets`, `rate`, `acceleration`,
 `projectedExhaustion`, `remainingCredit`, `meterObject`, `limitObject`, `entitlement`, `plan`, `credit`,

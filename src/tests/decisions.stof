@@ -1,0 +1,240 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Decision tests: allow() and check() with `detail = true`.
+//
+// By default both return a bool. With `detail` they return a map saying what was decided and why: `allowed`,
+// `reason` (null when allowed), whose meter it is, the call's value, and where the customer stands after the call
+// (allow) or as things are (check): used, limit, remaining, allowance, held, resets, access, and limit_source.
+// Each way a call can be refused has its own reason, and some add fields (Ex. the denying cap).
+//
+Limitr TestDecisionsPolicy: {
+    credits: {
+        req: { label: 'Request' }
+        tok: { price: { amount: 1 } } // 1 tok = $1, so a $5 cap is 5 tok
+    }
+
+    plans: {
+        p: {
+            default: true
+            entitlements: {
+                api: { limit: { credit: 'req', mode: 'hard', value: 10 } }
+                soft: { limit: { credit: 'req', mode: 'soft', value: 5 } }
+                spend: { limit: { credit: 'tok', mode: 'soft', value: 0 } }
+                flag: {}
+                killed: { enabled: false }
+                burst: {
+                    limit: {
+                        credit: 'req', mode: 'hard', value: 1000
+                        governor_enabled: true, governor_capacity: 3, governor_refill_rate: 0.000001
+                    }
+                }
+                pool: { scope: 'org', limit: { credit: 'req', mode: 'hard', value: 100 } }
+            }
+        }
+    }
+
+
+    #[test]
+    /**
+     * Without `detail`, allow() and check() still return a bool.
+     */
+    fn test_default_is_bool() {
+        self.create_customer('dec_bool', 'p');
+        assert_eq(typeof self.check('dec_bool', 'api', 1), 'bool');
+        assert_eq(typeof self.allow('dec_bool', 'api', 1, false), 'bool');
+        assert_eq(typeof self.check('nobody', 'api', 1), 'bool');
+        assert_eq(typeof self.allow('nobody', 'api', 1, false), 'bool');
+    }
+
+
+    #[test]
+    /**
+     * An allowed call: allow() reports where the customer stands after it, check() as things are.
+     */
+    fn test_allowed() {
+        const id = 'dec_ok';
+        self.create_customer(id, 'p');
+
+        const checked: map = self.check(id, 'api', 4, detail = true);
+        assert(checked.get('allowed'));
+        assert_null(checked.get('reason'));
+        assert_eq(checked.get('used'), 0);                 // check() counts nothing
+
+        const d: map = self.allow(id, 'api', 4, false, detail = true);
+        assert(d.get('allowed'));
+        assert_null(d.get('reason'));
+        assert_eq(d.get('customer'), id);
+        assert_eq(d.get('entitlement'), 'api');
+        assert_eq(d.get('value'), 4);
+        assert_eq(d.get('credit'), 'req');
+        assert_eq(d.get('mode'), 'hard');
+        assert_eq(d.get('used'), 4);
+        assert_eq(d.get('limit'), 10);
+        assert_eq(d.get('remaining'), 6);
+        assert_eq(d.get('allowance'), 6);
+        assert_eq(d.get('held'), 0);
+        assert_eq(d.get('access'), 'plan');
+        assert_eq(d.get('limit_source'), 'plan');
+        assert_eq(self.value(id, 'api'), 4);
+    }
+
+
+    #[test]
+    /**
+     * A feature flag (no limit) is allowed with no credit, mode, or limit to report.
+     */
+    fn test_flag() {
+        const id = 'dec_flag';
+        self.create_customer(id, 'p');
+        const d: map = self.check(id, 'flag', detail = true);
+        assert(d.get('allowed'));
+        assert_null(d.get('credit'));
+        assert_null(d.get('limit'));
+        assert_null(d.get('limit_source'));
+    }
+
+
+    #[test]
+    /**
+     * A hard limit refuses with 'limit' and changes nothing. A soft limit allows past it.
+     */
+    fn test_limit() {
+        const id = 'dec_limit';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'api', 8, false));
+
+        const checked: map = self.check(id, 'api', 5, detail = true);
+        assert_not(checked.get('allowed'));
+        assert_eq(checked.get('reason'), 'limit');
+
+        const d: map = self.allow(id, 'api', 5, false, detail = true);
+        assert_not(d.get('allowed'));
+        assert_eq(d.get('reason'), 'limit');
+        assert_eq(d.get('used'), 8);
+        assert_eq(d.get('remaining'), 2);
+        assert_eq(self.value(id, 'api'), 8);
+
+        const soft: map = self.allow(id, 'soft', 7, false, detail = true);
+        assert(soft.get('allowed'));
+        assert_eq(soft.get('mode'), 'soft');
+        assert_eq(soft.get('remaining'), -2);              // past the limit (billed as overage)
+    }
+
+
+    #[test]
+    /**
+     * A call that fits on its own, but not with room held by a reservation, is refused with 'held'.
+     */
+    fn test_held() {
+        const id = 'dec_held';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'api', 7);
+        assert(hold != null);
+
+        const checked: map = self.check(id, 'api', 5, detail = true);
+        assert_eq(checked.get('reason'), 'held');
+        assert_eq(checked.get('held'), 7);
+
+        const d: map = self.allow(id, 'api', 5, false, detail = true);
+        assert_eq(d.get('reason'), 'held');
+        assert_eq(self.value(id, 'api'), 0);
+
+        assert(self.release(id, 'api', hold));
+        assert(self.allow(id, 'api', 5, false, detail = true).get('allowed'));
+    }
+
+
+    #[test]
+    /**
+     * A cap without room refuses with 'cap', naming the cap and the customer holding it.
+     */
+    fn test_cap() {
+        const id = 'dec_cap';
+        self.create_customer(id, 'p');
+        assert(self.add_customer_cap(id, 5, 'budget', events = false));
+
+        const checked: map = self.check(id, 'spend', 6, detail = true);
+        assert_eq(checked.get('reason'), 'cap');
+        assert_eq(checked.get('cap'), 'budget');
+        assert_eq(checked.get('cap_customer'), id);
+
+        const d: map = self.allow(id, 'spend', 6, false, detail = true);
+        assert_not(d.get('allowed'));
+        assert_eq(d.get('reason'), 'cap');
+        assert_eq(d.get('cap'), 'budget');
+        assert_eq(self.value(id, 'spend'), 0);
+
+        assert(self.allow(id, 'spend', 5, false, detail = true).get('allowed'));
+    }
+
+
+    #[test]
+    /**
+     * A governor without enough tokens refuses with 'governor' and says how many are available.
+     */
+    fn test_governor() {
+        const id = 'dec_gov';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'burst', 2, false));
+
+        const checked: map = self.check(id, 'burst', 2, detail = true);
+        assert_eq(checked.get('reason'), 'governor');
+        assert(checked.get('available') < 2);
+
+        const d: map = self.allow(id, 'burst', 2, false, detail = true);
+        assert_eq(d.get('reason'), 'governor');
+        assert(d.get('available') < 2);
+        assert_eq(self.value(id, 'burst'), 2);
+    }
+
+
+    #[test]
+    /**
+     * An entitlement whose `enabled` says no is refused with 'disabled'.
+     */
+    fn test_disabled() {
+        const id = 'dec_off';
+        self.create_customer(id, 'p');
+        assert_eq(self.check(id, 'killed', detail = true).get('reason'), 'disabled');
+        assert_eq(self.allow(id, 'killed', 1, false, detail = true).get('reason'), 'disabled');
+    }
+
+
+    #[test]
+    /**
+     * Each way of having no entitlement has its own reason.
+     */
+    fn test_missing() {
+        assert_eq(self.check('dec_nobody', 'api', 1, detail = true).get('reason'), 'no_customer');
+        assert_eq(self.allow('dec_nobody', 'api', 1, false, detail = true).get('reason'), 'no_customer');
+
+        self.create_customer('dec_none', 'p');
+        assert_eq(self.check('dec_none', 'teleport', detail = true).get('reason'), 'not_entitled');
+        assert_eq(self.check('dec_none', 'pool', 1, detail = true).get('reason'), 'no_scope'); // no org up its refs
+
+        self.create_customer('dec_taken', 'p');
+        assert(self.take_entitlement('dec_taken', 'flag'));
+        const taken: map = self.check('dec_taken', 'flag', detail = true);
+        assert_eq(taken.get('reason'), 'taken');
+        assert_eq(taken.get('access'), 'taken');
+
+        self.create_customer('dec_expired', 'p');
+        assert(self.set_customer_expires('dec_expired', Time::now() - 1ms, false));
+        assert_eq(self.allow('dec_expired', 'api', 1, false, detail = true).get('reason'), 'expired');
+    }
+}

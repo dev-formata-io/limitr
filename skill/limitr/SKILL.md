@@ -131,8 +131,8 @@ entitlement, limit, topup, and exchange pair, sorts and checks tiers, and fills 
 ## Metering: allow and check
 
 ```stof
-policy.allow(customer_id, entitlement, value = 0, event = true, cap = null, overhead?, force = false) -> bool
-policy.check(customer_id, entitlement, value = 0, cap = null, context = null, overhead?) -> bool
+policy.allow(customer_id, entitlement, value = 0, event = true, cap = null, overhead?, force = false, detail = false) -> bool | map
+policy.check(customer_id, entitlement, value = 0, cap = null, context = null, overhead?, detail = false) -> bool | map
 ```
 
 - `allow` decides and, when allowed, meters: the meter moves by `value` and events fire. `check` makes the same
@@ -147,6 +147,12 @@ policy.check(customer_id, entitlement, value = 0, cap = null, context = null, ov
   the customer's standing caps.
 - `overhead`: the call's actual provider cost in runes, when you know it. Skips the credit's cost function.
 - `force`: record usage that already happened (past a hard limit or cap). Used by `settle`.
+- `detail`: return a map instead of a bool, saying why: `allowed`, `reason` (null when allowed, else `no_customer`,
+  `expired`, `not_entitled`, `taken`, `no_scope`, `disabled`, `cap`, `governor`, `limit`, or `held`), `customer`
+  (whose meter), `entitlement`, `value`, `credit`, `mode`, `used`, `limit`, `remaining`, `allowance`, `held`,
+  `resets`, `access`, `limit_source`, plus `cap` and `cap_customer` (reason `cap`) or `available` (reason
+  `governor`). Readings are after the call for `allow`, current for `check`. Ex.
+  `policy.check(id, 'api', 5, detail = true).get('reason')`. Use it to tell a user or an agent why a call was refused.
 
 What decides a call, in order (nothing changes until every gate passes):
 

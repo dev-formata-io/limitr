@@ -4,6 +4,22 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## Unreleased
+
+### Added
+
+- **Decision details on `allow()` and `check()`.** A new last parameter, `detail = false`: with it, both return a map
+  instead of a bool, saying what was decided and why. `reason` is null when allowed, else one of `no_customer`,
+  `expired`, `not_entitled`, `taken`, `no_scope`, `disabled`, `cap`, `governor`, `limit`, or `held`, so every way a
+  call can be refused is told apart. The map also has whose meter it is, the call's value, and where the customer
+  stands (after the call for `allow()`, as things are for `check()`): `used`, `limit`, `remaining`, `allowance`,
+  `held`, `resets`, `access`, and `limit_source`, plus `cap` and `cap_customer` for a cap, and `available` for a
+  governor. Without `detail` nothing changes: both still return a bool, and the hot path only adds a branch.
+  9 tests in `src/tests/decisions.stof`.
+- **TypeScript:** `allow(..., force, detail)` and `check(..., overhead, detail)` overloads return a typed
+  `LimitrDecision` (with `LimitrDecisionReason`) when `detail` is true. A call the Cloud connection check refuses
+  reports `unconnected` or `no_customer`.
+
 ## 0.8.5
 
 ### Added

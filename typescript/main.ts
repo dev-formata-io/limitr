@@ -18,7 +18,7 @@ import { StofDoc, initStof, isStofInitialized } from "@formata/stof";
 import { limitrEngine, limitrNetwork } from "./limitr.js";
 import { LimitrGate, waitOnOpen } from "./gate.js";
 import { LimitrNetwork, LimitrNetworkChannel, LimitrNetworkInit } from "./network.js";
-import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrEntitlementSource, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
+import { LimitrCustomer, LimitrCap, LimitrCapOptions, LimitrDecision, LimitrEntitlementSource, LimitrEstimate, LimitrEstimateOptions, LimitrObserveOptions, LimitrReserveOptions } from "./types.js";
 export * from './types.js';
 export * from './network.js';
 
@@ -52,6 +52,15 @@ const CLOUD_HELLO_MS = 3000;
 const METER_PENDING_MS = 5 * 60 * 1000;
 /** The most customers a customer's refs load from Cloud with it (its teams and orgs, at any depth). */
 const MAX_CLOUD_REFS = 64;
+
+/**
+ * A decision map from the engine (allow/check with `detail`) as a plain object.
+ */
+function toDecision(res: unknown): LimitrDecision {
+    const entries = res instanceof Map ? Object.fromEntries(res) : (res as Record<string, unknown>);
+    return entries as unknown as LimitrDecision;
+}
+
 
 /**
  * A random ID (32 hex characters), for telling instances and requests apart (never for security). Uses
@@ -1355,13 +1364,16 @@ export class Limitr {
      *
      * `force` records usage that already happened, even past a hard limit or cap (see also reserve/settle).
      */
-    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean | string | Record<string, unknown> = true, overhead?: number, force: boolean = false): Promise<boolean> {
-        if (!await this.cloudPreCheckContinue(customer)) return false;
+    async allow(customer: string, entitlement: string, value?: number | string, event?: boolean | string | Record<string, unknown>, overhead?: number, force?: boolean, detail?: false): Promise<boolean>;
+    async allow(customer: string, entitlement: string, value: number | string, event: boolean | string | Record<string, unknown>, overhead: number | undefined, force: boolean, detail: true): Promise<LimitrDecision>;
+    async allow(customer: string, entitlement: string, value: number | string = 0, event: boolean | string | Record<string, unknown> = true, overhead?: number, force: boolean = false, detail: boolean = false): Promise<boolean | LimitrDecision> {
+        if (!await this.cloudPreCheckContinue(customer)) return detail ? this.precheckDecision(customer, entitlement, value) : false;
         let ev: string | boolean = true;
         if (typeof event === 'string') ev = event;
         else if (typeof event === 'boolean') ev = event;
         else ev = JSON.stringify(event);
-        return await this.gate.run(() => this.doc.call('policy.allow', customer, entitlement, value, ev, null, overhead ?? null, force)) as boolean;
+        const res = await this.gate.run(() => this.doc.call('policy.allow', customer, entitlement, value, ev, null, overhead ?? null, force, detail));
+        return detail ? toDecision(res) : res as boolean;
     }
 
 
@@ -1391,10 +1403,13 @@ export class Limitr {
      * Can use a string value for units (must be a valid stof number) (ex. '3GiB' or '5s').
      * `context` (the event you'd pass to allow) and `overhead` (actual cost) price the call for overhead caps.
      */
-    async check(customer: string, entitlement: string, value: number | string = 0, context?: string | Record<string, unknown>, overhead?: number): Promise<boolean> {
-        if (!await this.cloudPreCheckContinue(customer)) return false;
+    async check(customer: string, entitlement: string, value?: number | string, context?: string | Record<string, unknown>, overhead?: number, detail?: false): Promise<boolean>;
+    async check(customer: string, entitlement: string, value: number | string, context: string | Record<string, unknown> | undefined, overhead: number | undefined, detail: true): Promise<LimitrDecision>;
+    async check(customer: string, entitlement: string, value: number | string = 0, context?: string | Record<string, unknown>, overhead?: number, detail: boolean = false): Promise<boolean | LimitrDecision> {
+        if (!await this.cloudPreCheckContinue(customer)) return detail ? this.precheckDecision(customer, entitlement, value) : false;
         const ctx = context === undefined ? null : (typeof context === 'string' ? context : JSON.stringify(context));
-        return await this.gate.run(() => this.doc.call('policy.check', customer, entitlement, value, null, ctx, overhead ?? null)) as boolean;
+        const res = await this.gate.run(() => this.doc.call('policy.check', customer, entitlement, value, null, ctx, overhead ?? null, detail));
+        return detail ? toDecision(res) : res as boolean;
     }
 
 
@@ -1697,6 +1712,21 @@ export class Limitr {
     /**
      * Cloud pre-check.
      */
+    /**
+     * The decision when cloudPreCheckContinue() refuses a call: the connection is down (and this engine denies
+     * while unconnected), or Limitr Cloud couldn't load the customer.
+     */
+    private precheckDecision(customer: string, entitlement: string, value: number | string): LimitrDecision {
+        const closed = this.ws != null && (this.ws.readyState === WebSocket.CLOSING || this.ws.readyState === WebSocket.CLOSED);
+        return {
+            allowed: false, reason: closed ? 'unconnected' : 'no_customer', customer, entitlement,
+            value: typeof value === 'number' ? value : Number.parseFloat(value) || 0,
+            credit: null, mode: null, used: null, limit: null, remaining: null, allowance: null,
+            held: 0, resets: null, access: null, limit_source: null,
+        };
+    }
+
+
     protected async cloudPreCheckContinue(customer: string): Promise<boolean> {
         if (this.ws) {
             switch (this.ws.readyState) {
