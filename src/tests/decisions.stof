@@ -26,6 +26,7 @@ Limitr TestDecisionsPolicy: {
     credits: {
         req: { label: 'Request' }
         tok: { price: { amount: 1 } } // 1 tok = $1, so a $5 cap is 5 tok
+        mb: { label: 'Megabyte', stof_units: 'MB' }
     }
 
     plans: {
@@ -44,8 +45,14 @@ Limitr TestDecisionsPolicy: {
                     }
                 }
                 pool: { scope: 'org', limit: { credit: 'req', mode: 'hard', value: 100 } }
+                watch: { limit: { credit: 'req', mode: 'observe' } }
+                storage: { limit: { credit: 'mb', mode: 'hard', value: '1000MB' } }
             }
         }
+    }
+
+    rules: {
+        no_flag: { taken: { flag: {} } }
     }
 
 
@@ -236,5 +243,109 @@ Limitr TestDecisionsPolicy: {
         self.create_customer('dec_expired', 'p');
         assert(self.set_customer_expires('dec_expired', Time::now() - 1ms, false));
         assert_eq(self.allow('dec_expired', 'api', 1, false, detail = true).get('reason'), 'expired');
+    }
+
+
+    #[test]
+    /**
+     * An alt ID decides for the customer it points at.
+     */
+    fn test_alt_id() {
+        self.create_customer('dec_alt', 'p');
+        assert(self.set_alt_customer_id('dec_alt', 'dec_alt_x', false));
+        const d: map = self.allow('dec_alt_x', 'api', 1, false, detail = true);
+        assert(d.get('allowed'));
+        assert_eq(d.get('customer'), 'dec_alt');
+        assert_eq(d.get('used'), 1);
+    }
+
+
+    #[test]
+    /**
+     * A scoped entitlement reports the customer whose meter it is (the org) and where access comes from.
+     */
+    fn test_scoped_customer() {
+        self.create_customer('dec_org', 'p', 'org', 'Org');
+        self.create_customer('dec_member', '', 'user', 'User', ['dec_org']);
+        const d: map = self.allow('dec_member', 'pool', 3, false, detail = true);
+        assert(d.get('allowed'));
+        assert_eq(d.get('customer'), 'dec_org');
+        assert_eq(d.get('used'), 3);
+        assert_eq(self.value('dec_org', 'pool'), 3);
+    }
+
+
+    #[test]
+    /**
+     * A customer's own limit (an override) is the limit that decides, and the decision says so.
+     */
+    fn test_override_limit() {
+        const id = 'dec_override';
+        self.create_customer(id, 'p');
+        assert(self.create_customer_override(id, 'api', value = 2) != null);
+        const d: map = self.check(id, 'api', 3, detail = true);
+        assert_eq(d.get('reason'), 'limit');
+        assert_eq(d.get('limit'), 2);
+        assert_eq(d.get('limit_source'), 'override');
+    }
+
+
+    #[test]
+    /**
+     * An entitlement taken by one of the customer's rules is 'taken', and `access` names the rule.
+     */
+    fn test_taken_by_rule() {
+        const id = 'dec_rule';
+        self.create_customer(id, 'p');
+        assert(self.set_customer_rules(id, ['no_flag'], false));
+        const d: map = self.check(id, 'flag', detail = true);
+        assert_eq(d.get('reason'), 'taken');
+        assert_eq(d.get('access'), 'rule:no_flag');
+    }
+
+
+    #[test]
+    /**
+     * An observe limit always allows and has no remaining (it only counts).
+     */
+    fn test_observe() {
+        const id = 'dec_observe';
+        self.create_customer(id, 'p');
+        const d: map = self.allow(id, 'watch', 50, false, detail = true);
+        assert(d.get('allowed'));
+        assert_eq(d.get('mode'), 'observe');
+        assert_eq(d.get('used'), 50);
+        assert_null(d.get('remaining'));
+    }
+
+
+    #[test]
+    /**
+     * Values with units are reported in the credit's units, and refusals still say why.
+     */
+    fn test_units() {
+        const id = 'dec_units';
+        self.create_customer(id, 'p');
+        const d: map = self.allow(id, 'storage', '500MB', false, detail = true);
+        assert(d.get('allowed'));
+        assert_eq(d.get('value'), 500);
+        assert_eq(d.get('used'), 500);
+        assert_eq(d.get('remaining'), 500);
+        assert_eq(self.check(id, 'storage', '0.6GB', detail = true).get('reason'), 'limit');
+    }
+
+
+    #[test]
+    /**
+     * A decrement is allowed and reported like any call.
+     */
+    fn test_decrement() {
+        const id = 'dec_down';
+        self.create_customer(id, 'p');
+        assert(self.allow(id, 'api', 5, false));
+        const d: map = self.allow(id, 'api', -2, false, detail = true);
+        assert(d.get('allowed'));
+        assert_eq(d.get('value'), -2);
+        assert_eq(d.get('used'), 3);
     }
 }

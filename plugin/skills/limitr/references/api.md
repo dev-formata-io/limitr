@@ -13,8 +13,8 @@ arguments: `policy.add_customer_cap('org_1', 50, id = 'monthly', resets = true, 
 
 | Function | Returns | Notes |
 |---|---|---|
-| `allow(id, entitlement, value = 0, event = true, cap = null, overhead?, force = false)` | bool | Decide and meter. See SKILL.md. |
-| `check(id, entitlement, value = 0, cap = null, context = null, overhead?)` | bool | Same decision, no changes. |
+| `allow(id, entitlement, value = 0, event = true, cap = null, overhead?, force = false, detail = false)` | bool, or map with `detail` | Decide and meter. See SKILL.md. |
+| `check(id, entitlement, value = 0, cap = null, context = null, overhead?, detail = false)` | bool, or map with `detail` | Same decision, no changes. |
 | `features(id, context = null)` | list | Entitlement names the customer can use now (plan, less taken, plus given, `enabled`). Access, not capacity. Null if no customer. |
 | `increment(id, entitlement, event = true, cap = null)` | bool | `allow` with the limit's `increment`. |
 | `decrement(id, entitlement, event = true, cap = null)` | bool | `allow` with minus the increment. |

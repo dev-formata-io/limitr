@@ -131,8 +131,8 @@ entitlement, limit, topup, and exchange pair, sorts and checks tiers, and fills 
 ## Metering: allow and check
 
 ```stof
-policy.allow(customer_id, entitlement, value = 0, event = true, cap = null, overhead?, force = false) -> bool
-policy.check(customer_id, entitlement, value = 0, cap = null, context = null, overhead?) -> bool
+policy.allow(customer_id, entitlement, value = 0, event = true, cap = null, overhead?, force = false, detail = false) -> bool | map
+policy.check(customer_id, entitlement, value = 0, cap = null, context = null, overhead?, detail = false) -> bool | map
 ```
 
 - `allow` decides and, when allowed, meters: the meter moves by `value` and events fire. `check` makes the same
@@ -147,6 +147,12 @@ policy.check(customer_id, entitlement, value = 0, cap = null, context = null, ov
   the customer's standing caps.
 - `overhead`: the call's actual provider cost in runes, when you know it. Skips the credit's cost function.
 - `force`: record usage that already happened (past a hard limit or cap). Used by `settle`.
+- `detail`: return a map instead of a bool, saying why: `allowed`, `reason` (null when allowed, else `no_customer`,
+  `expired`, `not_entitled`, `taken`, `no_scope`, `disabled`, `cap`, `governor`, `limit`, or `held`), `customer`
+  (whose meter), `entitlement`, `value`, `credit`, `mode`, `used`, `limit`, `remaining`, `allowance`, `held`,
+  `resets`, `access`, `limit_source`, plus `cap` and `cap_customer` (reason `cap`) or `available` (reason
+  `governor`). Readings are after the call for `allow`, current for `check`. Ex.
+  `policy.check(id, 'api', 5, detail = true).get('reason')`. Use it to tell a user or an agent why a call was refused.
 
 What decides a call, in order (nothing changes until every gate passes):
 
@@ -188,7 +194,8 @@ period). Use `period` when usage should reset with the bill, a calendar schedule
 at once, and `reset_inc` for a rolling window (Ex. `1day`).
 
 A **governor** shapes the rate below a hard limit: `governor_enabled: true`, `governor_capacity` (burst), and
-`governor_refill_rate` (tokens per ms). Denials fire `meter-governed`. `allowance()` is what can run right now.
+`governor_refill_rate` (tokens per ms). `allow` and `reserve` spend tokens (a hold for its held amount, trued up by
+`settle`, given back by `release`). Denials fire `meter-governed`. `allowance()` is what can run right now.
 
 **Overrides** replace an entitlement's limit for one customer (custom deals, trials): `create_customer_override(id,
 entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)`. Unset fields copy the
@@ -388,6 +395,10 @@ policy.settle('user_1', 'chat', hold, 1500, using new { model: 'sonnet', input: 
 - `settle(id, ent, hold, value, event?, overhead?, basis?, segment?)` drops the hold and records the actual usage
   with `force` (it already happened), then learns from it.
 - Holds count on their own meter only, expire after `hold_ttl` (10 minutes), and are never billed.
+- A hold spends a governor's tokens for its held amount, like `allow` does. `settle` trues them up to the real usage
+  (below zero if it used more: it already happened), and `release` gives them back. Stacked actions: gates
+  (`check`), then `reserve`, then `allow`, releasing holds on a refusal (`references/patterns.md`, Stacking
+  entitlements).
 - `estimate(id, ent, basis?, segment?, quantile, context?)` returns `value`, `overhead`, `samples`, `source`, and
   `scope`. It uses the customer's own estimate after `estimate_min_samples` (5), else the policy-wide one.
 - **Basis:** `estimate_basis` names the event data field a call's size depends on (Ex. input tokens). Estimates

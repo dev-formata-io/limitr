@@ -194,7 +194,8 @@ period). Use `period` when usage should reset with the bill, a calendar schedule
 at once, and `reset_inc` for a rolling window (Ex. `1day`).
 
 A **governor** shapes the rate below a hard limit: `governor_enabled: true`, `governor_capacity` (burst), and
-`governor_refill_rate` (tokens per ms). Denials fire `meter-governed`. `allowance()` is what can run right now.
+`governor_refill_rate` (tokens per ms). `allow` and `reserve` spend tokens (a hold for its held amount, trued up by
+`settle`, given back by `release`). Denials fire `meter-governed`. `allowance()` is what can run right now.
 
 **Overrides** replace an entitlement's limit for one customer (custom deals, trials): `create_customer_override(id,
 entitlement, expires?, credit?, mode?, value?, increment?, resets?, reset_inc?, reset_sch?)`. Unset fields copy the
@@ -394,6 +395,10 @@ policy.settle('user_1', 'chat', hold, 1500, using new { model: 'sonnet', input: 
 - `settle(id, ent, hold, value, event?, overhead?, basis?, segment?)` drops the hold and records the actual usage
   with `force` (it already happened), then learns from it.
 - Holds count on their own meter only, expire after `hold_ttl` (10 minutes), and are never billed.
+- A hold spends a governor's tokens for its held amount, like `allow` does. `settle` trues them up to the real usage
+  (below zero if it used more: it already happened), and `release` gives them back. Stacked actions: gates
+  (`check`), then `reserve`, then `allow`, releasing holds on a refusal (`references/patterns.md`, Stacking
+  entitlements).
 - `estimate(id, ent, basis?, segment?, quantile, context?)` returns `value`, `overhead`, `samples`, `source`, and
   `scope`. It uses the customer's own estimate after `estimate_min_samples` (5), else the policy-wide one.
 - **Basis:** `estimate_basis` names the event data field a call's size depends on (Ex. input tokens). Estimates

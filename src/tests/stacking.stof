@@ -1,0 +1,334 @@
+//
+// Copyright 2026 Formata, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+//
+// Stacking tests: one action metered by several entitlements, in the order the docs teach (patterns.md,
+// tutorial chapter 8): gates (`check`), then measures (`reserve`), then counts (`allow`), giving every hold back
+// when a count is refused, then `settle` with the real usage. A refusal never leaves anything half counted.
+//
+Limitr TestStackingPolicy: {
+    credits: {
+        report: { label: 'Report' }
+        ai_token: { label: 'AI token', price: { amount: 0.00002 } }
+        req: { label: 'Request' }
+    }
+
+    plans: {
+        starter: {
+            default: true
+            entitlements: {
+                reporting: {}
+                reports: { limit: { credit: 'report', mode: 'hard', value: 3 } }
+                report_tokens: { limit: { credit: 'ai_token', mode: 'soft', value: 20_000 } }
+                burst: {
+                    limit: {
+                        credit: 'req', mode: 'hard', value: 1000
+                        governor_enabled: true, governor_capacity: 2, governor_refill_rate: 0.000001
+                    }
+                }
+                predicted_burst: {
+                    // only test_predicted_hold_spends uses it: estimates are policy-wide, so nothing else settles it
+                    limit: {
+                        credit: 'req', mode: 'hard', value: 1000
+                        governor_enabled: true, governor_capacity: 2, governor_refill_rate: 0.000001
+                    }
+                }
+                soft_burst: {
+                    limit: {
+                        credit: 'req', mode: 'soft', value: 1000
+                        governor_enabled: true, governor_capacity: 2, governor_refill_rate: 0.000001
+                    }
+                }
+                pool_burst: {
+                    scope: 'org'
+                    limit: {
+                        credit: 'req', mode: 'hard', value: 1000
+                        governor_enabled: true, governor_capacity: 2, governor_refill_rate: 0.000001
+                    }
+                }
+                monthly_burst: {
+                    limit: {
+                        credit: 'req', mode: 'hard', value: 1000, resets: true, reset_inc: 30days
+                        governor_enabled: true, governor_capacity: 2, governor_refill_rate: 0.000001
+                    }
+                }
+            }
+        }
+    }
+
+
+    /// The documented stack for one report: gate, hold the tokens, count the report, settle (8k tokens each).
+    /// Move a governor's last refill `ms_ago` into the past (simulates time passing for the refill).
+    fn backdate_governor(id: str!, entitlement: str!, ms_ago: int) {
+        const meter: Meter = self.meter_obj(id, entitlement);
+        meter.governor_last_refill = meter.governor_last_refill - (ms_ago as ms);
+    }
+
+
+    fn generate_report(id: str) -> str {
+        if (!self.check(id, 'reporting')) return 'not enabled';
+        const hold = self.reserve(id, 'report_tokens', 10_000);
+        if (hold == null) return 'out of tokens';
+        if (!self.allow(id, 'reports', 1, false)) {
+            self.release(id, 'report_tokens', hold);
+            return 'out of reports';
+        }
+        self.settle(id, 'report_tokens', hold, 8_000, false);
+        'ok'
+    }
+
+
+    #[test]
+    /**
+     * A refused count gives its hold back: the fourth report leaves no tokens counted or held.
+     */
+    fn test_refused_count_leaves_nothing() {
+        const id = 'stk_reports';
+        self.create_customer(id, 'starter');
+        assert_eq(self.generate_report(id), 'ok');
+        assert_eq(self.generate_report(id), 'ok');
+        assert_eq(self.generate_report(id), 'ok');
+        assert_eq(self.generate_report(id), 'out of reports');
+        assert_eq(self.value(id, 'reports'), 3);
+        assert_eq(self.value(id, 'report_tokens'), 24_000);
+        assert_eq(self.held(id, 'report_tokens'), 0);
+    }
+
+
+    #[test]
+    /**
+     * A gate that's off stops the stack before anything is held or counted.
+     */
+    fn test_gate_first() {
+        const id = 'stk_gate';
+        self.create_customer(id, 'starter');
+        assert(self.take_entitlement(id, 'reporting'));
+        assert_eq(self.generate_report(id), 'not enabled');
+        assert_eq(self.value(id, 'reports'), 0);
+        assert_eq(self.held(id, 'report_tokens'), 0);
+    }
+
+
+    #[test]
+    /**
+     * A hold admits a call, so it spends the governor's tokens like allow() does: reserve and allow share one
+     * rate limit. With a capacity of 2, two holds use it up, and a third call waits for the refill either way.
+     */
+    fn test_holds_spend_the_governor() {
+        const id = 'stk_gov';
+        self.create_customer(id, 'starter');
+        const first = self.reserve(id, 'burst', 1);
+        const second = self.reserve(id, 'burst', 1);
+        assert(first != null);
+        assert(second != null);
+        assert_null(self.reserve(id, 'burst', 1));      // governed
+        assert_not(self.allow(id, 'burst', 1, false));  // the same governor
+        assert_eq(self.check(id, 'burst', 1, detail = true).get('reason'), 'governor');
+
+        assert(self.settle(id, 'burst', first, 1, false));
+        assert(self.settle(id, 'burst', second, 1, false));
+        assert_eq(self.value(id, 'burst'), 2);
+        assert_null(self.reserve(id, 'burst', 1));      // settling the estimate gives nothing back
+    }
+
+
+    #[test]
+    /**
+     * Releasing a hold gives its governor tokens back (the call never ran).
+     */
+    fn test_release_gives_the_governor_back() {
+        const id = 'stk_gov_release';
+        self.create_customer(id, 'starter');
+        const first = self.reserve(id, 'burst', 2);
+        assert(first != null);
+        assert_null(self.reserve(id, 'burst', 1));
+        assert(self.release(id, 'burst', first));
+        assert(self.reserve(id, 'burst', 2) != null);
+    }
+
+
+    #[test]
+    /**
+     * settle() trues the governor up to the real usage: less than the hold gives the rest back, more spends it
+     * (below zero if need be, since it already happened).
+     */
+    fn test_settle_trues_up_the_governor() {
+        const id = 'stk_gov_settle';
+        self.create_customer(id, 'starter');
+        const small = self.reserve(id, 'burst', 2);
+        assert(self.settle(id, 'burst', small, 1, false));  // used 1 of 2: 1 back
+        assert(self.allow(id, 'burst', 1, false));
+        assert_not(self.allow(id, 'burst', 1, false));
+
+        const id2 = 'stk_gov_settle_over';
+        self.create_customer(id2, 'starter');
+        const big = self.reserve(id2, 'burst', 1);
+        assert(self.settle(id2, 'burst', big, 3, false));   // used 3: the governor owes 1
+        assert(self.meter_obj(id2, 'burst').governor_tokens < 0);
+        assert_not(self.allow(id2, 'burst', 1, false));
+        assert_eq(self.value(id2, 'burst'), 3);
+    }
+
+
+    #[test]
+    /**
+     * A hold left to predict its size (no value) spends what it holds: here the standard increment (1), since
+     * nothing has been learned for the entitlement yet.
+     */
+    fn test_predicted_hold_spends() {
+        const id = 'stk_gov_predicted';
+        self.create_customer(id, 'starter');
+        assert(self.reserve(id, 'predicted_burst') != null);
+        assert(self.reserve(id, 'predicted_burst') != null);
+        assert_eq(self.held(id, 'predicted_burst'), 2);
+        assert_null(self.reserve(id, 'predicted_burst'));
+        assert_eq(self.check(id, 'predicted_burst', 1, detail = true).get('reason'), 'governor');
+    }
+
+
+    #[test]
+    /**
+     * A hold that expired and was dropped is unknown to settle(), which records the usage and spends nothing
+     * more (its hold already spent the governor).
+     */
+    fn test_expired_hold_spends_once() {
+        const id = 'stk_gov_expired';
+        self.create_customer(id, 'starter');
+        const expired = self.reserve(id, 'burst', 1, ttl = 0ms);  // expires at once
+        const live = self.reserve(id, 'burst', 1);                // drops the expired hold
+        assert(expired != null);
+        assert(live != null);
+        assert(self.settle(id, 'burst', expired, 1, false));       // unknown now: recorded, nothing spent
+        assert_eq(self.value(id, 'burst'), 1);
+        assert(self.release(id, 'burst', live));                  // gives back 1
+        assert(self.allow(id, 'burst', 1, false));
+        assert_not(self.allow(id, 'burst', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * Releasing a hold twice gives its tokens back once.
+     */
+    fn test_double_release() {
+        const id = 'stk_gov_double';
+        self.create_customer(id, 'starter');
+        const hold = self.reserve(id, 'burst', 2);
+        assert(self.release(id, 'burst', hold));
+        assert_not(self.release(id, 'burst', hold));
+        assert(self.reserve(id, 'burst', 2) != null);
+        assert_null(self.reserve(id, 'burst', 1));
+    }
+
+
+    #[test]
+    /**
+     * A refund never fills the governor past its capacity.
+     */
+    fn test_release_caps_at_capacity() {
+        const id = 'stk_gov_cap';
+        self.create_customer(id, 'starter');
+        const hold = self.reserve(id, 'burst', 1);
+        self.backdate_governor(id, 'burst', 100_000_000);         // refilled to capacity meanwhile
+        assert(self.release(id, 'burst', hold));
+        assert_eq(self.meter_obj(id, 'burst').governor_tokens, 2);
+    }
+
+
+    #[test]
+    /**
+     * A governor below zero (a settle that used more) refills like any other, and calls go through again.
+     */
+    fn test_debt_refills() {
+        const id = 'stk_gov_debt';
+        self.create_customer(id, 'starter');
+        const hold = self.reserve(id, 'burst', 1);
+        assert(self.settle(id, 'burst', hold, 4, false));         // 2 - 4: owes 2
+        assert_not(self.allow(id, 'burst', 1, false));
+        self.backdate_governor(id, 'burst', 100_000_000);
+        assert(self.allow(id, 'burst', 1, false));
+    }
+
+
+    #[test]
+    /**
+     * Governors only apply to hard limits, for holds as for allow().
+     */
+    fn test_soft_limit_not_governed() {
+        const id = 'stk_gov_soft';
+        self.create_customer(id, 'starter');
+        let i = 0;
+        while (i < 4) {
+            assert(self.reserve(id, 'soft_burst', 1) != null);
+            i += 1;
+        }
+        assert(self.allow(id, 'soft_burst', 3, false));
+        assert_null(self.meter_obj(id, 'soft_burst').governor_tokens);  // nothing was spent
+    }
+
+
+    #[test]
+    /**
+     * A scoped entitlement's governor is the org's: one member's holds use it up for every member, and
+     * settle() and release() through the member reach it.
+     */
+    fn test_scoped_governor() {
+        self.create_customer('stk_org', 'starter', 'org', 'Org');
+        self.create_customer('stk_alice', '', 'user', 'User', ['stk_org']);
+        self.create_customer('stk_bob', '', 'user', 'User', ['stk_org']);
+        const first = self.reserve('stk_alice', 'pool_burst', 1);
+        const second = self.reserve('stk_alice', 'pool_burst', 1);
+        assert(first != null);
+        assert(second != null);
+        assert_null(self.reserve('stk_bob', 'pool_burst', 1));
+        assert(self.release('stk_alice', 'pool_burst', first));
+        assert(self.reserve('stk_bob', 'pool_burst', 1) != null);
+        assert(self.settle('stk_alice', 'pool_burst', second, 1, false));
+        assert_eq(self.value('stk_org', 'pool_burst'), 1);
+    }
+
+
+    #[test]
+    /**
+     * A hold made when the period has ended but the meter hasn't reset yet spends nothing: the next allow()
+     * resets the meter and refills the governor.
+     */
+    fn test_hold_across_period_reset() {
+        const id = 'stk_gov_reset';
+        self.create_customer(id, 'starter');
+        assert(self.allow(id, 'monthly_burst', 2, false));           // governor empty
+        const meter: Meter = self.meter_obj(id, 'monthly_burst');
+        meter.started = Time::now() - 40days;                         // the period ended
+        const hold = self.reserve(id, 'monthly_burst', 1);
+        assert(hold != null);                                         // a fresh period: full governor
+        assert(self.allow(id, 'monthly_burst', 1, false));            // resets: 2 tokens, now 1
+        assert(self.allow(id, 'monthly_burst', 1, false));
+        assert_not(self.allow(id, 'monthly_burst', 1, false));
+        assert(self.settle(id, 'monthly_burst', hold, 1, false));     // its hold spent nothing to true up
+        assert_not(self.allow(id, 'monthly_burst', 1, false));
+
+        // and releasing such a hold gives nothing back to the new period
+        const id2 = 'stk_gov_reset_release';
+        self.create_customer(id2, 'starter');
+        assert(self.allow(id2, 'monthly_burst', 2, false));
+        const meter2: Meter = self.meter_obj(id2, 'monthly_burst');
+        meter2.started = Time::now() - 40days;
+        const hold2 = self.reserve(id2, 'monthly_burst', 1);
+        assert(self.allow(id2, 'monthly_burst', 2, false));           // resets, then uses the new period's 2
+        assert(self.release(id2, 'monthly_burst', hold2));
+        assert_not(self.allow(id2, 'monthly_burst', 1, false));
+    }
+}

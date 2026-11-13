@@ -4,7 +4,9 @@ description: >
   Use Limitr from TypeScript or JavaScript with the @formata/limitr package: create the engine, load policies and
   customers, gate calls with allow/check, feature flags and rollouts, give or take a customer's features, reserve
   and settle LLM calls, predict output tokens before a call, handle events, persist customer state, and connect to
-  Limitr Cloud, and load the Limitr Network module (limitr.network(), see the limitr-network skill). Use for code that imports @formata/limitr or calls
+  Limitr Cloud, load the Limitr Network module (limitr.network(), see the limitr-network skill), and govern agents
+  built on the Claude Agent SDK (references/claude-agent-sdk.md) or calls made with the Claude Messages API
+  (references/claude-messages.md). Use for code that imports @formata/limitr or calls
   Limitr.new / Limitr.cloud, and for integrating usage limits, credits, or pricing into a Node, Deno, Bun, or browser
   app. Load the limitr skill for policy semantics and the stof skill for Stof syntax.
 ---
@@ -125,7 +127,10 @@ removes one. Ex. `await limitr.setExchangePair('euro', 1.16, 'usd')` from a sche
 
 Each method call is atomic (calls go through a promise queue, one at a time), but two calls are not: another
 request can run between a `check` and the following `allow`. When concurrent requests must not overspend, use
-`reserve`.
+`reserve`. For one action with several entitlements, go gates (`check`), then holds (`reserve`), then counts
+(`allow`), and `release` the holds if a count is refused. A hold spends a governor's tokens like `allow` does
+(`settle` trues them up, `release` gives them back), so rate limits hold either way. The limitr skill's patterns
+("Stacking entitlements") and tutorial chapter 8 show it.
 
 ## Feature flags and custom deals
 
@@ -227,6 +232,19 @@ const expectedOutput = predicted?.value ?? null;   // null until something has b
 It learns a fixed amount per call plus an amount per input token, so a short question that gets a long answer
 predicts a long answer. Each customer's own numbers take over after 5 calls. `reserve` on `chat` already predicts
 total tokens the same way; use this when you need the output alone.
+
+## Agents and Claude calls
+
+To govern an agent built on `@anthropic-ai/claude-agent-sdk`, read `references/claude-agent-sdk.md` and copy its
+recipe: it hides the tools a customer can't use (`features` into `disallowedTools`), decides and counts each tool
+call in a `PreToolUse` hook (denying with the decision's reason), meters each model response from the message stream
+(once per response ID), and stops the run in `PostToolBatch` when the tokens run out. Plain hooks and options, so
+`query()` stays as it is.
+
+For calls made with `@anthropic-ai/sdk` (`client.messages.create` and your own tool loop), read
+`references/claude-messages.md`: it offers only the tools the customer can use, caps `max_tokens` at the tokens left
+under a hard limit, holds room for the call while it runs (`reserve`, then `settle` with the real usage), and answers
+refused tool uses with a `tool_result` carrying the reason.
 
 ## Spend caps
 

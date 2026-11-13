@@ -4,7 +4,7 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
-## Unreleased
+## 0.8.6
 
 ### Added
 
@@ -15,10 +15,43 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   stands (after the call for `allow()`, as things are for `check()`): `used`, `limit`, `remaining`, `allowance`,
   `held`, `resets`, `access`, and `limit_source`, plus `cap` and `cap_customer` for a cap, and `available` for a
   governor. Without `detail` nothing changes: both still return a bool, and the hot path only adds a branch.
-  9 tests in `src/tests/decisions.stof`.
+  16 tests in `src/tests/decisions.stof`.
 - **TypeScript:** `allow(..., force, detail)` and `check(..., overhead, detail)` overloads return a typed
   `LimitrDecision` (with `LimitrDecisionReason`) when `detail` is true. A call the Cloud connection check refuses
   reports `unconnected` or `no_customer`.
+
+### Changed
+
+- **Holds spend the governor.** `reserve()` lets a call in, so it now spends a governor's tokens for the amount it
+  holds, like `allow()`. `settle()` trues them up to the real usage (below zero when the call used more, since it
+  already happened, so the next calls wait for the refill), and `release()` gives them back. Before, a hold only
+  checked the governor and `settle()` skipped it, so a rate limit metered only through `reserve()` / `settle()` never
+  limited anything. A settle without a known hold (unknown or expired) spends nothing, a hold made when the period
+  has ended but the meter hasn't reset spends nothing, and only hard limits are governed, as with `allow()`. 11 tests
+  in `src/tests/stacking.stof`.
+
+### Docs
+
+- **Limitr with the Claude Agent SDK** (`typescript/skill/limitr-ts/references/claude-agent-sdk.md`): a recipe that
+  governs agents with plain hooks and options, so `query()` stays as it is: tools a customer can't use are hidden
+  (`features` into `disallowedTools`), each tool call is decided and counted in `PreToolUse` (denied with the
+  decision's reason), each model response is metered from the stream (once per response ID, subagents included),
+  and a run stops in `PostToolBatch` when its tokens run out. Typechecked against `@anthropic-ai/claude-agent-sdk`
+  0.3.323, tested against the engine with the hooks' real input shapes, and checked live (a denied tool call's
+  reason reaches the model; a run out of tokens stops before its next model request). The tested copy, its tests,
+  and the live check are in `typescript/recipes/claude-agent-sdk/`.
+- **Limitr with the Claude Messages API** (`typescript/skill/limitr-ts/references/claude-messages.md`): a recipe
+  around each `client.messages.create` call and each tool use in the app's own loop: only the tools a customer can
+  use are offered, the input is counted, a hard token limit caps `max_tokens` at what's left (less what calls in
+  flight hold), room for the whole call is held while it runs and the real usage settled after (an API error
+  releases it), and refused tool uses are answered with a `tool_result` carrying the reason. Typechecked against
+  `@anthropic-ai/sdk` 1.8.0, tested against the engine, and checked live (a refused tool use's reason reaches the
+  model; `max_tokens` keeps a call within the tokens left, and the next call is refused before the API). The tested
+  copy, its tests, and the live check are in `typescript/recipes/claude-messages/`.
+- **Stacking entitlements, in an order that never half-counts:** gates (`check`), then holds (`reserve`), then counts
+  (`allow`), releasing the holds when a count is refused, then `settle`. Tutorial chapter 8 is rewritten around it,
+  with the limitr skill's patterns and reservation notes, the limitr-ts skill, and 2 tests in
+  `src/tests/stacking.stof`.
 
 ## 0.8.5
 

@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.8.5;
+    ver version: 0.8.6;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -789,13 +789,20 @@ Limitr: {
         const meter = customer.ensure_meter(entitlement, limit.credit);
         if (meter.holds == null) meter.holds = map();
         else meter.held(true); // drop expired holds (reads never do)
+
+        // A hold admits the call, so it spends the governor's tokens like allow() does (settle() trues them up
+        // to the real usage, release() gives them back). A pending period reset refills the governor in the
+        // next allow(), so there's nothing to spend from until then.
+        const governor_spent = self.meter_reset_pending(limit, meter, customer) ? null : self.spend_governor(meter, limit, value);
+
         const hold_id = `hold_${nanoid(16)}`;
         meter.holds.insert(hold_id, map(
             ('value', value),
             ('overhead', hold_overhead),
             ('expires', Time::now() + (ttl ?? self.hold_ttl ?? 10min)),
             ('basis', inputs[0]),
-            ('segment', inputs[1])
+            ('segment', inputs[1]),
+            ('governor', governor_spent)
         ));
         hold_id
     }
@@ -812,12 +819,14 @@ Limitr: {
     fn settle(id: str!, entitlement: str!, hold_id: str, value: float | str = 0, event: bool | str | obj = true, overhead?: float, basis?: float, segment?: str) -> bool {
         let hold_basis = basis;
         let hold_segment = segment;
+        let governor_spent = null;
         const meter: Meter = self.meter_obj(id, entitlement);
         if (meter != null && meter.holds != null && hold_id != null) {
             const hold: map = meter.holds.remove(hold_id);
             if (hold != null) {
                 hold_basis = hold_basis ?? hold.get('basis');
                 hold_segment = hold_segment ?? hold.get('segment');
+                governor_spent = hold.get('governor');
             }
         }
 
@@ -825,6 +834,16 @@ Limitr: {
         using parsed_event = ctx[1] ? ctx[0] : null;
         const recorded = self.allow(id, entitlement, value, ctx[0] ?? event, null, overhead, true);
         if (recorded) self.observe(id, entitlement, value, overhead, hold_basis, hold_segment, ctx[0]);
+
+        // The hold spent the governor for its estimate: spend (or give back) the difference to the real usage.
+        // It can leave the governor below zero (the usage already happened), so the next calls wait for the
+        // refill. A settle without a known hold spends nothing (its hold already spent, or there never was one).
+        if (governor_spent != null) {
+            const limit = self.limit_obj(id, entitlement);
+            const credit = limit != null ? self.credit(limit.credit) : null;
+            const actual = (typeof value == 'str' ? value as float : value).to_units(credit?.stof_units ?? 'float');
+            self.spend_governor(meter, limit, actual - governor_spent);
+        }
         recorded
     }
 
@@ -835,7 +854,11 @@ Limitr: {
     fn release(id: str!, entitlement: str!, hold_id: str!) -> bool {
         const meter: Meter = self.meter_obj(id, entitlement);
         if (meter == null || meter.holds == null) return false;
-        meter.holds.remove(hold_id) != null
+        const hold: map = meter.holds.remove(hold_id);
+        if (hold == null) return false;
+        const governor_spent = hold.get('governor');
+        if (governor_spent != null) self.spend_governor(meter, self.limit_obj(id, entitlement), -governor_spent); // the call never ran
+        true
     }
 
 
@@ -3115,6 +3138,24 @@ Limitr: {
         self.round_event(event_value);
         await notes.handle_event('cap-limit', event_value);
         await <Event>.send('cap-limit', event_value);
+    }
+
+
+    /**
+     * Spend a governor's tokens on a meter (a negative amount gives them back), the way allow() does: filled on
+     * first use, refilled first, never above capacity, and below zero only by usage that already happened.
+     * Returns the amount, or null when the limit has no governor (only hard limits are governed).
+     */
+    fn spend_governor(meter: Meter!, limit?: Limit, amount: float) -> float {
+        if (limit == null || limit.mode != 'hard' || !limit.governor_enabled || limit.governor_capacity == null) return null;
+        const capacity = limit.governor_capacity as float;
+        if (meter.governor_tokens == null) {
+            meter.governor_tokens = capacity;
+            meter.governor_last_refill = Time::now();
+        }
+        meter.refill_governor(capacity, limit.governor_refill_rate);
+        meter.governor_tokens = min(capacity, meter.governor_tokens - amount);
+        amount
     }
 
 

@@ -102,9 +102,34 @@ if (p.check(id, 'chat_rate', 1) && p.check(id, 'chat', estimate)) {
 ## Stacking entitlements
 
 Several entitlements can meter one action at different grains: a per-call count, tokens, and a daily ceiling. Each
-has its own credit, mode, and reset, and the action runs only when every one allows it. Use `check` on all first
-(or `reserve` on each), then `allow` each. Stacking is also how plans differ: the same action can be free and
-counted on one plan (`observe`) and capped on another (`hard`).
+has its own credit, mode, and reset, and the action runs only when every one allows it. Stacking is also how plans
+differ: the same action can be free and counted on one plan (`observe`) and capped on another (`hard`).
+
+Go in this order, so a refusal never leaves anything half counted:
+
+1. **Gates:** `check` each feature flag (no limit). Nothing changes.
+2. **Measures** (usage known only afterwards, Ex. tokens): `reserve` each. A hold moves no meter and sends no events,
+   so `release` undoes it completely.
+3. **Counts** (usage known now, Ex. one request): `allow` each. If one is refused, `release` every hold and stop.
+4. Run the action, then `settle` each hold with the real usage.
+
+```stof
+const hold = policy.reserve(id, 'report_tokens', 10_000);
+if (hold == null) return false;
+if (!policy.allow(id, 'reports', 1)) {
+    policy.release(id, 'report_tokens', hold);
+    return false;
+}
+// ... run it ...
+policy.settle(id, 'report_tokens', hold, 8_000);
+```
+
+- **Rate limits hold either way.** A governor's tokens are spent when a call is let in: by `allow`, or by `reserve`
+  for its held amount (`settle` trues them up to the real usage, `release` gives them back).
+- **Two counts in one action** are the one case this order can't make all-or-nothing (the first can pass and the
+  second be refused). Count the one most likely to refuse first.
+- **Say why.** Pass `detail = true` to `check` or `allow` to get the refusal's `reason` and what's left, Ex. to
+  tell a user, or to hand back to an agent as a tool result.
 
 ## Prepaid credit burndown
 

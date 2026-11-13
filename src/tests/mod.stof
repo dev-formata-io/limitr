@@ -40,6 +40,7 @@ import './overrides' as TestOverrides;
 import './rules' as TestRules;
 import './expiry' as TestExpiry;
 import './decisions' as TestDecisions;
+import './stacking' as TestStacking;
 
 
 Limitr policy: {

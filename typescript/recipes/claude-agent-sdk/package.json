@@ -1,0 +1,18 @@
+{
+    "name": "limitr-recipe-claude-agent-sdk",
+    "private": true,
+    "type": "module",
+    "description": "Limitr with the Claude Agent SDK: the recipe in skill/limitr-ts/references/claude-agent-sdk.md, its tests, and a live check.",
+    "scripts": {
+        "typecheck": "tsc --noEmit --strict --skipLibCheck --target es2022 --module nodenext --moduleResolution nodenext limitr-agent.ts",
+        "test": "node --experimental-strip-types --no-warnings test.mjs",
+        "live": "node --experimental-strip-types --no-warnings live.mjs"
+    },
+    "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.3.323",
+        "@formata/limitr": "file:../.."
+    },
+    "devDependencies": {
+        "typescript": "^5.9.0"
+    }
+}
