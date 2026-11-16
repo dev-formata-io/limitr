@@ -1,7 +1,7 @@
 # Limitr for Python
 
-**Most flexible usage & margin control for AI.** Change prices, limits, and contracts for users and agents as easily
-as a git commit, live.
+**Most flexible usage billing & limits for AI.** Credits, metering, caps, and custom deals for every user and agent,
+in one policy that runs in your app and changes live.
 
 Limitr decides what each customer can use and what it costs. You write your plans, limits, and prices in one
 policy file. Before your app does something a customer pays for (a model call, an export, an API request), it asks

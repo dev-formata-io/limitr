@@ -16,9 +16,9 @@
 </h1>
 
 <p align="center">
-    <b>Most flexible usage &amp; margin control for AI.</b>
+    <b>Most flexible usage billing &amp; limits for AI.</b>
     <br>
-    Change prices, limits, and contracts for users and agents as easily as a git commit, live.
+    Credits, metering, caps, and custom deals for every user and agent, in one policy that runs in your app and changes live.
 </p>
 
 Limitr decides what each customer can use and what it costs. You write your plans, limits, and prices in one
@@ -93,6 +93,28 @@ deploy. The [TypeScript](https://github.com/dev-formata-io/limitr/tree/main/type
 [Python](https://github.com/dev-formata-io/limitr/tree/main/python/tutorial) tutorials pick up from here, in 15 short
 chapters you can run.
 
+## How it runs
+
+```
+  your app, one process
+ ┌───────────────────────────────────────┐
+ │  your code ── allow() ──▶ engine      │                       Limitr Cloud (optional)
+ │            ◀── true ────  · policy    │ ◀───────────────────▶ policy editor, versions,
+ │                           · customers │  policy down,         customers, ledger, invoices,
+ └───────────────────────────────────────┘  usage up             Limitr Analyst
+   about 1 ms, no network call              (in the background)
+```
+
+Limitr isn't a service your app calls. It's an engine your app runs, like a library: the policy and your customers
+live in your process, and `allow()` answers right there, in about a millisecond. A gateway sits in the path of each
+request and sees only that request. A metering API counts usage after it happened and can't stop a call. The engine
+sees the customer, their plan and deal, and what the task has spent across every model, so it can hold room for calls
+in flight, cap a whole task, and price each call at what you charge and what it costs you.
+
+[Limitr Cloud](https://limitr.dev) manages the engine from the side. It sends policy changes and customers to every
+server and collects usage over one background connection, never in the request path. Policy code runs sandboxed: no
+network, files, or environment unless your app allows them.
+
 ## Why teams use it
 
 AI products are hard to price and hard to control. One request can trigger dozens of model calls. Model costs change
@@ -107,16 +129,17 @@ With Limitr, those changes go in the policy:
 - **Know your margin:** every call is priced at what you charge and what it costs you.
 - **Model any customer:** a user, a team, an org, an API key, or an agent, grouped however you like.
 
-## How it's different
+## Why it's the most flexible
 
-- **You own it.** The engine and the policy format are open source. You can add your own pricing logic and rules to
-  the policy, and change any built-in behavior. When your pricing model changes, you edit the policy. You don't
-  migrate to a new system.
-- **Pricing works like code.** Plans, prices, limits, and every customer's deal live in one file you can review, diff,
-  and roll back.
-- **Your coding agent can do the work.** Limitr ships skills that teach agents like Claude Code to write the policy,
-  add the SDK to your app, and build the usage and billing screens.
-- **No revenue share.** Limitr never takes a cut of what you bill, with or without Cloud.
+- **You own it, like code you wrote.** The engine and the policy format are open source (Apache 2.0). Add your own
+  rules and functions to the policy and change any built-in behavior. New pricing or a new business model is a policy
+  change, not a migration. Limitr never takes a cut of what you bill, with or without Cloud.
+- **Every call is decided with the whole picture.** The engine runs in your app with every customer's plan, deal, and
+  usage in view, so it can hold room for calls still running: in the [benchmark](https://github.com/dev-formata-io/limitr/tree/main/bench),
+  60 agent tasks starting at once against a 1M-token allowance used 2.1M tokens when each checked a counter first,
+  and 953,334 with Limitr's reserve and settle.
+- **You change it live.** Plans, prices, limits, and every customer's deal live in one versioned policy you can review,
+  diff, test, and roll back. With Limitr Cloud, a change reaches every server on the next call, with no deploy.
 
 ## The engine and Limitr Cloud
 
