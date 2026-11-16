@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import limitr
 from limitr import Limitr
 
 POLICY = """
@@ -49,7 +50,7 @@ def policy():
 
 def test_loads_and_validates(policy):
     assert policy.valid() == (True, '')
-    assert policy.version() == '0.8.6'
+    assert policy.version() == limitr.__version__   # the compiled engine matches the package
 
 
 def test_invalid_policy_raises():

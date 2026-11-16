@@ -4,6 +4,14 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## Unreleased
+
+- **The release workflow compiles the engine** from `src/spec` (`stof run project.stof`, on a pinned stof CLI) before
+  it builds, tests, and publishes each SDK, so a published package always matches the spec. The Python tests check
+  the compiled engine's version against the package's.
+- **README:** the quick start shows the policy, then TypeScript and Python side by side, and the rest mentions the
+  Python package where it applies.
+
 ## 0.8.6
 
 ### Added

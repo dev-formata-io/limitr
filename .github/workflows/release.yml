@@ -1,5 +1,7 @@
 # Publishes Limitr: @formata/limitr to npm and limitr to PyPI. Runs only when started by hand (Actions > Release >
 # Run workflow), with a switch for each registry. Every check runs first, and nothing is published unless all pass.
+# The engine is compiled from src/spec here (`stof run project.stof`), so what's published always matches the spec,
+# with the stof CLI pinned below (STOF_CLI); move it with the stof version the SDKs depend on.
 # Publishing uses trusted publishing (no tokens): npm and PyPI each trust this workflow (release.yml) in the
 # `release` environment.
 name: Release
@@ -19,6 +21,9 @@ on:
 permissions:
   contents: read
 
+env:
+  STOF_CLI: https://github.com/dev-formata-io/stof-cli/releases/download/v0.14.4/stof-cli-installer.sh
+
 jobs:
   engine:
     runs-on: ubuntu-latest
@@ -35,7 +40,7 @@ jobs:
           grep -q "\"version\": \"$v\"" plugin/.claude-plugin/plugin.json || { echo "plugin.json is not $v"; exit 1; }
           grep -q "^## $v" CHANGELOG.md || { echo "CHANGELOG.md has no $v section"; exit 1; }
       - name: Install the stof CLI
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dev-formata-io/stof-cli/releases/latest/download/stof-cli-installer.sh | sh
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh
       - name: Engine tests
         run: stof test && stof test --leaks
 
@@ -49,6 +54,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Compile the engine
+        working-directory: .
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh && stof run project.stof
       - name: Build the SDK
         run: npm ci && npm run build
       - name: Recipe tests
@@ -64,6 +72,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Compile the engine
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh && stof run project.stof
       - name: Build the package
         run: pip install build twine pytest && python -m build python && twine check python/dist/*
       - name: Test the built package
@@ -90,6 +100,9 @@ jobs:
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
+      - name: Compile the engine
+        working-directory: .
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh && stof run project.stof
       - name: Publish to npm
         run: |
           npm install -g npm@latest
