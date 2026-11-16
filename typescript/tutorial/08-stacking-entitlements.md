@@ -70,8 +70,7 @@ report 1: ok
 report 2: ok
 report 3: ok
 report 4: out of reports
-reports: 3 tokens: 24000
-held: 0
+reports: 3 tokens: 24000 held: 0
 ```
 
 - **Holds first, counts last.** A hold changes no meter and sends no events, so giving it back undoes it completely.

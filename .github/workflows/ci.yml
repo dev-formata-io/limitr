@@ -68,3 +68,8 @@ jobs:
         run: pip install build pytest && python -m build python
       - name: Tests
         run: pip install python/dist/*.whl && cd python/tests && python -m pytest -q
+      - name: Recipe tests
+        # the Claude Agent SDK and the Anthropic SDK need Python 3.10 or later
+        if: matrix.python != '3.9'
+        run: |
+          for r in python/recipes/*/; do (cd "$r" && pip install claude-agent-sdk anthropic && python -m pytest -q) || exit 1; done
