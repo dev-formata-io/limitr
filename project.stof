@@ -30,10 +30,11 @@ async fn create_typescript() {
 
 
 #[python]
-/// The engine (src/spec) compiled to bstf for the Python SDK (python/limitr/engine.bstf). The Network module comes
-/// with Limitr Cloud support.
+/// The engine (src/spec) and the Network module (src/network), compiled to bstf for the Python SDK
+/// (python/limitr/engine.bstf and network.bstf): the module loads only when a policy uses it (limitr.network()).
 async fn create_python() {
     fs::write('python/limitr/engine.bstf', blobify('bstf', self.Imported));
+    fs::write('python/limitr/network.bstf', blobify('bstf', self.Network));
 }
 
 

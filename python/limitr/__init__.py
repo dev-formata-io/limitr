@@ -16,8 +16,10 @@
 
 """Limitr: usage and margin control for AI products. The open-source engine, in-process."""
 
+from .cloud import CloudError
 from .engine import Limitr
+from .network import LimitrNetwork, NetworkCall, Request, Response
 from .types import Cap, Customer, Decision, DecisionReason, EntitlementSource, Estimate
 
-__version__ = '0.8.6'
-__all__ = ['Limitr', 'Decision', 'DecisionReason', 'EntitlementSource', 'Estimate', 'Customer', 'Cap', '__version__']
+__version__ = '0.8.7'
+__all__ = ['Limitr', 'CloudError', 'LimitrNetwork', 'NetworkCall', 'Request', 'Response', 'Decision', 'DecisionReason', 'EntitlementSource', 'Estimate', 'Customer', 'Cap', '__version__']

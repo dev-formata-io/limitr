@@ -32,6 +32,7 @@ DecisionReason = Literal[
     'governor',      # the rate governor hasn't refilled enough (`available` says how much it has)
     'limit',         # a hard limit, with no grants left to cover the rest
     'held',          # the call fits on its own, but room held by reservations doesn't leave enough
+    'unconnected',   # Limitr Cloud is disconnected, and the policy refuses calls until it's back (deny_unconnected)
 ]
 """Why a call was refused (a decision's `reason`)."""
 

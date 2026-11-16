@@ -36,7 +36,7 @@ const limitr = await Limitr.cloud({
     // Deny calls if the connection drops, so servers can't drift apart (the default).
     denyUnconnected: true,
 
-    // Hosts the policy may call. Only api.limitr.dev by default.
+    // Hosts the policy may call: any public host by default (true), a list, or false for none.
     httpHosts: ['api.limitr.dev', 'api.example.com'],
 });
 

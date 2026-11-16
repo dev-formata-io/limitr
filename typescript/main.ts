@@ -27,7 +27,7 @@ export * from './network.js';
  * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
  * (or refuse clearly). Matches the package version.
  */
-export const LIMITR_SDK_VERSION = '0.8.4';
+export const LIMITR_SDK_VERSION = '0.8.7';
 
 
 /**
@@ -168,6 +168,10 @@ export class Limitr {
     protected ws?: WebSocket;
     protected wsInit: boolean = false;
     protected wsTimeout?: ReturnType<typeof setTimeout>;
+    /** The next reconnect attempt, after a failed one (cleared by close()). */
+    protected wsRetryTimer?: ReturnType<typeof setTimeout>;
+    /** close() was called: no more reconnects. */
+    protected cloudClosed = false;
 
     /** Optional named event handlers for all Limitr events. */
     protected eventHandlers: Map<string, LimitrEventHandler> = new Map();
@@ -1557,7 +1561,12 @@ export class Limitr {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token })
         });
-        if (!response.ok) return undefined;
+        if (!response.ok) {
+            // Cloud answered and refused (Ex. a revoked token, or a plan without connected engines): say why
+            const reason = await response.json().then((b: any) => b?.error, () => undefined);
+            console.warn(`Limitr Cloud refused the connection (${response.status}): ${reason ?? response.statusText}`);
+            return undefined;
+        }
         const { ticket } = await response.json();
         const ws = new WebSocket(address + '/wss?ticket=' + ticket);
         ws.binaryType = 'arraybuffer';
@@ -1586,17 +1595,31 @@ export class Limitr {
                 poll();
             });
         };
-        const reconnect = async () => {
-            const response = await fetch(ticketAddress + '/wss/ticket', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token })
-            });
-            if (response.ok) {
+        // Reconnect after a drop: one attempt at a time, retried with backoff (1s, doubling to 30s) until it's back or
+        // close() is called. Nothing here throws: a network error is one more failed attempt.
+        let reconnecting = false;
+        let retryMs = 1000;
+        let warned = false;
+        const attempt = async (): Promise<boolean> => {
+            try {
+                const response = await fetch(ticketAddress + '/wss/ticket', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                if (!response.ok) {
+                    if (!warned && (response.status === 401 || response.status === 403)) {
+                        warned = true;
+                        const reason = await response.json().then((b: any) => b?.error, () => undefined);
+                        console.warn(`Limitr Cloud refused the reconnect (${response.status}): ${reason ?? response.statusText}`);
+                    }
+                    return false;
+                }
                 const { ticket } = await response.json();
+                if (limitr.cloudClosed) return true;
                 const ws = new WebSocket(address + '/wss?ticket=' + ticket);
                 ws.binaryType = 'arraybuffer';
-                
+
                 limitr.ws = ws;
                 limitr.ws.onclose = reconnect;
                 limitr.ws.onmessage = (m)=>limitr.cloudMessageReceived(m);
@@ -1607,6 +1630,26 @@ export class Limitr {
                 const customers = Object.keys(await limitr.customers() ?? {});
                 ws.send(JSON.stringify({ type: 'hello', sdk: LIMITR_SDK_VERSION, policy, customers, accepts: CLOUD_ACCEPTS, instance: limitr.cloudInstance }));
                 ws.send(JSON.stringify({ type: 'policy', id: policy, format: 'bstf' }));
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        const reconnect = async () => {
+            if (reconnecting || limitr.cloudClosed) return;
+            if (limitr.wsRetryTimer) clearTimeout(limitr.wsRetryTimer);
+            limitr.wsRetryTimer = undefined;
+            reconnecting = true;
+            try {
+                if (await attempt()) {
+                    retryMs = 1000;
+                    warned = false;
+                } else if (!limitr.cloudClosed) {
+                    limitr.wsRetryTimer = setTimeout(reconnect, retryMs);
+                    retryMs = Math.min(retryMs * 2, 30000);
+                }
+            } finally {
+                reconnecting = false;
             }
         };
         limitr.ws = ws;
@@ -1771,7 +1814,10 @@ export class Limitr {
         for (const data of unsent) handles.push(this.wsSendNow(data));
         await Promise.allSettled(handles);
 
+        this.cloudClosed = true;
         if (this.wsTimeout) clearTimeout(this.wsTimeout);
+        if (this.wsRetryTimer) clearTimeout(this.wsRetryTimer);
+        this.wsRetryTimer = undefined;
         this.wsInit = false;
         if (this.ws && this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
             this.ws.onclose = () => {}; // clear any auto re-connect behavior

@@ -3,8 +3,8 @@ name: limitr-network
 description: >
   Build on Limitr Network, the Limitr Network Protocol (LNP): services (providers) that sell routes to agents and other
   services (consumers), paid with signed vouchers instead of API keys. Use for a policy's `network: { ... }` (provider,
-  routes, tools and logic, operators, service), the TypeScript `limitr.network()` API (handle, connect, update, cancel,
-  trust, budget, identify, list, discover, channels), vouchers, receipts, refusals, metering a request's work,
+  routes, tools and logic, operators, service), the `limitr.network()` API in TypeScript and Python (handle, connect,
+  update, cancel, trust, budget, identify, list, discover, channels), vouchers, receipts, refusals, metering a request's work,
   operators (state, budgets, identity, discovery, key rotation), the wire format, and tests in src/network. Load the
   limitr skill for policy semantics, limitr-ts for the rest of the SDK, and stof for Stof syntax.
 ---
@@ -23,7 +23,8 @@ protocol, its HTTP included, runs in the policy; the host keeps the key, allows 
 handler.
 
 Docs in the repo: `src/network/README.md` (overview), `src/network/SPEC.md` (design), `src/network/PROTOCOL.md`
-(wire format and test vectors), `typescript/tutorial/network/` (seven runnable chapters), `typescript/demos/network/`.
+(wire format and test vectors), `typescript/tutorial/network/` and `python/tutorial/network/` (seven runnable chapters
+each), `typescript/demos/network/` and `python/demos/network/`.
 Every field: `references/config.md`.
 
 ## A provider
@@ -165,9 +166,46 @@ network: {
   append to `service.rotations`, then it runs with the new key. Policies follow the chain; vouchers go on.
 - `checkOperators()` reads and checks every operator's manifest.
 
+## In Python
+
+The same API in snake_case (`pip install limitr`; needs stof 0.11.5+). Python has no web-standard Request and
+Response, so `limitr` has its own, plus WSGI and a small server:
+
+```python
+import os, time
+from limitr import Limitr, LimitrNetwork, Response
+
+weather = Limitr(policy_source)                      # the provider policy above
+network = weather.network(secret_key=os.environ['WEATHER_SECRET_KEY'])
+
+def work(call):                                      # a NetworkCall: route, customer, query, body, request, subject
+    if call.route == 'week' and not weather.allow(call.customer, 'forecasts', int(call.query.get('days', 7))):
+        return Response(402, body='not within this request')
+    return {'city': call.query.get('city'), 'forecast': 'sunny'}   # dict as JSON, str as text, or a Response
+
+app = network.wsgi(work)                             # gunicorn, waitress, or mounted in Flask or Django
+# network.handle(request, work) takes a limitr.Request and returns a Response, for any other framework;
+# network.serve(work, port=8787) runs it on a thread with the standard library (demos, tests, local tools)
+
+agent = Limitr('policy: {}')
+agent_net = agent.network(name='support_agent')
+tools = agent_net.connect('https://weather.example', 'agent', 0.03, time.time() * 1000 + 3_600_000,
+                          trust='logic', max=0.05)   # options are keyword arguments
+result = agent.run_capability('acme_weather_forecast', {'city': 'Boston'})
+refused = LimitrNetwork.refusal(result)              # None, or the refusal dict
+agent_net.update('acme_weather', spend=0.10)
+```
+
+- **Times** are ms since the epoch (`time.time() * 1000`) or a `datetime`; vouchers carry whole ms.
+- **Channels** are functions from a `Request` to a `Response`: `channels={'ours': operator_network.operate}`.
+  `LimitrNetwork.generate_key()` returns `{'secret_key', 'public_key'}`; `key_store=` gets a newly made key.
+- **Events** arrive as dicts (`network-receipt` included), not JSON strings.
+- **Serving an operator:** `operator_network.operator_wsgi()` or `serve_operator(port=...)`.
+- Python and TypeScript speak the same protocol: either side can be either language.
+
 ## Common mistakes
 
-1. **A new provider key each start.** Existing vouchers are made out to the old key. Pass `secretKey`.
+1. **A new provider key each start.** Existing vouchers are made out to the old key. Pass `secretKey` (`secret_key`).
 2. **`url` that isn't the public URL.** It's in the terms and where consumers send requests.
 3. **`http://` URLs.** Only `localhost` and `127.0.0.1` may be http; everything else must be https.
 4. **A route's entitlement not in the plan.** The policy doesn't validate (`fits()`): every offered plan a route
@@ -177,6 +215,4 @@ network: {
 6. **Treating a refusal as an exception.** Read `network.refusal(result)` and act (tell the user, stop, or top up).
 7. **Requiring identity without an identity operator.** `identity: 'required'` with no operator serving identity
    doesn't validate (`'auto'` is optional then).
-8. **Stof hosts: capturing arrows in `serve(request, work)`.** Stof keeps one function per arrow literal, so concurrent
-   requests can see each other's captured variables; pass a named function (its `self` is its object).
-9. **Sharing a voucher across consumer processes.** Their request numbers collide (refused as replays).
+8. **Sharing a voucher across consumer processes.** Their request numbers collide (refused as replays).

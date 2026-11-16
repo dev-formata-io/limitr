@@ -38,6 +38,8 @@ jobs:
           grep -q "^version = \"$v\"" python/pyproject.toml || { echo "python/pyproject.toml is not $v"; exit 1; }
           grep -q "__version__ = '$v'" python/limitr/__init__.py || { echo "python/limitr/__init__.py is not $v"; exit 1; }
           grep -q "\"version\": \"$v\"" plugin/.claude-plugin/plugin.json || { echo "plugin.json is not $v"; exit 1; }
+          grep -q "LIMITR_SDK_VERSION = '$v'" typescript/main.ts || { echo "typescript/main.ts LIMITR_SDK_VERSION is not $v"; exit 1; }
+          grep -q "SDK_VERSION = '$v'" python/limitr/engine.py || { echo "python/limitr/engine.py SDK_VERSION is not $v"; exit 1; }
           grep -q "^## $v" CHANGELOG.md || { echo "CHANGELOG.md has no $v section"; exit 1; }
       - name: Install the stof CLI
         run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh

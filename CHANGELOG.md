@@ -4,13 +4,75 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
-## Unreleased
+## 0.8.7
 
+### Added
+
+- **Limitr Cloud in Python:** `Limitr.cloud(token)`, the same protocol and behavior as the TypeScript SDK. The policy
+  comes from Cloud and follows what you publish, live; a customer the engine hasn't seen is loaded from Cloud the
+  first time a call needs it (with the customers its refs lead to); usage and customer changes go back through
+  Cloud's handlers over a WebSocket, batched (`batch_ms`) and numbered, so a copy Cloud sends back never sets a meter
+  back; topups are charged by Cloud before they're granted. Calls are refused while disconnected
+  (`deny_unconnected=True`, the default, with the decision's reason `unconnected`), it reconnects on its own and
+  says which customers it holds, and `close()` sends what's still batched. Options match the TypeScript SDK in
+  snake_case (`policy`, `ws_address`, `ticket_address`, `connect_timeout`, `validate`, `http_hosts`,
+  `max_execution_time`). Also `connected`, `add_cloud_customer`, and `flush_cloud_batch`. A reader thread receives
+  (and reconnects), a worker thread handles what it receives in order, and a keeper thread pings; every engine call
+  still runs in-process behind the lock. New dependency: `websockets>=13` (pure Python). 13 tests against a fake
+  Cloud (`python/tests/test_cloud.py`), `python/tests/live_cloud.py` for a check against the real one, and checked
+  against the Limitr Cloud server itself (customers, usage, live policy updates, topups, and a TypeScript engine
+  sharing the same customers).
+- **Limitr Network in Python:** `limitr.network()`, the same API as the TypeScript SDK's in snake_case (`connect`,
+  `update`, `trust`, `cancel`, `budget`, `identify`, `list`, `discover`, `handle`, `operate`, ...). The Network module
+  is compiled next to the engine (`python/limitr/network.bstf`, from `project.stof`) and loaded the first time a
+  policy uses it. In place of web-standard requests and responses it has `Request` and `Response` (from `limitr`),
+  `network.wsgi(work)` (handle() as a WSGI app, for gunicorn, waitress, Flask, or Django), and `network.serve()`
+  (the standard library's threaded WSGI server, for demos, tests, and local tools); the work gets a `NetworkCall`.
+  On a `Limitr.cloud()` engine, Limitr Cloud is an operator over the engine's connection, as in TypeScript. Python
+  and TypeScript speak the same protocol, so either side can be either language. 11 tests
+  (`python/tests/test_network.py`), including Cloud as an operator over a fake connection; also checked against the
+  Limitr Cloud server (identity and a budget at its operator).
+- **The Python Network tutorial** (`python/tutorial/network`): the 7 chapters of the TypeScript track, with Python
+  programs run by the tests like the main tutorial's, and a two-process demo (`python/demos/network`).
+- **The Python SDK needs stof 0.11.5,** where a document call lets other Python threads run while it runs. Before, a
+  call whose request reached a server in the same process (a Network provider and consumer in one program, or a test
+  server) waited out its timeout, and a slow call held up every other thread (a web server's other requests, the Cloud
+  connection's reader).
+- **The Python tutorial** (`python/tutorial`): the 15 chapters of the TypeScript tutorial, with Python programs.
+  Every program runs in the tests and must print what its chapter says (`python/tests/test_tutorial.py`).
+
+### Changed
+
+- **`Limitr.cloud` says why Cloud refused it:** when Cloud turns the token down (Ex. a revoked key, or a
+  workspace plan without connected engines), both SDKs still return nothing, and now log Cloud's reason with the status
+  (`console.warn` in TypeScript, a `limitr` logger warning in Python) instead of failing silently.
 - **The release workflow compiles the engine** from `src/spec` (`stof run project.stof`, on a pinned stof CLI) before
-  it builds, tests, and publishes each SDK, so a published package always matches the spec. The Python tests check
-  the compiled engine's version against the package's.
-- **README:** the quick start shows the policy, then TypeScript and Python side by side, and the rest mentions the
-  Python package where it applies.
+  it builds, tests, and publishes each SDK, so a published package always matches the spec. Its version check also
+  covers each SDK's own version constant (`LIMITR_SDK_VERSION`, `SDK_VERSION`), and the Python tests check the
+  compiled engine's version against the package's.
+- **The `limitr-py` skill:** the Python SDK for coding agents, like `limitr-ts` for TypeScript: the engine,
+  customers, gating, flags and deals, reserve and settle, estimates, caps, events, state, Cloud, and Network. In
+  `python/skill/limitr-py`, the Claude Code plugin (`npm run plugin` copies it), and `content/limitr-py.zip`.
+- **Stof 0.11.5:** the Python SDK needs it (`stof>=0.11.5`), and the TypeScript package depends on `^0.11.5`. The
+  stof skill in the plugin is synced.
+- **The limitr-network skill covers Python** (`limitr.network()` in snake_case, `Request`/`Response`, WSGI, channels),
+  and points to the Python tutorial track and demo.
+- **README, rewritten in plain language** (GitHub, npm, and a matching one for PyPI): what Limitr does, a quick start
+  with the policy in YAML and the same calls in TypeScript and Python, why teams use it, how it's different, the engine
+  and Limitr Cloud, skills for coding agents, and Limitr Network.
+
+### Fixed
+
+- **TypeScript: a Cloud engine stopped reconnecting** after a failed reconnect, and could crash the process. When the
+  connection dropped, one reconnect was tried: a network error there was an unhandled promise rejection (which ends a
+  Node process by default) and stopped the ping loop that would have tried again. Reconnecting now retries with
+  backoff (1 second, doubling to 30) until it's back or `close()` is called, one attempt at a time, and never throws.
+  Checked against the Limitr Cloud server: stopped for a few seconds and restarted, the engine reconnects and its calls
+  go on.
+- **TypeScript: `LIMITR_SDK_VERSION` said 0.8.4.** It's the version the SDK tells Limitr Cloud in hello, and it hadn't
+  moved with the package since 0.8.4. It's 0.8.7 now, and the release workflow checks it.
+- **Tutorial chapter 13** said a Cloud policy can only reach api.limitr.dev by default; it's any public host
+  (`httpHosts`), as the SDK has done since 0.7.
 
 ## 0.8.6
 

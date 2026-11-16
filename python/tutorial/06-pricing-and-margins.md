@@ -1,0 +1,95 @@
+# 6. Pricing and margins
+
+Each credit can carry two numbers:
+
+- **`price`**: what you charge for one unit.
+- **`overhead_cost`**: what one unit costs you (the model provider, the GPU, the storage bill).
+
+Both are in **runes**, Limitr's base currency. One rune is one US dollar unless you say otherwise, and an `exchange`
+table converts other currencies (Ex. `exchange: { euro: { value: 1.14, currency: 'usd' } }`).
+
+With both numbers in the policy, every call knows its own margin:
+
+```python
+from limitr import Limitr
+
+policy = Limitr("""
+policy: {
+    credits: {
+        ai_token: {
+            label: 'AI token'
+            price: { amount: 0.00002 }     // you charge $20 per million tokens
+            overhead_cost: 0.000008        // the model costs you $8 per million
+        }
+        image: {
+            label: 'Image'
+            pricing_model: 'tiered'        // cheaper per image as volume grows
+            tiers: [
+                { up_to: 100, price: { amount: 0.04 } },
+                { price: { amount: 0.02 } }
+            ]
+            overhead_cost: 0.01
+        }
+    }
+    plans: {
+        usage: {
+            default: true
+            entitlements: {
+                // nothing included: every token is billed
+                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 0 } }
+                images: { limit: { credit: 'image', mode: 'soft', value: 0 } }
+            }
+        }
+    }
+}
+""")
+policy.ensure_customer('ada')
+
+
+def margin(name, event):
+    if name != 'meter-overage':
+        return
+    meter = event['meter']
+    charged, cost = meter['price_diff'], meter['overhead_diff']
+    print(f"{event['entitlement']}: charged ${charged:.4f}, cost ${cost:.4f}, margin ${charged - cost:.4f}")
+
+
+policy.add_handler('margin', margin)
+
+policy.allow('ada', 'chat', 12_000)   # a 12k-token conversation
+policy.allow('ada', 'images', 90)     # 90 images at $0.04
+policy.allow('ada', 'images', 20)     # 10 more at $0.04, then 10 at $0.02
+
+# The customer's totals this period (margin is a percent).
+totals = policy.customer_margin_snapshot('ada')
+print(f"revenue ${totals['revenue']:.2f}, cost ${totals['cost']:.2f}, margin {totals['margin']}%")
+```
+
+It prints:
+
+```text
+chat: charged $0.2400, cost $0.0960, margin $0.1440
+images: charged $3.6000, cost $0.9000, margin $2.7000
+images: charged $0.6000, cost $0.2000, margin $0.4000
+revenue $4.44, cost $1.20, margin 73.06%
+```
+
+- Every meter event carries `meter.price_diff` (what the call is worth at list price) and `meter.overhead_diff` (what
+  it cost you). The difference is that call's margin, so you can watch margin per call, per customer, or per feature
+  as it happens instead of a month later.
+- The usage plan includes nothing (`value: 0`), so every unit is billable. With an allowance, units inside it show
+  their cost but no price: the plan's subscription pays for them.
+- **Tiers** price billable units by volume. `tiered` charges each unit at the tier it falls in, so the 20-image call
+  paid $0.04 for 10 of them (finishing the first 100) and $0.02 for the other 10. `volume` prices all units at the
+  tier the total lands in, and `stairstep` charges one flat fee for the tier the total lands in.
+- `customer_margin_snapshot` sums revenue, cost, and margin for the customer this period, overall and per entitlement.
+
+AI calls cost different amounts depending on the model, and input and output tokens are priced differently. The
+simplest way to handle that is more credits: one per model and direction, like `sonnet_input` and `sonnet_output`,
+each with its own price and cost. Record the provider's token counts after each call, and every model becomes its own
+line item ([AI costs per model](https://limitr.dev/docs/how-to/ai-token-costs)). Customers can still see one
+balance: an "AI credit" in the exchange pays for every model at its own price
+([Prepaid credits](https://limitr.dev/docs/how-to/prepaid-credits)). When you'd rather meter one unit across models, a cost function works out what each call cost you instead.
+The next chapter uses one.
+
+Next: [AI calls: reserve and settle](07-reserve-and-settle.md)

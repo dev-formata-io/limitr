@@ -8,249 +8,181 @@
     </a>
     <br>
     <a href="https://www.npmjs.com/package/@formata/limitr"><img alt="npm" src="https://img.shields.io/npm/v/@formata/limitr?color=darkorange"></a>
+    <a href="https://pypi.org/project/limitr/"><img alt="PyPI" src="https://img.shields.io/pypi/v/limitr?color=darkorange"></a>
     <a href="https://www.npmjs.com/package/@formata/limitr"><img alt="downloads" src="https://img.shields.io/npm/d18m/%40formata%2Flimitr?label=downloads&color=darkorange"></a>
     <a href="https://github.com/dev-formata-io/limitr/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-blue"></a>
     <a href="https://limitr.dev/docs/introduction"><img alt="docs" src="https://img.shields.io/badge/docs-limitr.dev-purple"></a>
-    <a href="https://github.com/dev-formata-io/limitr"><img alt="stars" src="https://img.shields.io/github/stars/dev-formata-io/limitr"></a>
+    <a href="https://discord.gg/AUyAUnxAZJ"><img alt="discord" src="https://img.shields.io/badge/chat-discord-5865F2"></a>
 </h1>
 
 <p align="center">
-    <b>Usage and margin control for AI products.</b>
+    <b>Most flexible usage &amp; margin control for AI.</b>
     <br>
-    Change prices, limits, and contracts for users and agents as easily as a git commit. An open-source engine decides every call in your app: what each customer can do, what it costs you, and what to bill.
+    Change prices, limits, and contracts for users and agents as easily as a git commit, live.
 </p>
 
-Limitr is usage and margin control for AI products. The engine meters usage (AI tokens by model, API calls, agent
-runs, seats, anything you count), enforces plans and limits, prices every call at what it costs you and what you
-charge, and tells your code what to bill. It's a library, not a service: it runs natively in your process, in about a
-millisecond, with nothing to deploy and no network call in the middle of a request. It's built on
-[Stof](https://stof.dev) (Rust and WebAssembly), so it runs in practically any language. The SDKs are
-TypeScript/JavaScript (Node, Bun, Deno, and the browser) and Python, with more on the way, so
-[tell us yours](https://github.com/dev-formata-io/limitr/issues). It's built for usage that doesn't follow the plan,
-which is most AI usage.
+Limitr decides what each customer can use and what it costs. You write your plans, limits, and prices in one
+policy file. Before your app does something a customer pays for (a model call, an export, an API request), it asks
+Limitr: is this allowed? Limitr answers, counts the usage, and tells you what to bill and what it cost you.
+
+The engine is open source and runs inside your app, in TypeScript/JavaScript or Python. [Limitr Cloud](https://limitr.dev)
+is the hosted side: change pricing from a dashboard, keep customer data, and send invoices.
 
 ## Quick start
 
 ```bash
-npm i @formata/limitr    # TypeScript / JavaScript
+npm i @formata/limitr    # TypeScript / JavaScript (Node, Bun, Deno, the browser)
 pip install limitr       # Python
 ```
 
-A policy is plans, credits, limits, and prices in one document:
+Here's a policy, `policy.yaml`. AI tokens cost the customer $20 per million and cost you $8. The free plan gets 50k
+tokens a month. The pro plan gets 2M, can go over (and pay for it), and can export PDFs:
 
-```ts
-// policy.stof
-policy: {
-    credits: {
-        ai_token: {
-            price: { amount: 0.00002 }      // you charge $20 per million tokens
-            overhead_cost: 0.000008         // the model costs you $8 per million
-        }
-    }
-    plans: {
-        pro: {
-            default: true
-            entitlements: {
-                export_pdf: {}                                                   // a feature flag
-                chat: { limit: { credit: 'ai_token', mode: 'soft', value: 1_000_000, resets: true, reset_sch: 'monthly:1' } }
-            }
-        }
-    }
-}
+```yaml
+policy:
+  credits:
+    ai_token: { price: { amount: 0.00002 }, overhead_cost: 0.000008 }
+  plans:
+    free:
+      default: true
+      entitlements:
+        chat: { limit: { credit: ai_token, value: 50000, resets: true } }
+    pro:
+      entitlements:
+        chat: { limit: { credit: ai_token, mode: soft, value: 2000000, resets: true } }
+        export_pdf: {}   # no limit: a feature flag
 ```
 
-Load it and decide every call, in TypeScript:
+Check calls against it in TypeScript:
 
 ```ts
 import { Limitr } from '@formata/limitr';
 import { readFile } from 'node:fs/promises';
 
-const policy = await Limitr.new(await readFile('policy.stof', 'utf8'));
-policy.addHandler('billing', (name, value) => {
-    if (name === 'meter-overage') console.log('bill it:', JSON.parse(value as string).overage_price);
+const limitr = await Limitr.new(await readFile('policy.yaml', 'utf8'), 'yaml');
+limitr.addHandler('billing', (name, value) => {
+    if (name === 'meter-overage') console.log('bill acme:', JSON.parse(value as string).overage_price);
 });
 
-await policy.ensureCustomer(userId);
-if (await policy.allow(userId, 'chat', tokens)) {
-    // call the model
-}
+await limitr.ensureCustomer('acme', 'pro');
+await limitr.allow('acme', 'export_pdf');        // true
+await limitr.allow('acme', 'chat', 2_100_000);   // true, 100k over the limit, so it prints "bill acme: 2"
+
+await limitr.ensureCustomer('ada');               // no plan given, so ada is on free
+await limitr.allow('ada', 'chat', 60_000);        // false: free only allows 50k
 ```
 
-Or in Python, with the same calls in snake_case:
+Or in Python:
 
 ```python
 from limitr import Limitr
 
-policy = Limitr(open('policy.stof').read())
-policy.add_handler('billing', lambda name, event: print('bill it:', event['overage_price']) if name == 'meter-overage' else None)
+limitr = Limitr(open('policy.yaml').read(), 'yaml')
+limitr.add_handler('billing', lambda name, event: print('bill acme:', event['overage_price']) if name == 'meter-overage' else None)
 
-policy.ensure_customer(user_id)
-if policy.allow(user_id, 'chat', tokens):
-    ...  # call the model
+limitr.ensure_customer('acme', 'pro')
+limitr.allow('acme', 'export_pdf')        # True
+limitr.allow('acme', 'chat', 2_100_000)   # True, 100k over the limit, so it prints "bill acme: 2.0"
+
+limitr.ensure_customer('ada')             # no plan given, so ada is on free
+limitr.allow('ada', 'chat', 60_000)       # False: free only allows 50k
 ```
 
-That's a plan with a monthly AI token allowance, overage billed past it, and margin on every call. The
-[tutorial](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial) builds on it in 15 short,
-runnable chapters, and the [Python SDK](https://github.com/dev-formata-io/limitr/tree/main/python) has its own
-quick start.
+To change a price or a limit, you change the policy, not your code. With Limitr Cloud, the change goes live without a
+deploy. The [TypeScript](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial) and
+[Python](https://github.com/dev-formata-io/limitr/tree/main/python/tutorial) tutorials pick up from here, in 15 short
+chapters you can run.
 
-## Own the logic, like you wrote it
+## Why teams use it
 
-Pricing never sits still. Costs, usage, and deals change every month, and every change lands on your code and the
-customers you already have. Most billing platforms are fast to start, and put your pricing in their system: usage is
-sent to a vendor, counted on their servers, one event at a time, after it happens. Building it yourself keeps control,
-and costs engineering time on every plan and every deal.
+AI products are hard to price and hard to control. One request can trigger dozens of model calls. Model costs change
+every month. Big customers sign deals that don't match your pricing page. Every change means new code, and you have to
+apply it to customers you already have.
 
-Limitr is the control without the build. The engine is yours, like your code:
+With Limitr, those changes go in the policy:
 
-- **Pricing like a git commit.** Plans, prices, costs, limits, and every customer's deal live in one versioned policy.
-  Change it, diff it, review it, ship it, and roll it back, from your repo or from Limitr Cloud with no release.
-- **Never rip it out.** A new pricing model, product, or business model is a policy change, not a migration. Your own
-  pricing functions, feature conditions, rules, and tools run in the policy, written in [Stof](https://stof.dev), and
-  any built-in rule can be overridden, so it bends to your business as it changes.
-- **Inside your app.** Every check runs natively in your process, before the work runs, with no network call.
-- **Priced across the task, not one call at a time.** One task is dozens of calls across models, tools, and vendors.
-  The engine sees every one with the customer, their plan, and what the task has cost so far, so it prices and limits
-  the whole task as it runs.
-- **Safe in your process.** A policy runs sandboxed: no files or environment, no network unless it's allowed (and
-  never your private network unless you list it), and time and memory limits on every call. The engine is sealed
-  when it loads, so a policy can build on it but can't change it.
-- **Margin on every call,** priced at what you charge and what it costs you.
-- **Never a share of your revenue,** and yours if you leave: with Limitr Cloud or without it, it's the same engine.
+- **Control usage:** feature flags, limits, rate limits, and spending caps for customers and for your own agents.
+- **Charge for it:** usage pricing, credits and top-ups, seats, overage, and custom contracts. Limitr tells your code
+  what to bill, and you send it to Stripe or anything else.
+- **Know your margin:** every call is priced at what you charge and what it costs you.
+- **Model any customer:** a user, a team, an org, an API key, or an agent, grouped however you like.
 
-## What you can build with it
+## How it's different
 
-- **Any pricing model in one policy:** usage-based, seats, credits, flat plans, or a hybrid, per plan and per feature.
-- **AI features that stay profitable:** per-model costs, per-call margins, usage predicted before the call, and spend
-  caps that stop runaway usage.
-- **Feature flags and rollouts:** kill switches, percentage rollouts, and rules per call, next to the plans, with
-  events to measure them.
-- **Custom deals and contracts:** give one customer a feature their plan doesn't have, take one away, or change
-  their limits, with expiry, without a new plan for each deal. For a deal many customers sign, write it once as a
-  rule in the policy and assign it to each of them (below).
-- **Customers of any kind:** a customer is anything you want limits and entitlements around: a user, a team, an
-  org, an API key, or an agent. Refs put a user in a team and a team in an org, any way you model it, and a user with
-  no plan of its own is on its org's plan, with the org's deals, seats, and shared budgets.
-- **Allowances inside your own company:** internal AI tools where each department gets its own allowance and each
-  employee a cap inside it, or a tool you built for yourself and a few friends with a cap per person.
-- **Prepaid credits:** credit packs with expiry, resets, and rollover, spent across features at their own rates.
-- **Rate limits next to paid usage:** protect your infrastructure without touching what customers pay for.
-- **Billing events:** overage, limits hit, and thresholds crossed, sent to your code as they happen.
-- **Private networks of agents:** your agents, your customers' agents, and your partners' use each other's
-  services with Limitr Network (below), each on a budget, metered by the same policy.
+- **You own it.** The engine and the policy format are open source. You can add your own pricing logic and rules to
+  the policy, and change any built-in behavior. When your pricing model changes, you edit the policy. You don't
+  migrate to a new system.
+- **Pricing works like code.** Plans, prices, limits, and every customer's deal live in one file you can review, diff,
+  and roll back.
+- **Your coding agent can do the work.** Limitr ships skills that teach agents like Claude Code to write the policy,
+  add the SDK to your app, and build the usage and billing screens.
+- **No revenue share.** Limitr never takes a cut of what you bill, with or without Cloud.
 
-## Limitr Network: private networks for your agents
+## The engine and Limitr Cloud
 
-In any agent network, billed or not, control is the hard part: what each agent may spend, who it can reach, and how to
-stop it. With Limitr Network, a service publishes its plans and routes from its Limitr policy, and an agent (or any
-app or service with a policy) signs a **voucher**: up to this much, on this plan, until then. The service meters it
-like any customer, with the voucher's spend as a hard cap; the agent gets the service's routes as tools; and every
-request and receipt is signed, so both sides hold the same record. Either side can revoke a voucher at any time. No
-keys exchanged, no integration work, and nothing billed unless the service prices its calls.
+The engine is this package. It's free and runs inside your app. On its own (`Limitr.new(policy)`), you keep the policy
+in your repo, save customer data in your own database, and handle billing in your code.
+[Running it in your app](https://github.com/dev-formata-io/limitr/blob/main/typescript/tutorial/11-running-it-in-your-app.md)
+shows how.
 
-Start private: your own agents and services, your customers' agents, or a set of partners, each with one budget across
-every service it uses. Optional operators (Limitr Cloud is one, set up for you on a `Limitr.cloud()` engine, and
-anyone can run one) add shared state across servers, budgets across services, identities, and discovery, with
-listings private to the workspaces you name or public. Network on Limitr Cloud is in early access:
-[join the waitlist](https://limitr.dev/network). It's the Limitr Network Protocol (LNP): start with
-[`src/network`](https://github.com/dev-formata-io/limitr/tree/main/src/network) and the
-[tutorial track](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial/network).
-
-## Every deal, enforced as written
-
-A customer signs for more than their plan: 250,000 API calls a month, SSO, audit logs from your Business plan, and no
-exports. Write the deal once as a rule, and give it to every customer that signs it. Their terms apply on their next
-call, with no new plan and no engineering ticket:
-
-```typescript
-rules: {
-    acme_2027: {
-        label: 'Acme 2027'
-        given: { sso: {}, audit_log: { plan: 'business' } }
-        taken: { exports: {} }
-        overrides: { api: { credit: 'request', value: 250_000, resets: true, reset_sch: 'monthly:1' } }
-    }
-}
-```
+[Limitr Cloud](https://limitr.dev) does those parts for you. Your code stays the same, except for one line:
 
 ```ts
-await policy.setCustomerRules('acme', ['acme_2027']);
-await policy.entitlementSource('acme', 'api'); // { access: 'plan', limit: 'rule:acme_2027', customer: 'acme' }
+const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });   // Python: Limitr.cloud(token)
 ```
 
-```python
-policy.set_customer_rules('acme', ['acme_2027'])
-policy.entitlement_source('acme', 'api')   # {'access': 'plan', 'limit': 'rule:acme_2027', 'customer': 'acme'}
+With Cloud you get:
+
+- **Live pricing changes.** Edit the policy in a visual editor or as code, test it on real traffic, publish it to
+  every server with no deploy, and roll back in a click.
+- **Customers, invoices, and contracts.** Cloud keeps your customers and their usage, creates invoices, collects
+  payment through your own Stripe, and handles contracts with ramps, fees, and commitments.
+- **Limitr Analyst,** an AI agent that writes and tests your policy, answers questions about usage and margin, and
+  shows what a price change would do to real bills before you publish it.
+
+Cloud has a free plan: [start free](https://cloud.limitr.dev/?signup), or see [pricing](https://limitr.dev/pricing).
+
+## Made for coding agents
+
+Limitr ships skills: instructions your coding agent loads so it gets Limitr right.
+
+- `limitr`: writing and reviewing policies, every engine function, and every event
+- `limitr-ts` and `limitr-py`: the TypeScript and Python SDKs
+- `limitr-network`: Limitr Network
+- `stof`: the language policies are written in
+
+The npm package includes the ones a TypeScript app needs (in `node_modules/@formata/limitr/skill`, and `stof` in
+`@formata/stof`). All of them are zips in [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content), and
+in the Claude Code plugin:
+
+```
+/plugin marketplace add dev-formata-io/limitr
+/plugin install limitr@limitr
 ```
 
-For every customer, the order is the same: its own changes first, then its rules (highest priority first), then its
-plan. Rules can also cap spend, and a rule can't invent an entitlement: a give always uses a plan's definition. A
-user on its org's plan gets the org's rules too.
+## Limitr Network
 
-## Made for AI coding agents
-
-The npm package ships three skills in `node_modules/@formata/limitr/skill`: `limitr` (the policy reference, every
-engine function, and every event), `limitr-ts` (the TypeScript SDK), and `limitr-network` (Limitr Network). The
-fourth, `stof` (the language policies are written in), ships with Stof in `node_modules/@formata/stof/skill/stof`.
-Point your coding agent at them and it
-can write, review, and debug policies and integrations correctly, instead of guessing. The Limitr skills are also packaged as zips in
-[`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for uploading to an agent (the way to get them
-for a Python app), and in the Limitr plugin for Claude.
-
-## Self-hosting: on your own, or with Limitr Cloud
-
-There is no Limitr server to deploy. The engine is the npm or PyPI package, running inside your app wherever your app
-runs, open source (Apache 2.0) and free. "Self-hosting" Limitr is `npm i @formata/limitr` (or `pip install limitr`)
-and a policy in your repo. The
-same policy and the same calls work with or without Limitr Cloud, so you can start on one and move to the other.
-
-**On your own** (`Limitr.new(policy)`), you own the parts around the engine:
-
-- **The policy** lives in your repo, reviewed and deployed like code.
-- **Customer state** lives in your database: save each customer as its events say it changed, and restore it with
-  `loadCustomers` (`load_customers` in Python) when your app starts. Load a customer's refs with it (its team and org), since its plan, deals, and
-  shared caps come through them. [Running it in your app](https://github.com/dev-formata-io/limitr/blob/main/typescript/tutorial/11-running-it-in-your-app.md)
-  shows the whole loop.
-- **Billing periods** follow your subscriptions (`setCustomerPeriod`), or the calendar.
-- **Billing** comes from the events: overage, limits, and thresholds go to your code as they happen, with the price
-  and cost of each, for Stripe or whatever you bill with.
-
-**With [Limitr Cloud](https://limitr.dev)** (`Limitr.cloud({ token })` in TypeScript; Python is next), those parts
-come with it, and every check still runs in your process:
-
-- **Limitr Analyst,** an agent beside you on every page. It writes and tests your policy, puts a signed contract in
-  place from the order form, answers questions about customers, usage, and margin with charts and dashboards, and
-  shows what a price change would do to real bills before you publish. It works in a draft and proposes the rest:
-  nothing is published or changed until you apply it.
-- **Policies** versioned like code: edit, diff, test a change on real traffic, publish to every running copy of your
-  app with no deploy, and roll back in a click.
-- **Customers** kept for you, with the customers their refs lead to loaded alongside them.
-- **Billing:** ledgers, invoices through your own Stripe, and accounts that bill a customer and everyone under it as
-  one invoice.
-- **Contracts:** rules on a schedule, with ramps, fees, commitments, and recognition.
-- **Analytics:** usage, cost, and margin by customer, account, feature, model, or task.
-
-Limitr Cloud has a free plan, and never takes a share of what you bill: [start free](https://cloud.limitr.dev/?signup)
-and have the Analyst write your first policy.
+Limitr Network lets your services sell to agents, and lets your agents pay for other services, without API keys or
+accounts. A service lists what it sells in its policy. An agent signs a voucher, like "up to $5 on this plan until
+Friday", and gets the service's endpoints as tools. The service tracks the voucher like any other customer, and both
+sides keep signed receipts of every call. Learn more in the
+[protocol](https://github.com/dev-formata-io/limitr/tree/main/src/network) and the tutorial, in
+[TypeScript](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial/network) or
+[Python](https://github.com/dev-formata-io/limitr/tree/main/python/tutorial/network). Network on Limitr Cloud is in
+early access: [join the waitlist](https://limitr.dev/network).
 
 ## Learn more
 
-- [Tutorial](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial): runnable chapters, start to
-  finish
-- [Limitr skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr): the policy reference, every engine
-  function, and every event (`limitr-ts` for TypeScript is in
-  [typescript/skill](https://github.com/dev-formata-io/limitr/tree/main/typescript/skill))
-- [Python SDK](https://github.com/dev-formata-io/limitr/tree/main/python): `pip install limitr`, with its own quick
-  start
-- [Limitr Network](https://github.com/dev-formata-io/limitr/tree/main/src/network): the protocol, its
-  [wire format](https://github.com/dev-formata-io/limitr/blob/main/src/network/PROTOCOL.md), and its
-  [skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr-network)
-- [Stof skill](https://github.com/dev-formata-io/stof/blob/main/content/SKILL.md): the language policies are written in
 - [Docs](https://limitr.dev/docs/introduction) and [limitr.dev](https://limitr.dev)
-- [Changelog](https://github.com/dev-formata-io/limitr/blob/main/CHANGELOG.md)
-- [Issues](https://github.com/dev-formata-io/limitr/issues): bugs and feature requests
+- Tutorials: [TypeScript](https://github.com/dev-formata-io/limitr/tree/main/typescript/tutorial) and
+  [Python](https://github.com/dev-formata-io/limitr/tree/main/python/tutorial), each with a Network track
+- [Limitr skill](https://github.com/dev-formata-io/limitr/tree/main/skill/limitr): the policy reference, every engine
+  function, and every event
+- [Python SDK](https://github.com/dev-formata-io/limitr/tree/main/python) and
+  [changelog](https://github.com/dev-formata-io/limitr/blob/main/CHANGELOG.md)
+- [Discord](https://discord.gg/AUyAUnxAZJ) and [issues](https://github.com/dev-formata-io/limitr/issues)
 
-Have a pricing model you're not sure fits? [Talk with the founders](https://calendly.com/d/ctjd-5gm-qqc/limitr-demo-with-founders).
+Not sure your pricing model fits? [Book a demo](https://calendly.com/d/ctjd-5gm-qqc/limitr-demo-with-founders).
 
 ## License
 
