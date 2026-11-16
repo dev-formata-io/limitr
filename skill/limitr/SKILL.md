@@ -9,7 +9,8 @@ description: >
   semantics, predicting a call's usage before it runs (Ex. output tokens from input tokens), feature flags and
   rollouts, giving or taking a customer's entitlements, meter or cap behavior,
   Limitr events, margin questions, or tests in the Limitr repo (src/spec, src/tests). For calling Limitr from an
-  application, also load the SDK skill for that language (Ex. limitr-ts).
+  application, also load the SDK skill for that language (Ex. limitr-ts for TypeScript; the Python `limitr` package
+  has the same API in snake_case).
 ---
 
 # Limitr
@@ -465,7 +466,7 @@ fn api_is_capped() {
 ```
 
 Engine changes in the Limitr repo: run `stof test` and `stof test --leaks` from the repo root, rebuild the
-compiled spec with `stof run project.stof` (writes `typescript/limitr.ts`), and record behavior changes in
+compiled spec with `stof run project.stof` (writes `typescript/limitr.ts` and `python/limitr/engine.bstf`), and record behavior changes in
 `CHANGELOG.md`.
 
 ## Common mistakes

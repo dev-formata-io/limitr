@@ -8,6 +8,14 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 
 ### Added
 
+- **`limitr` for Python** (`python/`): the engine in-process, on the `stof` Python package. Same API as the TypeScript
+  SDK in snake_case, with options as keyword arguments (`allow(customer, entitlement, value, detail=True)`): policies
+  from Stof, YAML, JSON, TOML, a dict, or bstf; customers, plans, credits and exchange pairs, metering with decision
+  details, reserve / settle / release, estimates, gives and takes, rules, spend caps and margins, features, events
+  (handlers get dicts), capabilities and Claude tools, and state save / load. Sync calls, one at a time behind a lock,
+  so a single `allow` is safe across threads, and events reach the right policy from any thread. A dropped policy is
+  freed (its event handler holds it weakly). `project.stof` writes the engine to `python/limitr/engine.bstf` (`stof
+  run`). 21 tests (`python -m pytest`). Limitr Cloud and the Network module come next.
 - **Decision details on `allow()` and `check()`.** A new last parameter, `detail = false`: with it, both return a map
   instead of a bool, saying what was decided and why. `reason` is null when allowed, else one of `no_customer`,
   `expired`, `not_entitled`, `taken`, `no_scope`, `disabled`, `cap`, `governor`, `limit`, or `held`, so every way a
@@ -16,12 +24,22 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   `held`, `resets`, `access`, and `limit_source`, plus `cap` and `cap_customer` for a cap, and `available` for a
   governor. Without `detail` nothing changes: both still return a bool, and the hot path only adds a branch.
   16 tests in `src/tests/decisions.stof`.
+- **A release workflow** (`.github/workflows/release.yml`), run only by hand, with a switch for npm and for PyPI. It
+  checks the versions match (spec, `pkg.stof`, both SDKs, the plugin, and this changelog), runs the engine tests
+  (`stof test`, with and without `--leaks`, on the released stof CLI), builds the TypeScript SDK and runs the recipe
+  tests, builds the Python package and tests the built wheel, then publishes with trusted publishing (no tokens).
 - **TypeScript:** `allow(..., force, detail)` and `check(..., overhead, detail)` overloads return a typed
   `LimitrDecision` (with `LimitrDecisionReason`) when `detail` is true. A call the Cloud connection check refuses
   reports `unconnected` or `no_customer`.
 
 ### Changed
 
+- **Stof 0.11.4** (from 0.11.3), in both SDKs. Engine calls do about 13% less work (`allow`, with or without events),
+  and in Python up to a fifth faster again with the wheels' faster allocator. Python host functions belong to each
+  document and work from any thread, which the Python SDK relied on a workaround for. Arrow functions are now real
+  closures (each keeps its own variables, ahead of its caller's); the engine and its tests don't depend on the old
+  behavior (every suite passes), but a policy's own arrows that read a variable from where they're called should be
+  checked.
 - **Holds spend the governor.** `reserve()` lets a call in, so it now spends a governor's tokens for the amount it
   holds, like `allow()`. `settle()` trues them up to the real usage (below zero when the call used more, since it
   already happened, so the next calls wait for the refill), and `release()` gives them back. Before, a hold only
@@ -48,6 +66,8 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
   `@anthropic-ai/sdk` 1.8.0, tested against the engine, and checked live (a refused tool use's reason reaches the
   model; `max_tokens` keeps a call within the tokens left, and the next call is refused before the API). The tested
   copy, its tests, and the live check are in `typescript/recipes/claude-messages/`.
+- **Skills:** the limitr skill points Python apps at the `limitr` package, the plugin's Stof skill is 0.11.4's, and the
+  skill zips in `content/` match the skills (`limitr-ts.zip` now has the Claude recipes).
 - **Stacking entitlements, in an order that never half-counts:** gates (`check`), then holds (`reserve`), then counts
   (`allow`), releasing the holds when a count is refused, then `settle`. Tutorial chapter 8 is rewritten around it,
   with the limitr skill's patterns and reservation notes, the limitr-ts skill, and 2 tests in

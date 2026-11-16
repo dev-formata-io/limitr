@@ -1,0 +1,120 @@
+# Publishes Limitr: @formata/limitr to npm and limitr to PyPI. Runs only when started by hand (Actions > Release >
+# Run workflow), with a switch for each registry. Every check runs first, and nothing is published unless all pass.
+# Publishing uses trusted publishing (no tokens): npm and PyPI each trust this workflow (release.yml) in the
+# `release` environment.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm:
+        description: Publish @formata/limitr to npm
+        type: boolean
+        default: true
+      pypi:
+        description: Publish limitr to PyPI
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions match
+        run: |
+          v=$(grep -m1 'ver version:' src/spec/limitr.stof | sed -E 's/.*ver version: *([0-9.]+).*/\1/')
+          echo "releasing $v"
+          grep -q "version: $v" pkg.stof || { echo "pkg.stof is not $v"; exit 1; }
+          grep -q "\"version\": \"$v\"" typescript/package.json || { echo "typescript/package.json is not $v"; exit 1; }
+          grep -q "^version = \"$v\"" python/pyproject.toml || { echo "python/pyproject.toml is not $v"; exit 1; }
+          grep -q "__version__ = '$v'" python/limitr/__init__.py || { echo "python/limitr/__init__.py is not $v"; exit 1; }
+          grep -q "\"version\": \"$v\"" plugin/.claude-plugin/plugin.json || { echo "plugin.json is not $v"; exit 1; }
+          grep -q "^## $v" CHANGELOG.md || { echo "CHANGELOG.md has no $v section"; exit 1; }
+      - name: Install the stof CLI
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dev-formata-io/stof-cli/releases/latest/download/stof-cli-installer.sh | sh
+      - name: Engine tests
+        run: stof test && stof test --leaks
+
+  npm-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the SDK
+        run: npm ci && npm run build
+      - name: Recipe tests
+        run: |
+          for r in recipes/*/; do (cd "$r" && npm ci && npm test) || exit 1; done
+      - name: Check the package
+        run: npm pack --dry-run
+
+  python-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the package
+        run: pip install build twine pytest && python -m build python && twine check python/dist/*
+      - name: Test the built package
+        run: pip install python/dist/*.whl && cd python/tests && python -m pytest -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: python/dist
+
+  npm:
+    if: inputs.npm
+    needs: [engine, npm-build, python-build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Publish to npm
+        run: |
+          npm install -g npm@latest
+          npm ci
+          v=$(node -p "require('./package.json').version")
+          if npm view "@formata/limitr@$v" version > /dev/null 2>&1; then
+            echo "@formata/limitr $v is already on npm"
+          else
+            npm publish --access public   # prepublishOnly copies the skills, plugin, README, and LICENSE, then builds
+          fi
+
+  pypi:
+    if: inputs.pypi
+    needs: [engine, npm-build, python-build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

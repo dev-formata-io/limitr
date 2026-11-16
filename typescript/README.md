@@ -24,15 +24,15 @@ Limitr is usage and margin control for AI products. The engine meters usage (AI 
 runs, seats, anything you count), enforces plans and limits, prices every call at what it costs you and what you
 charge, and tells your code what to bill. It's a library, not a service: it runs natively in your process, in about a
 millisecond, with nothing to deploy and no network call in the middle of a request. It's built on
-[Stof](https://stof.dev) (Rust and WebAssembly), so it runs in practically any language; the first SDK is
-TypeScript/JavaScript (Node, Bun, Deno, and the browser), and more are on the way, so
+[Stof](https://stof.dev) (Rust and WebAssembly), so it runs in practically any language. The SDKs are
+TypeScript/JavaScript (Node, Bun, Deno, and the browser) and Python, with more on the way, so
 [tell us yours](https://github.com/dev-formata-io/limitr/issues). It's built for usage that doesn't follow the plan,
 which is most AI usage.
 
 ## Quick start
 
 ```bash
-npm i @formata/limitr
+npm i @formata/limitr        # or, for Python: pip install limitr (see python/README.md)
 ```
 
 ```ts

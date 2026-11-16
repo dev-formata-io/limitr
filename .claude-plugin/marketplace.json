@@ -9,7 +9,7 @@
     {
       "name": "limitr",
       "source": "./plugin",
-      "description": "Design and debug Limitr pricing policies and use the Limitr engine from TypeScript."
+      "description": "Design and debug Limitr pricing policies and use the Limitr engine from TypeScript and Python."
     }
   ]
 }
