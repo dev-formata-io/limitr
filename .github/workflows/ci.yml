@@ -1,0 +1,67 @@
+# Checks Limitr on every push and pull request to main: the engine's Stof tests (with leak checks), the TypeScript SDK
+# (build and recipe tests), and the Python SDK (its tests, including the tutorials, on the oldest and newest Python it
+# supports). Publishing is release.yml, run by hand.
+# The engine is compiled from src/spec (`stof run project.stof`) before the SDKs are built, with the stof CLI pinned
+# below (STOF_CLI): keep it the same as release.yml's.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  STOF_CLI: https://github.com/dev-formata-io/stof-cli/releases/download/v0.14.4/stof-cli-installer.sh
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the stof CLI
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh
+      - name: Engine tests
+        run: stof test && stof test --leaks
+
+  typescript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile the engine
+        working-directory: .
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh && stof run project.stof
+      - name: Build the SDK
+        run: npm ci && npm run build
+      - name: Recipe tests
+        run: |
+          for r in recipes/*/; do (cd "$r" && npm ci && npm test) || exit 1; done
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile the engine
+        run: curl --proto '=https' --tlsv1.2 -LsSf "$STOF_CLI" | sh && stof run project.stof
+      - name: Build the package
+        run: pip install build pytest && python -m build python
+      - name: Tests
+        run: pip install python/dist/*.whl && cd python/tests && python -m pytest -q

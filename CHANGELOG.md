@@ -46,6 +46,9 @@ same compiled spec, so this changelog covers the spec and the SDKs together. The
 - **`Limitr.cloud` says why Cloud refused it:** when Cloud turns the token down (Ex. a revoked key, or a
   workspace plan without connected engines), both SDKs still return nothing, and now log Cloud's reason with the status
   (`console.warn` in TypeScript, a `limitr` logger warning in Python) instead of failing silently.
+- **CI on every push and pull request to main** (`.github/workflows/ci.yml`, separate from the release workflow): the
+  engine's Stof tests with leak checks, the TypeScript build and recipe tests, and the Python tests (tutorials
+  included) on Python 3.9 and 3.13.
 - **The release workflow compiles the engine** from `src/spec` (`stof run project.stof`, on a pinned stof CLI) before
   it builds, tests, and publishes each SDK, so a published package always matches the spec. Its version check also
   covers each SDK's own version constant (`LIMITR_SDK_VERSION`, `SDK_VERSION`), and the Python tests check the
