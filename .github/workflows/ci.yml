@@ -49,11 +49,14 @@ jobs:
           for r in recipes/*/; do (cd "$r" && npm ci && npm test) || exit 1; done
 
   python:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.9', '3.13']
+        include:
+          # 3.9 is the oldest the package supports; GitHub only builds it for Ubuntu 24.04 and older
+          - { python: '3.9', os: ubuntu-24.04 }
+          - { python: '3.13', os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
