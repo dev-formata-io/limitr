@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "limitr"
-version = "0.8.7"
+version = "0.8.8"
 description = "Limits, credits, and billing inside your AI product: an open-source engine that decides what each customer can do, what it costs you, and what to bill, on every call, in-process."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "Formata, Inc.", email = "info@limitr.dev" }]
-dependencies = ["stof>=0.11.5,<0.12", "websockets>=13"]
+dependencies = ["stof>=0.11.6,<0.12", "websockets>=13"]
 keywords = ["usage-based-billing", "usage-based-pricing", "entitlements", "metering", "feature-flags", "rate-limiting", "llm", "ai-agents", "credits"]
 classifiers = [
     "Programming Language :: Python :: 3",

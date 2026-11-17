@@ -26,7 +26,7 @@ snake_case, with options as keyword arguments and no `await`.
 pip install limitr
 ```
 
-Python 3.8+. It depends on `stof` (0.11.5 or later) and `websockets` (for Cloud). A tutorial with runnable programs is
+Python 3.8+. It depends on `stof` (0.11.6 or later) and `websockets` (for Cloud). A tutorial with runnable programs is
 in the repo's `python/tutorial` (and `python/tutorial/network`).
 
 ## Create the engine

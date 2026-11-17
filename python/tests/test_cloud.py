@@ -165,7 +165,7 @@ def test_the_policy_comes_from_cloud(cloud):
         assert policy.connected
         assert policy.plan('free') is not None
         hello = cloud.hellos[0]
-        assert hello['sdk'] == '0.8.7' and hello['policy'] == 'active'
+        assert hello['sdk'] == '0.8.8' and hello['policy'] == 'active'
         assert hello['accepts'] == ['policy-source', 'meter-seq'] and len(hello['instance']) == 32
     finally:
         policy.close()

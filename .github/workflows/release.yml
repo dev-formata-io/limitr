@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  STOF_CLI: https://github.com/dev-formata-io/stof-cli/releases/download/v0.14.4/stof-cli-installer.sh
+  STOF_CLI: https://github.com/dev-formata-io/stof-cli/releases/download/v0.14.5/stof-cli-installer.sh
 
 jobs:
   engine:

@@ -168,7 +168,7 @@ network: {
 
 ## In Python
 
-The same API in snake_case (`pip install limitr`; needs stof 0.11.5+). Python has no web-standard Request and
+The same API in snake_case (`pip install limitr`; needs stof 0.11.6+). Python has no web-standard Request and
 Response, so `limitr` has its own, plus WSGI and a small server:
 
 ```python

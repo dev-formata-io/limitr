@@ -4,6 +4,34 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.8
+
+### Changed
+
+- **Stof 0.11.6:** the TypeScript SDK depends on `@formata/stof` `^0.11.6` and the Python SDK on `stof>=0.11.6`, and
+  the engine is compiled with the stof CLI 0.14.5. Policy logic gets Stof's function signature types
+  (`fn(str) -> str`), `!` (not null) inside tuples and on union members, and by-character string functions
+  (`char_len`, `chars`, `char_at`, `char_index_of`, `char_substring`). Also fixed in Stof: a name in policy logic that
+  starts with `null`, `true`, or `false` (Ex. `nullable`) failed to parse, and a document made with no source crashed
+  on its first `get` or `set`. No change to policies or the SDK APIs.
+
+### Added
+
+- **Python recipes** (`python/recipes/`, the same as the TypeScript ones): `claude-agent-sdk` (govern agents built on
+  the Claude Agent SDK: hide tools by plan, decide and count every tool call, meter every model response, stop a run
+  when its tokens run out) and `claude-messages` (govern Anthropic SDK calls: offer only the tools a customer can use,
+  cap `max_tokens` at what's left, hold room while a call runs, record the real usage). Each has tests against the
+  real engine with fakes for the API (no key needed); CI runs them on Python 3.10 and later.
+- **Benchmarks** (`bench/`): `overspend.mjs` runs 60 agent tasks against one 1M-token allowance, checking then
+  recording (2.1M tokens used) and with Limitr's reserve and settle (about 0.95M, 27 tasks run, the rest held back);
+  `latency.mjs` and `latency.py` time `allow()`.
+
+### Docs
+
+- **README** (GitHub, npm, and PyPI): leads with what Limitr is, a "How it runs" diagram of the engine in each service
+  and Limitr Cloud, and why it's flexible, with the benchmark.
+- Tutorial chapter 8: the expected output matches what the program prints (one line).
+
 ## 0.8.7
 
 ### Added
