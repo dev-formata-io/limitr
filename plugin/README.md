@@ -16,8 +16,11 @@ Four skills that work together:
 On claude.ai or in Cowork, add Limitr from the plugin directory. In Claude Code:
 
 ```
-/plugin install limitr --marketplace dev-formata-io/limitr
+/plugin marketplace add dev-formata-io/limitr
+/plugin install limitr@limitr
 ```
+
+For other coding agents (Cursor, Codex, and more), install the same skills with `npx skills add dev-formata-io/limitr`.
 
 ## Use it
 

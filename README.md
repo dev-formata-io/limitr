@@ -174,14 +174,16 @@ Limitr ships skills: instructions your coding agent loads so it gets Limitr righ
 - `limitr-network`: Limitr Network
 - `stof`: the language policies are written in
 
-The npm package includes the ones a TypeScript app needs (in `node_modules/@formata/limitr/skill`, and `stof` in
-`@formata/stof`). All of them are zips in [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content), and
-in the Claude Code plugin:
+Install them in your project with one command (Claude Code, Cursor, Codex, and most other coding agents):
 
 ```
-/plugin marketplace add dev-formata-io/limitr
-/plugin install limitr@limitr
+npx skills add dev-formata-io/limitr
 ```
+
+Add `-y` to install all of them for every agent without asking. They're also in the Claude Code plugin
+(`/plugin marketplace add dev-formata-io/limitr`, then `/plugin install limitr@limitr`), as zips in
+[`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for claude.ai and other apps that take
+uploads, and in the npm package (`node_modules/@formata/limitr/skill`, and `stof` in `@formata/stof`).
 
 ## Limitr Network
 

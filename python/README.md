@@ -130,9 +130,10 @@ in two processes. It's the same protocol as the TypeScript SDK's, so either side
 - Method names match the TypeScript SDK in snake_case (`ensureCustomer` is `ensure_customer`), and options are
   keyword arguments (`allow(customer, entitlement, value, detail=True)`).
 - Skills teach your coding agent to use Limitr: `limitr-py` (this SDK), `limitr` (policies, every engine function,
-  and every event), and `limitr-network`. They're zips in
-  [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content), and in the Limitr plugin for Claude Code
-  (`/plugin marketplace add dev-formata-io/limitr`).
+  and every event), `limitr-network`, and `stof`. Install them in your project with
+  `npx skills add dev-formata-io/limitr` (needs Node.js; works with Claude Code, Cursor, Codex, and most other
+  agents). They're also zips in [`content/`](https://github.com/dev-formata-io/limitr/tree/main/content), and in the
+  Limitr plugin for Claude Code (`/plugin marketplace add dev-formata-io/limitr`).
 
 Docs: [limitr.dev](https://limitr.dev). Policy semantics: the [policy reference](https://limitr.dev/docs/reference/policy).
 Source: [github.com/dev-formata-io/limitr](https://github.com/dev-formata-io/limitr). Chat:
