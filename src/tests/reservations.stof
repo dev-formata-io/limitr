@@ -583,5 +583,47 @@ Limitr TestReservationsPolicy: {
         assert(self.settle(id, 'chat', hold, 30, false, segment = 'expiring'));
         assert_eq(self.policy_estimate('chat', 'expiring').samples, 1);
     }
-}
 
+    #[test]
+    /**
+     * A customer saved as JSON and loaded again (Ex. from Limitr Cloud, or state an app persists) keeps its
+     * reservations: reads, calls, and settles on a meter that had a hold work, and an open hold still settles.
+     */
+    fn test_holds_round_trip_json() {
+        const id = 'res_json';
+        self.create_customer(id, 'p');
+        const done = self.reserve(id, 'hard', 20);
+        assert(self.settle(id, 'hard', done, 15, false));
+        const open = self.reserve(id, 'hard', 30);
+        assert_eq(self.held(id, 'hard'), 30);
+
+        const json = stringify('json', self.customer(id));
+        assert(self.delete_customer(id));
+        assert_not_null(self.set_customer(json, false));
+
+        assert_eq(self.value(id, 'hard'), 15);
+        assert_eq(self.held(id, 'hard'), 30);           // the open hold came back, and still takes room
+        assert(self.allow(id, 'hard', 10, false));
+        assert(self.settle(id, 'hard', open, 25, false));
+        assert_eq(self.held(id, 'hard'), 0);
+        assert_eq(self.value(id, 'hard'), 50);
+    }
+
+    #[test]
+    /**
+     * The same through update_customer_internals, the way Limitr Cloud sends a customer to an engine.
+     */
+    fn test_holds_round_trip_cloud() {
+        const id = 'res_cloud';
+        self.create_customer(id, 'p');
+        const hold = self.reserve(id, 'hard', 20);
+        assert(self.settle(id, 'hard', hold, 10, false));
+        const json = stringify('json', self.customer(id));
+        self.update_customer_internals(json);
+        assert_eq(self.value(id, 'hard'), 10);
+        assert(self.allow(id, 'hard', 5, false));
+        const next = self.reserve(id, 'hard', 5);
+        assert(self.settle(id, 'hard', next, 5, false));
+        assert_eq(self.value(id, 'hard'), 20);
+    }
+}

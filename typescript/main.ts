@@ -27,7 +27,7 @@ export * from './network.js';
  * This SDK's version. It's sent to Limitr Cloud when connecting, so Cloud can send an engine this SDK can read
  * (or refuse clearly). Matches the package version.
  */
-export const LIMITR_SDK_VERSION = '0.8.8';
+export const LIMITR_SDK_VERSION = '0.8.9';
 
 
 /**

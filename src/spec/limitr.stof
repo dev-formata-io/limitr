@@ -23,7 +23,7 @@
  */
 Limitr: {
     /// Limitr version.
-    ver version: 0.8.8;
+    ver version: 0.8.9;
 
     /// Exchange rates.
     Exchange exchange: {};
@@ -1419,6 +1419,7 @@ Limitr: {
             return null;
         }
         sub.id = id;
+        self.holds_to_maps(sub);
         self.customers.remove(id, shallow = false);
         self.customers.insert(id, sub as Customer);
         for (const alt in sub.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
@@ -2730,6 +2731,7 @@ Limitr: {
                 return;
             }
             c.id = id;
+            self.holds_to_maps(c);
             self.customers.remove(id, shallow = false);
             self.customers.insert(id, c as Customer);
             for (const alt in c.alt_ids ?? []) self.set_alt_customer_id(id, alt, false);
@@ -2764,6 +2766,26 @@ Limitr: {
      * Internal
      * Helpers for the functions above. Not part of the public API: they may change in any release.
      *****************************************************************************/
+
+
+    /**
+     * A customer parsed from JSON (Limitr Cloud's, or state an app saved) has its meters' reservations as objects,
+     * since JSON has no maps: make them maps again (Meter.holds is a map of hold ID to a map), or reading or settling
+     * that meter fails to cast them. The objects are dropped, so nothing is left behind.
+     */
+    fn holds_to_maps(customer: obj) {
+        const meters = customer.meters;
+        if (meters == null || typeof meters != 'obj') return;
+        for (const (name, meter) in meters.fields()) {
+            if (meter == null || typeof meter != 'obj') continue;
+            const holds = meter.holds;
+            if (holds == null || typeof holds != 'obj') continue;
+            const restored = map();
+            for (const (hold_id, hold) in holds.fields()) restored.insert(hold_id, typeof hold == 'obj' ? hold.to_map() : hold);
+            meter.holds = restored;
+            drop(holds);
+        }
+    }
 
 
     // Resolving a call --------------------------------------------------------

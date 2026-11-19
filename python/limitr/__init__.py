@@ -21,5 +21,5 @@ from .engine import Limitr
 from .network import LimitrNetwork, NetworkCall, Request, Response
 from .types import Cap, Customer, Decision, DecisionReason, EntitlementSource, Estimate
 
-__version__ = '0.8.8'
+__version__ = '0.8.9'
 __all__ = ['Limitr', 'CloudError', 'LimitrNetwork', 'NetworkCall', 'Request', 'Response', 'Decision', 'DecisionReason', 'EntitlementSource', 'Estimate', 'Customer', 'Cap', '__version__']

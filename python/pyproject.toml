@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "limitr"
-version = "0.8.8"
+version = "0.8.9"
 description = "Limits, credits, and billing inside your AI product: an open-source engine that decides what each customer can do, what it costs you, and what to bill, on every call, in-process."
 readme = "README.md"
 license = "Apache-2.0"

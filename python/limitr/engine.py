@@ -53,7 +53,7 @@ CLOUD_OPERATOR = 'limitr'
 
 # This SDK's version, sent to Limitr Cloud when connecting so Cloud sends a policy this SDK can read (or refuses
 # clearly). Matches the package version.
-SDK_VERSION = '0.8.8'
+SDK_VERSION = '0.8.9'
 
 
 def _engine() -> bytes:

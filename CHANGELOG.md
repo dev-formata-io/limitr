@@ -4,6 +4,18 @@ The Limitr spec (`src/spec`) defines the engine: policy types, metering, pricing
 same compiled spec, so this changelog covers the spec and the SDKs together. The version is `Limitr.version` in
 `src/spec/limitr.stof`, and `pkg.stof` and each SDK package (Ex. `typescript/package.json`) use the same version.
 
+## 0.8.9
+
+### Fixed
+
+- **A meter that had a reservation broke after its customer was loaded again.** A meter's `holds` (its reservations)
+  is a map, and JSON has no maps, so a customer that went through JSON came back with `holds` as an object: reading
+  that meter (`value`, `allow`) or settling a hold that was open failed with "cannot cast obj to map". It happened on
+  every reload from Limitr Cloud (an app restarting, or another instance loading the customer) and when an app saved
+  a customer (`customer()`) and set it again (`setCustomer` / `set_customer`). `set_customer` and
+  `update_customer_internals` now turn the holds back into maps, so open holds still take room and settle. Two new
+  tests in `src/tests/reservations.stof` (397 pass).
+
 ## 0.8.8
 
 ### Changed
