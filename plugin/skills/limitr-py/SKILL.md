@@ -276,6 +276,13 @@ limitr = Limitr.cloud(os.environ['LIMITR_TOKEN'])   # None if Cloud refuses the 
   lead to, and `ensure_customer` creates it only when Cloud doesn't have it. `connected` says whether it's connected;
   it reconnects on its own.
 - Call `limitr.close()` on shutdown to send pending updates.
+- **Never put a key where users can read it** (a desktop app, a script you hand out, a browser). The server mints a
+  client token for the signed-in customer: `POST https://api.limitr.dev/v1/server/client-tokens` with
+  `Authorization: Bearer <key>` and `{ customer, ttl_seconds? }` returns `{ token, customer, expires }` (an hour by
+  default, 60 to 86,400 seconds; the customer must exist, or 404). The client connects with `Limitr.cloud(token)`.
+  A token reaches only that customer and the customers its refs lead to, meters usage but can't create or change
+  customers, and stops when it expires or its key is deleted. A Python server mints them for its web clients the same
+  way (Ex. with `urllib.request` or `httpx`).
 
 ## Limitr Network
 

@@ -346,6 +346,14 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   lead to (its team and org, any depth), and `ensureCustomer` creates it only when Cloud doesn't have it (loading its
   refs from Cloud first, so a new user is on its org's plan).
 - Call `await limitr.close()` on shutdown to flush pending updates.
+- **Never put a key in a browser or an app on users' devices.** The app's server mints a client token for the
+  signed-in customer and the client connects with it: `POST https://api.limitr.dev/v1/server/client-tokens` with
+  `Authorization: Bearer <key>` and `{ customer, ttl_seconds? }` returns `{ token, customer, expires }` (an hour
+  by default, 60 to 86,400 seconds; the customer must exist, or 404). In the client, `Limitr.cloud({ token })`, then
+  `addCloudCustomer(id)`. A token reaches only that customer and the customers its refs lead to, meters usage but
+  can't create or change customers, reads its own invoices only, and stops when it expires or its key is deleted.
+  Mint a new one before `expires`. Show customers their usage this way (`remaining`, `limit`, `features`): it
+  stays current as Cloud changes the customer.
 
 ## Limitr Network
 
