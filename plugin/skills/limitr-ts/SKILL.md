@@ -353,7 +353,9 @@ const limitr = await Limitr.cloud({ token: process.env.LIMITR_TOKEN! });
   `addCloudCustomer(id)`. A token reaches only that customer and the customers its refs lead to, meters usage but
   can't create or change customers, reads its own invoices only, and stops when it expires or its key is deleted.
   Mint a new one before `expires`. Show customers their usage this way (`remaining`, `limit`, `features`): it
-  stays current as Cloud changes the customer.
+  stays current as Cloud changes the customer. To re-render when it does, handle `internal-customer-updated`: the
+  engine sends it (the customer, as JSON) each time Cloud sends a customer, after it has the new copy. Read what the
+  page shows from a `setTimeout` (after the engine's call) and re-render when it changed.
 
 ## Limitr Network
 

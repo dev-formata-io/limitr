@@ -283,6 +283,8 @@ limitr = Limitr.cloud(os.environ['LIMITR_TOKEN'])   # None if Cloud refuses the 
   A token reaches only that customer and the customers its refs lead to, meters usage but can't create or change
   customers, and stops when it expires or its key is deleted. A Python server mints them for its web clients the same
   way (Ex. with `urllib.request` or `httpx`).
+- A Cloud engine's handlers get `internal-customer-updated` (the customer, as JSON) each time Cloud sends a customer
+  it holds (loaded, or changed in Cloud), after it has the new copy: a desktop app redraws from there.
 
 ## Limitr Network
 
