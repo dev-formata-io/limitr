@@ -102,7 +102,9 @@ scoped entitlement), that holder also gets a `customer-set`.
 | `feature-checked` | `customer` (the one the entitlement belongs to for the call), `caller`, `entitlement`, `enabled` (bool), `plan` (the caller's), `event_data` | `check`, `allow`, and `features`, for entitlements with `track: true`. Also reaches policy notifications. |
 
 `internal-*` events (`internal-self-updated`, `internal-customer-updated`, `internal-customer-invoices-updated`)
-come from the Cloud sync helpers.
+come from the Cloud sync helpers. `internal-customer-updated` carries the customer (as JSON) each time Cloud sends one
+the engine holds (loaded, or changed in Cloud), after the engine has the new copy: an app re-renders a customer's plan
+or usage from it.
 
 ## Which event to use
 
