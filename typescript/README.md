@@ -181,9 +181,10 @@ npx skills add dev-formata-io/limitr
 ```
 
 Add `-y` to install all of them for every agent without asking. They're also in the Claude Code plugin
-(`/plugin marketplace add dev-formata-io/limitr`, then `/plugin install limitr@limitr`), as zips in
-[`content/`](https://github.com/dev-formata-io/limitr/tree/main/content) for claude.ai and other apps that take
-uploads, and in the npm package (`node_modules/@formata/limitr/skill`, and `stof` in `@formata/stof`).
+(`/plugin marketplace add dev-formata-io/limitr`, then `/plugin install limitr@limitr`), as zips on the
+[latest release](https://github.com/dev-formata-io/limitr/releases/latest) for Claude Desktop, claude.ai, and other
+apps that take uploads (one per skill), and in the npm package (`node_modules/@formata/limitr/skill`, and `stof` in
+`@formata/stof`).
 
 ## Limitr Network
 

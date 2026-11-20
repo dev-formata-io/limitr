@@ -1,5 +1,6 @@
-# Publishes Limitr: @formata/limitr to npm and limitr to PyPI. Runs only when started by hand (Actions > Release >
-# Run workflow), with a switch for each registry. Every check runs first, and nothing is published unless all pass.
+# Publishes Limitr: @formata/limitr to npm and limitr to PyPI, and the skill zips to the GitHub release (skills.yml).
+# Runs only when started by hand (Actions > Release > Run workflow), with a switch for each. Every check runs first,
+# and nothing is published unless all pass.
 # The engine is compiled from src/spec here (`stof run project.stof`), so what's published always matches the spec,
 # with the stof CLI pinned below (STOF_CLI); move it with the stof version the SDKs depend on.
 # Publishing uses trusted publishing (no tokens): npm and PyPI each trust this workflow (release.yml) in the
@@ -15,6 +16,10 @@ on:
         default: true
       pypi:
         description: Publish limitr to PyPI
+        type: boolean
+        default: true
+      skills:
+        description: Attach the skill zips to the GitHub release (v<version>)
         type: boolean
         default: true
 
@@ -133,3 +138,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  skills:
+    if: ${{ !cancelled() && !failure() && inputs.skills }}
+    needs: [engine, npm-build, python-build, npm, pypi]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/skills.yml

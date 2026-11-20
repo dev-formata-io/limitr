@@ -1,0 +1,54 @@
+# Packages the Limitr skills for apps that take skill uploads (claude.ai and Claude Desktop: one zip per skill, with
+# the skill's folder at the top) and attaches them to the GitHub release for the current version (v<version>, from
+# typescript/package.json), creating the release if it doesn't exist yet. Run it by hand (Actions > Skills > Run
+# workflow) after a skills change, or with Release. The latest release's zips are always at
+# https://github.com/dev-formata-io/limitr/releases/latest/download/<skill>.zip, which the docs link to.
+# The skills come together the way the npm package and the Claude Code plugin get them (`npm run plugin`), so the
+# zips always match what's committed: limitr, limitr-network, limitr-ts, limitr-py, and stof (from @formata/stof).
+name: Skills
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: write
+
+jobs:
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Gather the skills
+        working-directory: typescript
+        run: npm ci && npm run plugin
+      - name: Zip them
+        run: |
+          mkdir -p skill-zips
+          cd plugin/skills
+          for s in */; do
+            s=${s%/}
+            test -f "$s/SKILL.md" || { echo "$s has no SKILL.md"; exit 1; }
+            zip -qrX "../../skill-zips/$s.zip" "$s"
+          done
+          cd ../..
+          for s in limitr limitr-network limitr-ts limitr-py stof; do
+            test -f "skill-zips/$s.zip" || { echo "no $s.zip"; exit 1; }
+          done
+          ls -l skill-zips
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(node -p "require('./typescript/package.json').version")
+          if gh release view "v$v" > /dev/null 2>&1; then
+            gh release upload "v$v" skill-zips/*.zip --clobber
+            echo "updated the zips on v$v"
+          else
+            awk -v h="## $v" '$0 == h { f = 1; next } /^## / { if (f) exit } f' CHANGELOG.md > notes.md
+            gh release create "v$v" skill-zips/*.zip --target "$GITHUB_SHA" --title "Limitr $v" --notes-file notes.md --latest
+            echo "created v$v"
+          fi
